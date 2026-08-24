@@ -6,6 +6,7 @@ import type {
   ProviderAliasInput,
   ProviderConnectionRevision,
   ProviderConnectionRevisionInput,
+  ProviderConnectionRevisionUpdateInput,
   ProviderConnectionStatusUpdateInput,
   ProviderModelInput
 } from '~/types/admin'
@@ -119,6 +120,129 @@ const submitCreate = async () => {
     createError.value = error.isValidation ? null : error.message
   } finally {
     creating.value = false
+  }
+}
+
+// Edit an unused PENDING connection revision. Credentials are never read back;
+// leaving the credential field blank preserves the encrypted secret server-side.
+const editRevisionOpen = ref(false)
+const editingRevision = ref(false)
+const editRevisionTarget = ref<ProviderConnectionRevision | null>(null)
+const editRevisionError = ref<string | null>(null)
+const editRevisionFormRef = useTemplateRef<{ setErrors: (errors: FormError[]) => void }>('editRevisionFormRef')
+const editRevisionForm = ref<ProviderConnectionRevisionUpdateInput>({
+  route_version: 1,
+  origin: '',
+  connection_type: 'omniroute',
+  credential: '',
+  timeout_ms: 30000,
+  policy_version: 1,
+  resolve_until: null
+})
+
+const canEditRevision = (revision: ProviderConnectionRevision) =>
+  revision.lifecycle_status === 'PENDING'
+  && provider.data.value?.active_connection_revision_id !== revision.id
+
+const openEditRevision = (revision: ProviderConnectionRevision) => {
+  if (!canEditRevision(revision)) return
+
+  editRevisionTarget.value = revision
+  editRevisionForm.value = {
+    route_version: revision.route_version,
+    origin: revision.origin,
+    connection_type: revision.connection_type,
+    credential: '',
+    timeout_ms: revision.timeout_ms,
+    policy_version: revision.policy_version,
+    resolve_until: revision.resolve_until
+  }
+  editRevisionError.value = null
+  editRevisionFormRef.value?.setErrors([])
+  editRevisionOpen.value = true
+}
+
+const validateEditRevisionForm = (state: ProviderConnectionRevisionUpdateInput): FormError[] => {
+  const errors: FormError[] = []
+
+  if (!state.origin.trim()) {
+    errors.push({ name: 'origin', message: 'Origin URL is required.' })
+  } else if (!state.origin.startsWith('http://') && !state.origin.startsWith('https://')) {
+    errors.push({ name: 'origin', message: 'Origin must start with http:// or https://' })
+  }
+
+  if (state.timeout_ms < 1000 || state.timeout_ms > 60000) {
+    errors.push({ name: 'timeout_ms', message: 'Timeout must be between 1000 and 60000 milliseconds.' })
+  }
+
+  return errors
+}
+
+const submitEditRevision = async () => {
+  if (!editRevisionTarget.value) return
+  editingRevision.value = true
+  editRevisionError.value = null
+  try {
+    const updated = await api.admin.updateProviderConnectionRevision(providerId.value, editRevisionTarget.value.id, {
+      ...editRevisionForm.value,
+      origin: editRevisionForm.value.origin.trim(),
+      credential: editRevisionForm.value.credential?.trim() || null
+    })
+    editRevisionOpen.value = false
+    editRevisionTarget.value = null
+    await revisions.refresh()
+    toast.add({
+      title: 'Connection revision updated',
+      description: `Revision ${updated.route_version} has been updated successfully.`,
+      color: 'success',
+      icon: 'i-lucide-pencil'
+    })
+  } catch (cause) {
+    const error = toSpApiError(cause)
+
+    editRevisionFormRef.value?.setErrors(
+      Object.entries(error.errors).map(([name, messages]) => ({
+        name,
+        message: messages[0] ?? 'This value is not valid.'
+      }))
+    )
+    editRevisionError.value = error.isValidation ? null : error.message
+  } finally {
+    editingRevision.value = false
+  }
+}
+
+const deletingRevision = ref(false)
+const deleteRevisionTarget = ref<ProviderConnectionRevision | null>(null)
+const deleteRevisionError = ref<string | null>(null)
+
+const openDeleteRevision = (revision: ProviderConnectionRevision) => {
+  deleteRevisionTarget.value = revision
+  deleteRevisionError.value = null
+}
+
+const confirmDeleteRevision = async () => {
+  if (!deleteRevisionTarget.value) return
+
+  deletingRevision.value = true
+  deleteRevisionError.value = null
+  const target = deleteRevisionTarget.value
+
+  try {
+    await api.admin.deleteProviderConnectionRevision(providerId.value, target.id)
+    deleteRevisionTarget.value = null
+    await revisions.refresh()
+
+    toast.add({
+      title: 'Connection revision deleted',
+      description: `Revision ${target.route_version} was deleted.`,
+      color: 'success',
+      icon: 'i-lucide-trash-2'
+    })
+  } catch (cause) {
+    deleteRevisionError.value = toSpApiError(cause).message
+  } finally {
+    deletingRevision.value = false
   }
 }
 
@@ -1161,6 +1285,28 @@ useSeoMeta({
                       >
                         Update status
                       </UButton>
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        size="sm"
+                        icon="i-lucide-pencil"
+                        :disabled="!canEditRevision(revision)"
+                        :title="canEditRevision(revision) ? 'Edit this unused pending revision' : 'Only unused PENDING revisions can be edited'"
+                        @click="openEditRevision(revision)"
+                      >
+                        Edit
+                      </UButton>
+                      <UButton
+                        color="error"
+                        variant="ghost"
+                        size="sm"
+                        icon="i-lucide-trash-2"
+                        :disabled="provider.data.value?.active_connection_revision_id === revision.id"
+                        :title="provider.data.value?.active_connection_revision_id === revision.id ? 'The active revision cannot be deleted' : 'Delete this unused revision'"
+                        @click="openDeleteRevision(revision)"
+                      >
+                        Delete
+                      </UButton>
                     </div>
                   </div>
                 </div>
@@ -1386,6 +1532,151 @@ useSeoMeta({
             </UButton>
           </div>
         </UForm>
+      </template>
+    </UModal>
+
+    <!-- Edit connection revision modal -->
+    <UModal
+      v-model:open="editRevisionOpen"
+      title="Edit connection revision"
+      description="Only unused PENDING revisions can be changed. Leave credential blank to keep the existing secret."
+    >
+      <template #body>
+        <UForm
+          ref="editRevisionFormRef"
+          :state="editRevisionForm"
+          :validate="validateEditRevisionForm"
+          :validate-on="['blur', 'change']"
+          class="space-y-5"
+          @submit="submitEditRevision"
+        >
+          <UAlert
+            v-if="editRevisionError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :description="editRevisionError"
+          />
+
+          <UFormField label="Route version" name="route_version" required>
+            <UInput
+              v-model="editRevisionForm.route_version"
+              type="number"
+              min="1"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField label="Origin URL" name="origin" required>
+            <UInput
+              v-model="editRevisionForm.origin"
+              placeholder="https://api.omniroute.example"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField label="Connection type" name="connection_type" required>
+            <USelectMenu
+              v-model="editRevisionForm.connection_type"
+              :items="['omniroute', 'openai_compatible']"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField
+            label="Replacement credential"
+            name="credential"
+            :help="editRevisionTarget?.credential_configured
+              ? `Current credential ends in ••••${editRevisionTarget.credential_suffix || ''}. Leave blank to keep it.`
+              : 'Leave blank to keep the current credential.'"
+          >
+            <UInput
+              v-model="editRevisionForm.credential"
+              type="password"
+              placeholder="Leave blank to keep existing"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField label="Timeout (ms)" name="timeout_ms" required>
+            <UInput
+              v-model="editRevisionForm.timeout_ms"
+              type="number"
+              min="1000"
+              max="60000"
+              class="w-full"
+            />
+          </UFormField>
+
+          <UFormField label="Policy version" name="policy_version">
+            <UInput
+              v-model="editRevisionForm.policy_version"
+              type="number"
+              min="1"
+              class="w-full"
+            />
+          </UFormField>
+
+          <div class="flex justify-end gap-2 pt-1">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="editingRevision"
+              @click="editRevisionOpen = false"
+            >
+              Cancel
+            </UButton>
+            <UButton type="submit" :loading="editingRevision">
+              Save changes
+            </UButton>
+          </div>
+        </UForm>
+      </template>
+    </UModal>
+
+    <!-- Delete connection revision confirmation -->
+    <UModal
+      :open="deleteRevisionTarget !== null"
+      title="Delete connection revision?"
+      description="Only non-active revisions without request history can be deleted."
+      @update:open="open => { if (!open && !deletingRevision) deleteRevisionTarget = null }"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UAlert
+            v-if="deleteRevisionError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :description="deleteRevisionError"
+          />
+
+          <p class="text-sm text-muted">
+            Delete <strong class="text-highlighted">Revision {{ deleteRevisionTarget?.route_version }}</strong>?
+            SP Cambo will refuse this operation if the revision is active or has request history.
+          </p>
+
+          <div class="flex justify-end gap-2">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="deletingRevision"
+              @click="deleteRevisionTarget = null"
+            >
+              Cancel
+            </UButton>
+            <UButton
+              color="error"
+              icon="i-lucide-trash-2"
+              :loading="deletingRevision"
+              @click="confirmDeleteRevision"
+            >
+              Delete revision
+            </UButton>
+          </div>
+        </div>
       </template>
     </UModal>
 

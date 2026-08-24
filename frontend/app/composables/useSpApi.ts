@@ -31,6 +31,7 @@ import type {
   ProviderActiveConnectionUpdateInput,
   ProviderConnectionRevision,
   ProviderConnectionRevisionInput,
+  ProviderConnectionRevisionUpdateInput,
   ProviderConnectionStatusUpdateInput,
   ProviderModelInput,
   ProviderAliasInput
@@ -437,7 +438,7 @@ export function useSpApi() {
       /** Create a new connection revision */
       createProviderConnectionRevision: (providerId: string, input: ProviderConnectionRevisionInput) =>
         request<ProviderConnectionRevision>(`/admin/providers/${apiSegment(providerId)}/connection-revisions`, { method: 'POST', body: { ...input } }),
-      updateProviderConnectionRevision: (providerId: string, revisionId: string, input: ProviderConnectionRevisionInput) =>
+      updateProviderConnectionRevision: (providerId: string, revisionId: string, input: ProviderConnectionRevisionUpdateInput) =>
         request<ProviderConnectionRevision>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}`, { method: 'PUT', body: { ...input } }),
       deleteProviderConnectionRevision: (providerId: string, revisionId: string) =>
         request<{ success: boolean }>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}`, { method: 'DELETE' }),

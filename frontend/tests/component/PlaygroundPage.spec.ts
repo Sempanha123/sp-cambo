@@ -50,14 +50,20 @@ const plane = {
   models: [] as PublicModel[]
 }
 
-const { listModels, listKeys } = vi.hoisted(() => ({
+const { listModels, listKeys, getPlaygroundQuota, runPlayground } = vi.hoisted(() => ({
   listModels: vi.fn(),
-  listKeys: vi.fn()
+  listKeys: vi.fn(),
+  getPlaygroundQuota: vi.fn(),
+  runPlayground: vi.fn()
 }))
 
 mockNuxtImport('useSpApi', () => () => ({
   catalog: { models: listModels },
-  account: { apiKeys: listKeys }
+  account: {
+    apiKeys: listKeys,
+    playgroundQuota: getPlaygroundQuota,
+    runPlayground
+  }
 }))
 
 enableAutoUnmount(afterEach)
@@ -67,6 +73,22 @@ beforeEach(() => {
 
   listModels.mockReset().mockImplementation(async () => plane.models)
   listKeys.mockReset().mockImplementation(async () => [])
+  getPlaygroundQuota.mockReset().mockResolvedValue({
+    enabled: true,
+    limit: 4096,
+    remaining: 4096,
+    reset_at: '2026-08-25T00:00:00+07:00'
+  })
+  runPlayground.mockReset().mockResolvedValue({
+    request_id: 'req-playground-test',
+    response: { content: [{ type: 'text', text: 'working' }] },
+    quota: {
+      enabled: true,
+      limit: 4096,
+      remaining: 4000,
+      reset_at: '2026-08-25T00:00:00+07:00'
+    }
+  })
 
   /*
    * `useSpResource` keys into Nuxt's payload, which is shared for the whole test
@@ -184,10 +206,12 @@ describe('figures it must not invent', () => {
     expect(text).toContain('will not estimate it')
   })
 
-  it('says plainly that the request is not sent from the browser', async () => {
+  it('says plainly that the free run is executed server-side without exposing the system credential', async () => {
     const page = await mountPlayground()
-
-    expect(page.text()).toContain('SP Cambo does not run this request for you')
+    const text = page.text()
+    expect(text).toContain('Server-side Playground')
+    expect(text).toContain('Your own API key is never required')
+    expect(text).toContain('Run free test')
   })
 
   it('never puts a credential in the request it shows', async () => {

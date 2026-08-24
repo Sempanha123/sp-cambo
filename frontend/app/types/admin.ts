@@ -424,6 +424,17 @@ export interface ProviderConnectionRevisionInput {
   resolve_until?: string | null
 }
 
+/** Update an unused PENDING revision. Omit/blank credential to keep the stored secret. */
+export interface ProviderConnectionRevisionUpdateInput {
+  route_version: number
+  origin: string
+  connection_type: 'omniroute' | 'openai_compatible'
+  credential?: string | null
+  timeout_ms: number
+  policy_version?: number
+  resolve_until?: string | null
+}
+
 export interface ProviderConnectionStatusUpdateInput {
   lifecycle_status: 'READY' | 'DRAINING' | 'REVOKED'
   reason: string
