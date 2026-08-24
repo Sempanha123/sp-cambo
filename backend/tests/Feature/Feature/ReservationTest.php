@@ -4,9 +4,11 @@ namespace Tests\Feature\Feature;
 
 use App\Exceptions\InsufficientBalanceException;
 use App\Models\User;
+use App\Services\ApiKeySecretService;
 use App\Services\EntitlementService;
 use App\Services\ReservationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Tests\TestCase;
 
@@ -106,6 +108,69 @@ class ReservationTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $service->reserve($user, 'claude-coding', 'TOKEN_QUOTA', 51, 'request:duplicate');
+    }
+
+    public function test_playground_key_can_only_reserve_playground_daily_lots_and_customer_key_cannot_spend_them(): void
+    {
+        $user = User::factory()->create();
+        $entitlements = app(EntitlementService::class);
+        $paid = $this->snapshot(100, now()->addDay());
+        $paid['source_id'] = 'paid';
+        $paidLot = $entitlements->grant($user, $paid, 'grant:paid-isolation');
+
+        $free = $this->snapshot(25, now()->addDay());
+        $free['source_type'] = 'PLAYGROUND_DAILY';
+        $free['source_id'] = 'playground:'.$user->id.':'.now()->format('Y-m-d');
+        $free['package_name'] = 'Daily Playground';
+        $freeLot = $entitlements->grant($user, $free, 'grant:playground-isolation');
+
+        $playgroundCreated = app(ApiKeySecretService::class)->create($user, ['label' => 'Playground'], []);
+        DB::table('playground_credentials')->insert([
+            'user_id' => $user->id,
+            'api_key_id' => $playgroundCreated['key']->id,
+            'secret_ciphertext' => 'test-only-not-read',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $customerCreated = app(ApiKeySecretService::class)->create($user, ['label' => 'Customer'], []);
+
+        $service = app(ReservationService::class);
+        $playgroundReservation = $service->reserve(
+            $user,
+            'claude-coding',
+            'TOKEN_QUOTA',
+            20,
+            'request:playground-isolation',
+            $playgroundCreated['key']->id,
+        );
+        $this->assertSame([$freeLot->id], $playgroundReservation->allocations->pluck('entitlement_lot_id')->all());
+
+        $customerReservation = $service->reserve(
+            $user,
+            'claude-coding',
+            'TOKEN_QUOTA',
+            30,
+            'request:customer-isolation',
+            $customerCreated['key']->id,
+        );
+        $this->assertSame([$paidLot->id], $customerReservation->allocations->pluck('entitlement_lot_id')->all());
+
+        try {
+            $service->reserve(
+                $user,
+                'claude-coding',
+                'TOKEN_QUOTA',
+                6,
+                'request:playground-must-not-fallback-to-paid',
+                $playgroundCreated['key']->id,
+            );
+            $this->fail('Expected free Playground capacity to be isolated from paid capacity.');
+        } catch (InsufficientBalanceException $exception) {
+            $this->assertSame('TOKEN_QUOTA', $exception->billingMode);
+        }
+
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $paidLot->id, 'reserved_units' => 30]);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $freeLot->id, 'reserved_units' => 20]);
     }
 
     public function test_unused_reserved_units_are_forfeited_when_the_lot_expires_before_settlement(): void

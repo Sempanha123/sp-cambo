@@ -53,10 +53,24 @@ class ProviderConnectionRevision extends Model
     protected static function booted(): void
     {
         static::updating(function (self $revision): void {
-            foreach (self::IMMUTABLE_FIELDS as $field) {
-                if ($revision->isDirty($field)) {
-                    throw new LogicException('Provider connection routing fields are immutable. Rotate the connection instead.');
-                }
+            $routingChanged = collect(self::IMMUTABLE_FIELDS)
+                ->contains(fn (string $field): bool => $revision->isDirty($field));
+
+            if (! $routingChanged) {
+                return;
+            }
+
+            // Draft revisions are intentionally editable until they become a
+            // live route or acquire request history. This mirrors the admin
+            // controller contract and keeps the model-level guard authoritative
+            // for writes performed outside that controller as well.
+            $isEditableDraft = $revision->getOriginal('lifecycle_status') === self::STATUS_PENDING
+                && $revision->lifecycle_status === self::STATUS_PENDING
+                && ! $revision->reservations()->exists()
+                && ! $revision->provider()->where('active_connection_revision_id', $revision->id)->exists();
+
+            if (! $isEditableDraft) {
+                throw new LogicException('Provider connection routing fields are immutable. Rotate the connection instead.');
             }
         });
     }

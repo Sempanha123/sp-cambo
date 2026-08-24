@@ -1,7 +1,7 @@
 param(
   [string]$ProjectRoot = ".",
   [string]$RemoteUrl = "https://github.com/Sempanha123/sp-cambo.git",
-  [string]$CommitMessage = "V6: provider revision UI and production CI"
+  [string]$CommitMessage = "V7: isolate Playground quota and harden provider revision editing"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,8 +37,8 @@ if ($remotes -contains 'origin') {
 Run-Git fetch origin main
 
 if ($freshRepo) {
-  # Move HEAD/index to the remote V5/V6 base without touching the extracted V6
-  # working files. `git add -A` below then records only the real delta.
+  # Move HEAD/index to the current remote base without touching the extracted
+  # Progress working files. `git add -A` below then records only the real delta.
   Run-Git reset --mixed origin/main
 }
 
@@ -56,9 +56,9 @@ if ($changes) {
   Write-Host 'No local changes to commit.'
 }
 
-# --force-with-lease is intentionally NOT used here. V6 should fast-forward the
-# existing remote history. If somebody pushed after our fetch, Git refuses rather
-# than overwriting their work.
+# --force-with-lease is intentionally NOT used here. Progress updates should
+# fast-forward the existing remote history. If somebody pushed after our fetch,
+# Git refuses rather than overwriting their work.
 Run-Git push -u origin main
 
 Write-Host ''

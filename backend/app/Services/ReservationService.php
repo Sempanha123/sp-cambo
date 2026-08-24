@@ -8,6 +8,7 @@ use App\Models\CreditLedger;
 use App\Models\EntitlementLot;
 use App\Models\Reservation;
 use App\Models\ReservationAllocation;
+use App\Models\PlaygroundCredential;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -39,6 +40,19 @@ class ReservationService
             $lotsQuery = EntitlementLot::query()->where('user_id', $user->id)->where('billing_mode', $billingMode)->where('status', 'ACTIVE')
                 ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
                 ->whereJsonContains('allowed_model_aliases', $publicAlias);
+
+            if ($apiKeyId !== null) {
+                $isPlaygroundKey = PlaygroundCredential::query()
+                    ->where('user_id', $user->id)
+                    ->where('api_key_id', $apiKeyId)
+                    ->exists();
+                $lotsQuery->when(
+                    $isPlaygroundKey,
+                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+                );
+            }
+
             if ($eligibleLotIds !== null) {
                 $lotsQuery->whereIn('id', $eligibleLotIds);
             }

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ApiKey;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
+use App\Models\PlaygroundCredential;
 use App\Models\User;
 use App\Services\ApiKeySecretService;
 use Illuminate\Http\JsonResponse;
@@ -81,12 +82,23 @@ class ApiKeyController extends Controller
 
         Log::channel('security')->info('API key check', ['key_id' => $key->id, 'ip' => $request->ip()]);
 
-        // Calculate credit_remaining from eligible entitlement lots
+        // Report only the balance this particular credential is actually
+        // allowed to spend. Daily Playground quota is isolated from customer keys.
+        $isPlaygroundKey = PlaygroundCredential::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->exists();
         $creditRemaining = EntitlementLot::query()
             ->where('user_id', $key->user_id)
-            ->where('expires_at', '>', now())
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->where('status', 'ACTIVE')
-            ->sum('remaining_units');
+            ->when(
+                $isPlaygroundKey,
+                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+            )
+            ->get(['remaining_units', 'reserved_units'])
+            ->sum(fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units));
 
         return response()->json(['data' => [
             'valid' => $key->status === 'ACTIVE' && ! $key->expires_at?->isPast(),

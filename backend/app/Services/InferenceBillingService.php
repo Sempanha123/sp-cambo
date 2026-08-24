@@ -8,6 +8,7 @@ use App\Models\ApiKey;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
 use App\Models\ProviderConnectionRevision;
+use App\Models\PlaygroundCredential;
 use App\Models\Reservation;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
@@ -61,11 +62,21 @@ class InferenceBillingService
                 throw new InvalidArgumentException('The selected model route is not ready.');
             }
 
+            $isPlaygroundKey = PlaygroundCredential::query()
+                ->where('user_id', $user->id)
+                ->where('api_key_id', $apiKey->id)
+                ->exists();
+
             $lots = EntitlementLot::query()
                 ->where('user_id', $user->id)
                 ->where('status', 'ACTIVE')
                 ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
                 ->whereJsonContains('allowed_model_aliases', $alias->public_alias)
+                ->when(
+                    $isPlaygroundKey,
+                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+                )
                 ->orderByRaw('expires_at IS NULL')
                 ->orderBy('expires_at')
                 ->orderBy('created_at')

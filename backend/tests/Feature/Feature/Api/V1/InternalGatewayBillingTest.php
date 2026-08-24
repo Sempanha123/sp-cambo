@@ -7,6 +7,7 @@ use App\Models\AiModel;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
 use App\Models\Provider;
+use App\Models\ProviderConnectionRevision;
 use App\Models\User;
 use App\Services\ApiKeySecretService;
 use App\Services\EntitlementService;
@@ -22,7 +23,10 @@ class InternalGatewayBillingTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['services.spcambo.gateway_secret' => 'internal-test-secret']);
+        config([
+            'app.key' => 'base64:'.base64_encode(str_repeat('k', 32)),
+            'services.spcambo.gateway_secret' => 'internal-test-secret',
+        ]);
     }
 
     public function test_gateway_authentication_fails_closed_when_secret_is_missing_or_wrong(): void
@@ -148,6 +152,44 @@ class InternalGatewayBillingTest extends TestCase
         ]);
     }
 
+    public function test_customer_api_key_cannot_spend_daily_playground_quota(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        $free = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'PLAYGROUND_DAILY');
+        $paid = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'ADMIN_GRANT');
+
+        $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret']))
+            ->assertOk()->assertJsonPath('data.reserved_units', '60');
+
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $free->id, 'reserved_units' => 0]);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $paid->id, 'reserved_units' => 60]);
+        $this->gateway()->postJson('/api/v1/internal/gateway/inspect', ['customer_key' => $created['secret']])
+            ->assertOk()->assertJsonPath('data.balances.token_quota_remaining', '440');
+        $this->assertDatabaseHas('reservations', ['id' => $response->json('data.reservation_id'), 'api_key_id' => $created['key']->id]);
+    }
+
+    public function test_playground_key_cannot_fall_through_to_paid_entitlements(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        DB::table('playground_credentials')->insert([
+            'user_id' => $user->id,
+            'api_key_id' => $created['key']->id,
+            'secret_ciphertext' => 'test-only-not-read',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $free = $this->grant($user, $alias, 'TOKEN_QUOTA', 20, [], 'PLAYGROUND_DAILY');
+        $paid = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'ADMIN_GRANT');
+
+        $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret']))
+            ->assertStatus(402)->assertJsonPath('code', 'insufficient_tokens');
+        $this->assertDatabaseCount('reservations', 0);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $free->id, 'reserved_units' => 0, 'remaining_units' => 20]);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $paid->id, 'reserved_units' => 0, 'remaining_units' => 500]);
+        $this->gateway()->postJson('/api/v1/internal/gateway/inspect', ['customer_key' => $created['secret']])
+            ->assertOk()->assertJsonPath('data.balances.token_quota_remaining', '20');
+    }
+
     public function test_invalid_key_model_protocol_size_and_depleted_balance_never_create_reservations(): void
     {
         $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight('sk-spc-invalid'))
@@ -267,6 +309,18 @@ class InternalGatewayBillingTest extends TestCase
     {
         $user = User::factory()->create();
         $provider = Provider::query()->create(['name' => 'Provider', 'slug' => 'provider-'.uniqid(), 'enabled' => true]);
+        $revision = ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => 'https://private-provider.example',
+            'connection_type' => 'omniroute',
+            'credential' => 'test-upstream-secret',
+            'credential_suffix' => 'cret',
+            'timeout_ms' => 30000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+        ]);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
         $model = AiModel::query()->create(['provider_id' => $provider->id, 'internal_model_id' => 'private-route', 'family' => 'claude', 'family_label' => 'Claude', 'commercial_resale_verified_at' => now(), 'enabled' => true]);
         $alias = ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => ['messages_api' => true, 'max_output_tokens' => 100], 'limits' => [], 'status' => 'available', 'enabled' => true, 'customer_visible' => true]);
         $created = app(ApiKeySecretService::class)->create($user, ['label' => 'Gateway', ...$keyAttributes], [$alias->id]);
@@ -274,9 +328,9 @@ class InternalGatewayBillingTest extends TestCase
         return [$user, $alias, $created];
     }
 
-    private function grant(User $user, ModelAlias $alias, string $mode, int $units, array $billingRules): EntitlementLot
+    private function grant(User $user, ModelAlias $alias, string $mode, int $units, array $billingRules, string $sourceType = 'ADMIN_GRANT'): EntitlementLot
     {
-        return app(EntitlementService::class)->grant($user, ['source_type' => 'ADMIN_GRANT', 'source_id' => uniqid('grant-', true), 'package_name' => 'Test', 'family_label' => 'Claude', 'billing_mode' => $mode, 'original_units' => $units, 'unit_label' => $mode === 'CREDIT_BALANCE' ? 'microcredits' : 'tokens', 'currency' => $mode === 'CREDIT_BALANCE' ? 'USD' : null, 'currency_exponent' => $mode === 'CREDIT_BALANCE' ? 6 : null, 'allowed_model_aliases' => [$alias->public_alias], 'billing_snapshot' => ['billing_rules' => $billingRules], 'expires_at' => now()->addDay()], 'grant:'.uniqid('', true));
+        return app(EntitlementService::class)->grant($user, ['source_type' => $sourceType, 'source_id' => uniqid('grant-', true), 'package_name' => 'Test', 'family_label' => 'Claude', 'billing_mode' => $mode, 'original_units' => $units, 'unit_label' => $mode === 'CREDIT_BALANCE' ? 'microcredits' : 'tokens', 'currency' => $mode === 'CREDIT_BALANCE' ? 'USD' : null, 'currency_exponent' => $mode === 'CREDIT_BALANCE' ? 6 : null, 'allowed_model_aliases' => [$alias->public_alias], 'billing_snapshot' => ['billing_rules' => $billingRules], 'expires_at' => now()->addDay()], 'grant:'.uniqid('', true));
     }
 
     private function preflight(string $secret, array $overrides = []): array

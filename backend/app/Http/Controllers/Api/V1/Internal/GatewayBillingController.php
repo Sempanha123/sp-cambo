@@ -13,6 +13,7 @@ use App\Models\CreditLedger;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
 use App\Models\ProviderConnectionRevision;
+use App\Models\PlaygroundCredential;
 use App\Models\Reservation;
 use App\Models\UsageRecord;
 use App\Services\ApiKeySecretService;
@@ -29,8 +30,18 @@ class GatewayBillingController extends Controller
         $input = $request->validate(['customer_key' => ['required', 'string', 'max:128']]);
         $key = $this->activeKey($input['customer_key'], $secrets);
         $key->load(['modelAliases' => fn ($query) => $query->published()->orderBy('public_alias')]);
+        $isPlaygroundKey = PlaygroundCredential::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->exists();
         $lots = EntitlementLot::query()->where('user_id', $key->user_id)->where('status', 'ACTIVE')
-            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))->get();
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->when(
+                $isPlaygroundKey,
+                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+            )
+            ->get();
 
         return response()->json(['data' => [
             'key_id' => $key->id,
