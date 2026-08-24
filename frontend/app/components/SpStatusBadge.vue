@@ -1,0 +1,101 @@
+<script setup lang="ts">
+import type { BadgeProps } from '@nuxt/ui'
+
+/**
+ * Renders a backend status code with consistent colour and wording.
+ *
+ * The status value always comes from the API; unknown codes are humanised rather
+ * than hidden or guessed at, so a new backend state is never mislabelled as an
+ * existing one.
+ */
+const props = withDefaults(defineProps<{
+  status: string | null | undefined
+  size?: BadgeProps['size']
+  variant?: BadgeProps['variant']
+}>(), {
+  size: 'sm',
+  variant: 'subtle'
+})
+
+type Tone = Exclude<BadgeProps['color'], undefined>
+
+const tones: Record<string, { color: Tone, label: string, icon?: string }> = {
+  // Availability and platform health
+  operational: { color: 'success', label: 'Operational', icon: 'i-lucide-circle-check' },
+  available: { color: 'success', label: 'Available' },
+  degraded: { color: 'warning', label: 'Degraded', icon: 'i-lucide-triangle-alert' },
+  maintenance: { color: 'info', label: 'Maintenance', icon: 'i-lucide-wrench' },
+  outage: { color: 'error', label: 'Outage', icon: 'i-lucide-circle-x' },
+  unavailable: { color: 'error', label: 'Unavailable' },
+  retired: { color: 'neutral', label: 'Retired' },
+
+  // Credentials
+  active: { color: 'success', label: 'Active' },
+  disabled: { color: 'neutral', label: 'Disabled' },
+  revoked: { color: 'error', label: 'Revoked' },
+
+  // Orders and payments
+  draft: { color: 'neutral', label: 'Draft' },
+  pending: { color: 'warning', label: 'Pending' },
+  awaiting_payment: { color: 'warning', label: 'Awaiting payment' },
+  pending_payment: { color: 'warning', label: 'Awaiting payment' },
+  verifying: { color: 'info', label: 'Verifying' },
+  paid: { color: 'success', label: 'Paid' },
+  succeeded: { color: 'success', label: 'Succeeded' },
+  fulfilled: { color: 'success', label: 'Fulfilled' },
+  refunded: { color: 'info', label: 'Refunded' },
+  cancelled: { color: 'neutral', label: 'Cancelled' },
+  canceled: { color: 'neutral', label: 'Cancelled' },
+  expired: { color: 'neutral', label: 'Expired' },
+  failed: { color: 'error', label: 'Failed' },
+
+  // Entitlement lots
+  depleted: { color: 'neutral', label: 'Depleted' },
+  exhausted: { color: 'neutral', label: 'Exhausted' },
+  scheduled: { color: 'info', label: 'Scheduled' },
+  suspended: { color: 'warning', label: 'Suspended' },
+
+  /*
+   * Request lifecycle, as reported for a single inference request.
+   *
+   * The distinction the colours carry is whether the figures next to the badge are
+   * final and whether they were charged: `settled` is the only state where the
+   * numbers are authoritative, and `released` means the reservation was returned
+   * and nothing was billed. The in-flight states read as informational because
+   * their token counts are still estimates; `reconciling` is a warning because the
+   * gateway has an ambiguous outcome and the control plane is awaiting a terminal
+   * settlement or expiry.
+   */
+  received: { color: 'info', label: 'Received' },
+  reserved: { color: 'info', label: 'Reserved' },
+  connecting: { color: 'info', label: 'Connecting' },
+  streaming: { color: 'info', label: 'Streaming' },
+  reconciling: { color: 'warning', label: 'Reconciling' },
+  settled: { color: 'success', label: 'Settled' },
+  released: { color: 'neutral', label: 'Released' }
+}
+
+const humanise = (value: string) => {
+  const words = value.replace(/[_-]+/g, ' ').trim()
+
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+const resolved = computed(() => {
+  const key = (props.status ?? '').toLowerCase()
+
+  return tones[key] ?? { color: 'neutral' as Tone, label: key ? humanise(key) : 'Unknown' }
+})
+</script>
+
+<template>
+  <UBadge
+    :color="resolved.color"
+    :variant="variant"
+    :size="size"
+    :icon="resolved.icon"
+    class="whitespace-nowrap"
+  >
+    {{ resolved.label }}
+  </UBadge>
+</template>

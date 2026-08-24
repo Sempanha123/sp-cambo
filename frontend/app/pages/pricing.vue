@@ -1,0 +1,291 @@
+<script setup lang="ts">
+import type { PublicPackage } from '~/types/commerce'
+
+useSeoMeta({
+  title: 'Pricing',
+  description: 'Prepaid token and credit packages for SP Cambo. Every package has a published price, an exact lifetime, and a fixed set of allowed models. No subscriptions and no overage billing.'
+})
+
+const api = useSpApi()
+const auth = useAuthStore()
+const packages = await useSpResource('catalog:packages', () => api.catalog.packages())
+
+const sorted = computed(() => [...(packages.data.value ?? [])].sort((a, b) => a.sort_order - b.sort_order))
+
+/** Groups by the admin-defined family so families can be compared side by side. */
+const groups = computed(() => {
+  const map = new Map<string, { label: string, items: PublicPackage[] }>()
+
+  for (const item of sorted.value) {
+    const group = map.get(item.family) ?? { label: item.family_label, items: [] }
+
+    group.items.push(item)
+    map.set(item.family, group)
+  }
+
+  return [...map.values()]
+})
+
+const billingModeLabel = (mode: PublicPackage['billing_mode']) =>
+  mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance'
+
+const faqs = [
+  {
+    label: 'What happens when a package runs out?',
+    content: 'Requests are refused with a clear machine-readable error instead of being billed as overage. Buy another package and access resumes immediately.'
+  },
+  {
+    label: 'How is a package lifetime measured?',
+    content: 'In exact seconds from activation. A package listed as 24 hours expires exactly 24 hours after it activates, not at midnight.'
+  },
+  {
+    label: 'Which package is spent first?',
+    content: 'The one that expires first. SP Cambo spends first-expiring-first-out so you do not lose value to expiry while a longer-lived package sits unused.'
+  },
+  {
+    label: 'Are estimates ever billed?',
+    content: 'No. During a request SP Cambo reserves an estimate, then settles against the usage the provider actually reported. Interim figures are labelled as estimates in your dashboard until settlement completes.'
+  },
+  {
+    label: 'How do I pay?',
+    content: 'With Bakong KHQR. Scan the QR shown at checkout; access activates once our backend verifies the payment. We never mark an order paid from the browser.'
+  },
+  {
+    label: 'Do packages renew automatically?',
+    content: 'No. Nothing renews and no payment method is stored. Every purchase is a deliberate one-off.'
+  }
+]
+</script>
+
+<template>
+  <div>
+    <UContainer class="py-14 sm:py-16">
+      <div class="max-w-3xl space-y-4">
+        <h1 class="text-4xl font-semibold tracking-tight text-highlighted text-balance">
+          Prepaid packages, published prices
+        </h1>
+        <p class="text-lg text-muted text-pretty">
+          Pick a package, pay once, and use it until it is spent or expires. Prices, sizes and
+          lifetimes below are published by SP Cambo — nothing on this page is illustrative.
+        </p>
+      </div>
+
+      <div class="mt-10">
+        <SpAsyncSection
+          :loading="packages.initialLoading.value"
+          :unavailable="packages.unavailable.value"
+          :failed="packages.failed.value"
+          :empty="packages.isEmpty.value"
+          :offline="packages.error.value?.code === 'network_unreachable'"
+          :error-message="packages.error.value?.message"
+          unavailable-description="Package pricing is published by the SP Cambo control plane. It has not been made available yet, so no prices are shown here. We do not display example prices."
+          empty-title="No packages on sale yet"
+          empty-description="Packages appear here as soon as an administrator publishes them."
+          empty-icon="i-lucide-package"
+          loading-variant="cards"
+          :loading-count="3"
+          @retry="packages.refresh()"
+        >
+          <div class="space-y-12">
+            <section
+              v-for="group in groups"
+              :key="group.label"
+              class="space-y-5"
+            >
+              <SpSectionHeading :title="group.label" />
+
+              <div class="grid gap-5 lg:grid-cols-3">
+                <article
+                  v-for="item in group.items"
+                  :key="item.slug"
+                  class="relative flex flex-col gap-5 rounded-xl border bg-elevated/30 p-6"
+                  :class="item.featured ? 'border-primary/60 ring-1 ring-primary/25' : 'border-default'"
+                >
+                  <UBadge
+                    v-if="item.badge"
+                    class="absolute -top-2.5 right-5"
+                    color="primary"
+                    variant="solid"
+                    size="sm"
+                  >
+                    {{ item.badge }}
+                  </UBadge>
+
+                  <div class="space-y-1.5">
+                    <h3 class="text-lg font-medium text-highlighted">
+                      {{ item.name }}
+                    </h3>
+                    <p
+                      v-if="item.subtitle"
+                      class="text-sm text-muted"
+                    >
+                      {{ item.subtitle }}
+                    </p>
+                  </div>
+
+                  <div class="space-y-1">
+                    <div class="flex items-end gap-2">
+                      <span class="sp-numeric text-3xl font-semibold tracking-tight text-highlighted">
+                        {{ formatMoney(item.price) }}
+                      </span>
+                      <span
+                        v-if="item.compare_at_price"
+                        class="sp-numeric pb-1 text-sm text-dimmed line-through"
+                      >
+                        {{ formatMoney(item.compare_at_price) }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-muted">
+                      One-off payment · {{ billingModeLabel(item.billing_mode) }}
+                    </p>
+                  </div>
+
+                  <dl class="space-y-2.5 border-t border-default pt-4 text-sm">
+                    <div class="flex items-baseline justify-between gap-3">
+                      <dt class="text-muted">
+                        Included
+                      </dt>
+                      <dd class="sp-numeric font-medium text-highlighted">
+                        {{ formatUnits(item.advertised_units) }} {{ item.unit_label }}
+                      </dd>
+                    </div>
+                    <div class="flex items-baseline justify-between gap-3">
+                      <dt class="text-muted">
+                        Lifetime
+                      </dt>
+                      <dd class="font-medium text-highlighted">
+                        {{ formatDurationSeconds(item.duration_seconds) }}
+                      </dd>
+                    </div>
+                    <div class="flex items-baseline justify-between gap-3">
+                      <dt class="text-muted">
+                        Requests / minute
+                      </dt>
+                      <dd class="sp-numeric font-medium text-highlighted">
+                        {{ item.limits.requests_per_minute === null ? 'Standard' : formatCount(item.limits.requests_per_minute) }}
+                      </dd>
+                    </div>
+                    <div class="flex items-baseline justify-between gap-3">
+                      <dt class="text-muted">
+                        Concurrency
+                      </dt>
+                      <dd class="sp-numeric font-medium text-highlighted">
+                        {{ item.limits.concurrency === null ? 'Standard' : formatCount(item.limits.concurrency) }}
+                      </dd>
+                    </div>
+                  </dl>
+
+                  <div
+                    v-if="item.allowed_model_aliases.length > 0"
+                    class="space-y-2"
+                  >
+                    <p class="text-xs font-medium tracking-wide text-muted uppercase">
+                      Works with
+                    </p>
+                    <ul class="flex flex-wrap gap-1.5">
+                      <li
+                        v-for="alias in item.allowed_model_aliases"
+                        :key="alias"
+                      >
+                        <UBadge
+                          color="neutral"
+                          variant="outline"
+                          size="sm"
+                          class="font-mono"
+                        >
+                          {{ alias }}
+                        </UBadge>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <ul class="space-y-1.5 text-sm text-muted">
+                    <li
+                      v-if="item.auto_creates_api_key"
+                      class="flex items-start gap-2"
+                    >
+                      <UIcon
+                        name="i-lucide-check"
+                        class="mt-0.5 size-4 shrink-0 text-primary"
+                      />
+                      API access activation is included after payment
+                    </li>
+                    <li class="flex items-start gap-2">
+                      <UIcon
+                        name="i-lucide-check"
+                        class="mt-0.5 size-4 shrink-0 text-primary"
+                      />
+                      Spent first-expiring-first-out
+                    </li>
+                  </ul>
+
+                  <UButton
+                    :to="auth.authenticated ? `/dashboard/buy?package=${item.slug}` : '/register'"
+                    :color="item.featured ? 'primary' : 'neutral'"
+                    :variant="item.featured ? 'solid' : 'subtle'"
+                    block
+                    class="mt-auto"
+                    trailing-icon="i-lucide-arrow-right"
+                  >
+                    {{ auth.authenticated ? 'Buy this package' : 'Create account to buy' }}
+                  </UButton>
+                </article>
+              </div>
+            </section>
+          </div>
+        </SpAsyncSection>
+      </div>
+    </UContainer>
+
+    <div class="border-y border-default bg-elevated/25">
+      <UContainer class="py-14">
+        <div class="grid gap-8 lg:grid-cols-3">
+          <div class="space-y-3">
+            <h2 class="text-2xl font-semibold tracking-tight text-highlighted">
+              How billing works
+            </h2>
+            <p class="text-sm text-muted text-pretty">
+              Two billing modes, one prepaid balance. Token-quota packages meter weighted units;
+              credit packages draw down a monetary balance using the per-model rates published in
+              the catalogue.
+            </p>
+            <UButton
+              to="/docs/billing"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              trailing-icon="i-lucide-arrow-right"
+            >
+              Billing reference
+            </UButton>
+          </div>
+
+          <div class="lg:col-span-2">
+            <UAccordion :items="faqs" />
+          </div>
+        </div>
+      </UContainer>
+    </div>
+
+    <UContainer class="py-14">
+      <div class="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+        <div class="space-y-1">
+          <p class="font-medium text-highlighted">
+            Reselling SP Cambo access?
+          </p>
+          <p class="text-sm text-muted">
+            Commercial-use allocation is handled separately from retail packages.
+          </p>
+        </div>
+        <UButton
+          to="/resellers"
+          color="neutral"
+          variant="subtle"
+          trailing-icon="i-lucide-arrow-right"
+        >
+          Reseller programme
+        </UButton>
+      </div>
+    </UContainer>
+  </div>
+</template>

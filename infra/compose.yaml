@@ -1,0 +1,145 @@
+name: sp-cambo
+
+x-backend: &backend
+  build: ../backend
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    mysql: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  networks: [control]
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:80"]
+    depends_on: [frontend, backend, gateway, reverb]
+    networks:
+      edge: {}
+      control:
+        ipv4_address: 172.29.0.10
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NUXT_PUBLIC_API_BASE_URL: ${NUXT_PUBLIC_API_BASE_URL:-https://api.spcambo.com/api/v1}
+        NUXT_PUBLIC_INFERENCE_ROOT_URL: ${NUXT_PUBLIC_INFERENCE_ROOT_URL:-https://api.spcambo.com}
+        NUXT_PUBLIC_SITE_URL: ${NUXT_PUBLIC_SITE_URL:-https://spcambo.com}
+        NUXT_PUBLIC_SESSION_MODE: ${NUXT_PUBLIC_SESSION_MODE:-cookie}
+        # Optional. Empty means the surfaces that mention support show no link
+        # rather than an invented address. Also readable at runtime, below.
+        NUXT_PUBLIC_SUPPORT_URL: ${NUXT_PUBLIC_SUPPORT_URL:-}
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      # Publishing or changing the support channel does not need a rebuild: Nitro
+      # reads NUXT_PUBLIC_* when the server boots, so this overrides the baked value.
+      NUXT_PUBLIC_SUPPORT_URL: ${NUXT_PUBLIC_SUPPORT_URL:-}
+      # Public pages are server-rendered from inside this network, where the public
+      # hostname would need DNS/TLS/NAT hairpin. Nginx is reachable directly.
+      NUXT_INTERNAL_API_BASE_URL: ${NUXT_INTERNAL_API_BASE_URL:-http://nginx/api/v1}
+    networks: [edge]
+
+  backend:
+    <<: *backend
+
+  queue:
+    <<: *backend
+    command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=120", "--max-time=3600"]
+    stop_grace_period: 2m
+
+  scheduler:
+    <<: *backend
+    command: ["php", "artisan", "schedule:work"]
+
+  reverb:
+    <<: *backend
+    command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]
+
+  gateway:
+    build: ../gateway
+    env_file: .env
+    restart: unless-stopped
+    environment:
+      GATEWAY_HOST: 0.0.0.0
+      CONTROL_PLANE_BASE_URL: http://nginx:8081
+      OMNIROUTE_BASE_URL: http://omniroute:20128
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      omniroute: { condition: service_started }
+    networks:
+      control:
+        aliases: [gateway.internal]
+      inference: {}
+
+  khqr:
+    build: ../gateway
+    command: ["node", "dist/khqr-server.js"]
+    env_file: .env
+    restart: unless-stopped
+    environment:
+      KHQR_HOST: 0.0.0.0
+      KHQR_PORT: 3011
+    networks:
+      control:
+        aliases: [khqr.internal]
+
+  omniroute:
+    image: ${OMNIROUTE_IMAGE:?Set an exact OmniRoute image tag or digest}
+    restart: unless-stopped
+    env_file: omniroute.env
+    expose: ["20128"]
+    networks: [inference]
+    volumes:
+      - omniroute-data:/data
+
+  mysql:
+    image: mysql:8.4.6
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-sp_cambo}
+      MYSQL_USER: ${DB_USERNAME:-sp_cambo}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes: [mysql-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [control]
+
+  redis:
+    image: redis:8.2.1-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [control]
+
+networks:
+  edge: {}
+  control:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+  inference:
+    internal: true
+
+volumes:
+  mysql-data: {}
+  redis-data: {}
+  omniroute-data: {}

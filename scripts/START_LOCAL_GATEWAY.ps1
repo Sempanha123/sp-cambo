@@ -1,0 +1,50 @@
+﻿param(
+  [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
+)
+
+$ErrorActionPreference = 'Stop'
+$gateway = Join-Path $ProjectRoot 'gateway'
+$backend = Join-Path $ProjectRoot 'backend'
+$gatewayEnv = Join-Path $gateway '.env'
+$backendEnv = Join-Path $backend '.env'
+
+function Get-DotEnvValue([string]$Path, [string]$Name) {
+    $line = Get-Content -LiteralPath $Path |
+        Where-Object { $_ -match ('^\s*' + [regex]::Escape($Name) + '\s*=') } |
+        Select-Object -Last 1
+    if (-not $line) { return $null }
+    $value = (($line -split '=', 2)[1]).Trim().Trim('"').Trim("'")
+    return $value
+}
+
+if (-not (Test-Path $gatewayEnv)) {
+    throw "gateway/.env is missing. Run APPLY_LOCAL_STACK_FIX.ps1 first."
+}
+
+$secret = Get-DotEnvValue $gatewayEnv 'SP_CAMBO_INTERNAL_GATEWAY_SECRET'
+if (-not $secret -or $secret.Length -lt 32) {
+    throw "gateway/.env SP_CAMBO_INTERNAL_GATEWAY_SECRET is missing/short. Run APPLY_LOCAL_STACK_FIX.ps1 first."
+}
+
+# Explicit process variables make startup reliable even if Node dotenv loading changes.
+$env:SP_CAMBO_INTERNAL_GATEWAY_SECRET = $secret
+$env:GATEWAY_HOST = (Get-DotEnvValue $gatewayEnv 'GATEWAY_HOST')
+$env:GATEWAY_PORT = (Get-DotEnvValue $gatewayEnv 'GATEWAY_PORT')
+$env:CONTROL_PLANE_BASE_URL = (Get-DotEnvValue $gatewayEnv 'CONTROL_PLANE_BASE_URL')
+$env:GATEWAY_RATE_STORE = (Get-DotEnvValue $gatewayEnv 'GATEWAY_RATE_STORE')
+
+if (-not $env:GATEWAY_HOST) { $env:GATEWAY_HOST = '127.0.0.1' }
+if (-not $env:GATEWAY_PORT) { $env:GATEWAY_PORT = '3010' }
+if (-not $env:CONTROL_PLANE_BASE_URL) { $env:CONTROL_PLANE_BASE_URL = 'http://127.0.0.1:8000' }
+if (-not $env:GATEWAY_RATE_STORE) { $env:GATEWAY_RATE_STORE = 'memory' }
+
+Set-Location $gateway
+
+Write-Host "Starting SP Cambo inference gateway..." -ForegroundColor Cyan
+Write-Host "HTTP: http://127.0.0.1:3010" -ForegroundColor Green
+Write-Host "Claude Code base: http://127.0.0.1:3010  (NO /v1)" -ForegroundColor Yellow
+Write-Host "OpenAI/Codex base: http://127.0.0.1:3010/v1" -ForegroundColor Yellow
+Write-Host "Internal secret loaded: $($secret.Length) chars (hidden)" -ForegroundColor DarkGray
+Write-Host "Rate store: $env:GATEWAY_RATE_STORE" -ForegroundColor DarkGray
+
+npx pnpm@11.22.0 dev

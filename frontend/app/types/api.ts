@@ -1,0 +1,161 @@
+/**
+ * Core SP Cambo control-plane types: the envelope, the error contract, and the
+ * session/identity shapes shared by every other module.
+ *
+ * Commercial contracts — catalogue, entitlements, orders, payments, usage, keys,
+ * reseller — live in `types/commerce.ts` and `types/reseller.ts`.
+ */
+
+export interface ApiEnvelope<T> {
+  data: T
+}
+
+export interface ApiErrorBody {
+  message: string
+  errors?: Record<string, string[]>
+  /** Stable SP Cambo machine code when the backend supplies one. */
+  code?: string
+}
+
+/**
+ * Stable machine codes the frontend reacts to. Presentation must key off these
+ * rather than parsing human-readable messages.
+ *
+ * `network_unreachable` and `endpoint_unavailable` are frontend-side
+ * classifications, not backend codes.
+ */
+export type SpErrorCode
+  = | 'validation_failed'
+    | 'csrf_token_mismatch'
+    | 'unauthenticated'
+    | 'session_expired'
+    | 'forbidden'
+    | 'account_suspended'
+    | 'not_found'
+    | 'rate_limit_exceeded'
+    | 'conflict'
+    | 'idempotency_conflict'
+    | 'invalid_status_transition'
+    | 'profitability_review_required'
+    | 'payment_pending'
+    | 'payment_verification_failed'
+    | 'insufficient_tokens'
+    | 'insufficient_credits'
+    | 'server_error'
+    | 'network_unreachable'
+    | 'endpoint_unavailable'
+    | 'unknown_error'
+
+export interface AuthenticatedUser {
+  id: number
+  name: string
+  email: string
+  email_verified_at: string | null
+  created_at: string
+  /**
+   * Sorted role names and deduplicated effective permission names published by
+   * the control plane for elevated-surface discovery. Backend middleware remains
+   * the authority for every request.
+   */
+  roles: string[]
+  permissions: string[]
+}
+
+export interface AuthResponse {
+  user: AuthenticatedUser
+  /** Present for bearer clients; null for first-party HttpOnly cookie sessions. */
+  token: string | null
+}
+
+export interface RegisterInput {
+  name: string
+  email: string
+  password: string
+  password_confirmation: string
+}
+
+export interface LoginInput {
+  email: string
+  password: string
+}
+
+/** Superset of both credential forms, so one component can render either. */
+export interface AuthFormState {
+  name: string
+  email: string
+  password: string
+  password_confirmation: string
+}
+
+export interface HealthResponse {
+  status: string
+}
+
+/**
+ * `GET /me/sessions` — one row per live Sanctum bearer token.
+ *
+ * The browser transport is bearer mode, so these are real personal-access-token
+ * sessions rather than cookie sessions. The token value itself is never returned;
+ * only the safe id, its label and its timestamps.
+ */
+export interface SessionSummary {
+  id: string
+  name: string
+  /** The session this browser is currently using. It cannot be revoked from here. */
+  current: boolean
+  last_used_at: string | null
+  created_at: string
+}
+
+export interface PasswordChangeInput {
+  current_password: string
+  password: string
+  password_confirmation: string
+}
+
+export interface PasswordResetInput {
+  token: string
+  email: string
+  password: string
+  password_confirmation: string
+}
+
+/** Google OAuth callback parameters */
+export interface GoogleCallbackInput {
+  code: string
+  state: string
+  [key: string]: unknown
+}
+
+/** Google OAuth linking callback parameters */
+export interface GoogleLinkCallbackInput {
+  code: string
+  state: string
+  [key: string]: unknown
+}
+
+// Public API key checker response
+export interface PublicApiKeyStatus {
+  valid: boolean
+  masked_key?: string
+  status?: string
+  package?: string
+  allowed_models?: string[]
+  created_at?: string
+  expires_at?: string
+  time_remaining?: string
+  quota_remaining?: number | null
+  credit_remaining?: number | null
+  tokens_used?: { input: number, output: number, total: number }
+  total_spend?: number
+  last_used?: string | null
+  recent_requests?: Array<{
+    time: string
+    model: string
+    status: string
+    input_tokens: number
+    output_tokens: number
+    charge: number
+  }>
+  error?: string
+}

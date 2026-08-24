@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: false
+overrides:
+  axios: 1.19.0
