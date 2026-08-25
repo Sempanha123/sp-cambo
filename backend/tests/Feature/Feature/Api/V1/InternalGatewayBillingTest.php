@@ -49,6 +49,42 @@ class InternalGatewayBillingTest extends TestCase
         $this->assertStringNotContainsString('private-route', $response->getContent());
     }
 
+    public function test_inspection_excludes_lots_outside_the_key_model_scope(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        $otherModel = AiModel::query()->create([
+            'provider_id' => $alias->model->provider_id,
+            'internal_model_id' => 'private-other-route',
+            'family' => 'claude',
+            'family_label' => 'Claude',
+            'commercial_resale_verified_at' => now(),
+            'enabled' => true,
+        ]);
+        $otherAlias = ModelAlias::query()->create([
+            'ai_model_id' => $otherModel->id,
+            'public_alias' => 'other-model',
+            'display_name' => 'Other Model',
+            'capabilities' => ['messages_api' => true],
+            'limits' => [],
+            'status' => 'active',
+            'enabled' => true,
+            'customer_visible' => true,
+        ]);
+
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 100, []);
+        $this->grant($user, $alias, 'CREDIT_BALANCE', 200, []);
+        $this->grant($user, $otherAlias, 'TOKEN_QUOTA', 900, []);
+        $this->grant($user, $otherAlias, 'CREDIT_BALANCE', 800, []);
+
+        $this->gateway()
+            ->postJson('/api/v1/internal/gateway/inspect', ['customer_key' => $created['secret']])
+            ->assertOk()
+            ->assertJsonCount(1, 'data.allowed_models')
+            ->assertJsonPath('data.allowed_models.0.id', $alias->public_alias)
+            ->assertJsonPath('data.balances.token_quota_remaining', '100')
+            ->assertJsonPath('data.balances.credit_remaining', '200');
+    }
+
     public function test_preflight_authoritatively_selects_token_billing_reserves_and_settles_weighted_usage_idempotently(): void
     {
         [$user, $alias, $created] = $this->customer(['max_output_tokens' => 50]);

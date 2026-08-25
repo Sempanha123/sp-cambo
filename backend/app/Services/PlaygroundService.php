@@ -21,9 +21,8 @@ class PlaygroundService
     ) {}
 
     /**
-     * Hosted Playground funding order is intentionally:
-     * daily free -> redeem-code bonus -> purchased/promotion entitlement.
-     * Daily free is never available to ordinary customer API keys.
+     * Hosted Playground credentials may spend only the daily free lot.
+     * Paid and redeemed entitlements remain exclusive to customer API keys.
      *
      * @return array<string,mixed>
      */
@@ -38,17 +37,8 @@ class PlaygroundService
             $daily = $this->ensureDailyLot($user, $limit, $freeAliases);
         }
 
-        $lots = EntitlementLot::query()
-            ->where('user_id', $user->id)
-            ->where('status', 'ACTIVE')
-            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->get();
-
         $spendable = static fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units);
         $dailyRemaining = $daily ? $spendable($daily->fresh()) : 0;
-        $redeemTokens = $lots->where('source_type', 'REDEEM_CODE')->where('billing_mode', 'TOKEN_QUOTA')->sum($spendable);
-        $paidTokens = $lots->whereIn('source_type', ['ORDER', 'PROMOTION', 'RESELLER_TRANSFER'])->where('billing_mode', 'TOKEN_QUOTA')->sum($spendable);
-        $paidCredit = $lots->whereIn('source_type', ['ORDER', 'PROMOTION', 'RESELLER_TRANSFER', 'REDEEM_CODE'])->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable);
 
         $configuredDefault = is_string($setting->default_model_alias) ? $setting->default_model_alias : null;
         $defaultAlias = $configuredDefault !== null && in_array($configuredDefault, $freeAliases, true)
@@ -62,10 +52,12 @@ class PlaygroundService
             'reset_at' => $daily?->expires_at?->toAtomString() ?? now()->addDay()->startOfDay()->toAtomString(),
             'max_output_tokens' => max(1, (int) $setting->max_output_tokens),
             'free_model_aliases' => $freeAliases,
-            'redeem_token_remaining' => (int) $redeemTokens,
-            'paid_token_remaining' => (int) $paidTokens,
-            'paid_credit_remaining' => (int) $paidCredit,
-            'fallback_available' => ($redeemTokens + $paidTokens + $paidCredit) > 0,
+            // Retain response fields for older clients without exposing paid or
+            // redeemed balances as hosted Playground funding.
+            'redeem_token_remaining' => 0,
+            'paid_token_remaining' => 0,
+            'paid_credit_remaining' => 0,
+            'fallback_available' => false,
             'default_model_alias' => $defaultAlias,
             'allow_model_switching' => (bool) $setting->allow_model_switching,
         ];
@@ -92,7 +84,7 @@ class PlaygroundService
         if (! $this->hasFundingForAlias($user, $alias->public_alias)) {
             throw new PlaygroundException(
                 'playground_quota_exhausted',
-                'Your daily free quota and available redeem/paid balance are exhausted for this model.',
+                'Your daily free Playground quota is exhausted for this model.',
                 402
             );
         }
@@ -201,6 +193,7 @@ class PlaygroundService
         return EntitlementLot::query()
             ->where('user_id', $user->id)
             ->where('status', 'ACTIVE')
+            ->where('source_type', 'PLAYGROUND_DAILY')
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->whereJsonContains('allowed_model_aliases', $alias)
             ->whereColumn('remaining_units', '>', 'reserved_units')

@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -47,36 +48,103 @@ return new class extends Migration
             });
         }
 
-        // A failed CREATE can leave this table behind before Laravel records
-        // the migration. It cannot contain valid application data yet, so
-        // rebuild only this incomplete table before applying short FK names.
-        if (Schema::hasTable('telegram_announcement_deliveries')) {
-            Schema::drop('telegram_announcement_deliveries');
+        if (! Schema::hasTable('telegram_announcement_deliveries')) {
+            Schema::create('telegram_announcement_deliveries', function (Blueprint $table): void {
+                $table->id();
+                $table->ulid('telegram_announcement_id');
+                $table->ulid('telegram_account_id');
+                $table->string('status', 24)->default('PENDING')->index();
+                $table->timestamp('attempted_at')->nullable();
+                $table->text('last_error')->nullable();
+                $table->timestamps();
+
+                // Keep explicit names below MySQL's 64-character identifier limit.
+                $table->foreign('telegram_announcement_id', 'tg_ann_delivery_announcement_fk')
+                    ->references('id')
+                    ->on('telegram_announcements')
+                    ->cascadeOnDelete();
+                $table->foreign('telegram_account_id', 'tg_ann_delivery_account_fk')
+                    ->references('id')
+                    ->on('telegram_accounts')
+                    ->cascadeOnDelete();
+                $table->unique(
+                    ['telegram_announcement_id', 'telegram_account_id'],
+                    'tg_announcement_account_unique'
+                );
+            });
+
+            return;
         }
 
-        Schema::create('telegram_announcement_deliveries', function (Blueprint $table): void {
-            $table->id();
-            $table->ulid('telegram_announcement_id');
-            $table->ulid('telegram_account_id');
-            $table->string('status', 24)->default('PENDING')->index();
-            $table->timestamp('attempted_at')->nullable();
-            $table->text('last_error')->nullable();
-            $table->timestamps();
+        // MySQL can commit part of a CREATE TABLE before Laravel records the
+        // migration. Repair that partial schema in place so valid deliveries
+        // from a recovery or prior deployment are never discarded.
+        foreach ([
+            'telegram_announcement_id' => fn (Blueprint $table) => $table->ulid('telegram_announcement_id')->nullable(),
+            'telegram_account_id' => fn (Blueprint $table) => $table->ulid('telegram_account_id')->nullable(),
+            'status' => fn (Blueprint $table) => $table->string('status', 24)->default('PENDING'),
+            'attempted_at' => fn (Blueprint $table) => $table->timestamp('attempted_at')->nullable(),
+            'last_error' => fn (Blueprint $table) => $table->text('last_error')->nullable(),
+            'created_at' => fn (Blueprint $table) => $table->timestamp('created_at')->nullable(),
+            'updated_at' => fn (Blueprint $table) => $table->timestamp('updated_at')->nullable(),
+        ] as $column => $definition) {
+            if (! Schema::hasColumn('telegram_announcement_deliveries', $column)) {
+                Schema::table('telegram_announcement_deliveries', $definition);
+            }
+        }
 
-            // Keep explicit names below MySQL's 64-character identifier limit.
-            $table->foreign('telegram_announcement_id', 'tg_ann_delivery_announcement_fk')
-                ->references('id')
-                ->on('telegram_announcements')
-                ->cascadeOnDelete();
-            $table->foreign('telegram_account_id', 'tg_ann_delivery_account_fk')
-                ->references('id')
-                ->on('telegram_accounts')
-                ->cascadeOnDelete();
-            $table->unique(
+        if (! Schema::hasIndex('telegram_announcement_deliveries', ['status'])) {
+            Schema::table('telegram_announcement_deliveries', function (Blueprint $table): void {
+                $table->index('status');
+            });
+        }
+
+        $duplicatePairExists = DB::table('telegram_announcement_deliveries')
+            ->select(['telegram_announcement_id', 'telegram_account_id'])
+            ->whereNotNull('telegram_announcement_id')
+            ->whereNotNull('telegram_account_id')
+            ->groupBy(['telegram_announcement_id', 'telegram_account_id'])
+            ->havingRaw('COUNT(*) > 1')
+            ->exists();
+        if (
+            ! $duplicatePairExists
+            && ! Schema::hasIndex(
+                'telegram_announcement_deliveries',
                 ['telegram_announcement_id', 'telegram_account_id'],
-                'tg_announcement_account_unique'
-            );
-        });
+                'unique',
+            )
+        ) {
+            Schema::table('telegram_announcement_deliveries', function (Blueprint $table): void {
+                $table->unique(
+                    ['telegram_announcement_id', 'telegram_account_id'],
+                    'tg_announcement_account_unique',
+                );
+            });
+        }
+
+        $hasIncompleteReferences = DB::table('telegram_announcement_deliveries')
+            ->whereNull('telegram_announcement_id')
+            ->orWhereNull('telegram_account_id')
+            ->exists();
+        if (! $hasIncompleteReferences) {
+            if (! Schema::hasForeignKey('telegram_announcement_deliveries', ['telegram_announcement_id'])) {
+                Schema::table('telegram_announcement_deliveries', function (Blueprint $table): void {
+                    $table->foreign('telegram_announcement_id', 'tg_ann_delivery_announcement_fk')
+                        ->references('id')
+                        ->on('telegram_announcements')
+                        ->cascadeOnDelete();
+                });
+            }
+
+            if (! Schema::hasForeignKey('telegram_announcement_deliveries', ['telegram_account_id'])) {
+                Schema::table('telegram_announcement_deliveries', function (Blueprint $table): void {
+                    $table->foreign('telegram_account_id', 'tg_ann_delivery_account_fk')
+                        ->references('id')
+                        ->on('telegram_accounts')
+                        ->cascadeOnDelete();
+                });
+            }
+        }
     }
 
     public function down(): void

@@ -251,7 +251,10 @@ class OrderPromotionTest extends TestCase
 
     private function package(): Package
     {
-        return Package::query()->create(['slug' => 'claude-20m', 'name' => 'Claude 20M', 'billing_mode' => 'TOKEN_QUOTA', 'family' => 'claude', 'family_label' => 'Claude', 'advertised_units' => 20_000_000, 'unit_label' => 'tokens', 'price_minor' => 150, 'currency' => 'USD', 'currency_exponent' => 2, 'duration_seconds' => 86400, 'limits' => [], 'enabled' => true, 'customer_visible' => true]);
+        $package = Package::query()->create(['slug' => 'claude-20m', 'name' => 'Claude 20M', 'billing_mode' => 'TOKEN_QUOTA', 'family' => 'claude', 'family_label' => 'Claude', 'advertised_units' => 20_000_000, 'unit_label' => 'tokens', 'price_minor' => 150, 'currency' => 'USD', 'currency_exponent' => 2, 'duration_seconds' => 86400, 'limits' => [], 'enabled' => true, 'customer_visible' => true]);
+        $this->publishPackage($package);
+
+        return $package;
     }
 
     private function promotion(Package $package, array $overrides = []): Promotion

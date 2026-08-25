@@ -110,12 +110,28 @@ describe('customer chat Playground', () => {
     expect(page.text()).toContain('Hello from the model')
   })
 
-  it('shows buy and redeem actions after the selected model exhausts all spendable funding', async () => {
-    getPlaygroundQuota.mockResolvedValue(quota({ remaining: 0 }))
+  it('does not use legacy paid fallback after daily Playground quota is exhausted', async () => {
+    getPlaygroundQuota.mockResolvedValue(quota({
+      remaining: 0,
+      redeem_token_remaining: 700,
+      paid_token_remaining: 800,
+      paid_credit_remaining: 900,
+      fallback_available: true
+    }))
     const page = await mountPlayground()
-    expect(page.text()).toContain('Continue chatting')
-    expect(page.text()).toContain('Buy tokens / credit')
-    expect(page.find('input[placeholder="Redeem code"]').exists()).toBe(true)
+    const textarea = page.find('textarea')
+    await textarea.setValue('Do not send this message')
+    await textarea.trigger('keydown.enter')
+    await nextTick()
+
+    expect(runPlayground).not.toHaveBeenCalled()
+    expect(page.get('button[type="button"][disabled]').text()).toContain('Send')
+    expect(page.text()).toContain('Daily Playground quota exhausted')
+    expect(page.text()).toContain('Paid and redeemed balances cannot fund Playground requests')
+    expect(page.text()).toContain('fund customer API keys only')
+    expect(page.text()).not.toContain('Continue chatting')
+    expect(page.text()).not.toContain('Fallback tokens')
+    expect(page.text()).not.toContain('Redeem + purchased tokens')
   })
 
   it('locks the model selector when admin disables customer model switching', async () => {

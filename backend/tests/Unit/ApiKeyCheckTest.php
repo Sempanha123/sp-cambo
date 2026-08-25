@@ -14,6 +14,7 @@ use App\Models\UsageRecord;
 use App\Models\User;
 use App\Services\EntitlementService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ApiKeyCheckTest extends TestCase
@@ -80,9 +81,10 @@ class ApiKeyCheckTest extends TestCase
         int $units,
         array $billingRules = [],
         ?\DateTimeInterface $expiresAt = null,
+        string $sourceType = 'ADMIN_GRANT',
     ): EntitlementLot {
         return app(EntitlementService::class)->grant($user, [
-            'source_type' => 'ADMIN_GRANT',
+            'source_type' => $sourceType,
             'source_id' => uniqid('grant-', true),
             'package_name' => $mode === 'CREDIT_BALANCE' ? 'Credit Test' : 'Token Test',
             'family_label' => 'Claude',
@@ -185,6 +187,63 @@ class ApiKeyCheckTest extends TestCase
         $response->assertJsonPath('data.credit_remaining.minor', '1250000');
         $response->assertJsonPath('data.credit_remaining.currency', 'USD');
         $response->assertJsonPath('data.credit_remaining.exponent', 6);
+    }
+
+    public function test_playground_key_check_and_status_report_only_daily_free_quota(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+        DB::table('playground_credentials')->insert([
+            'user_id' => $user->id,
+            'api_key_id' => $issued['key']->id,
+            'secret_ciphertext' => 'test-only-not-read',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $daily = $this->grant($user, $alias, 'TOKEN_QUOTA', 400, [], null, 'PLAYGROUND_DAILY');
+        $daily->update(['reserved_units' => 40]);
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 900, [], null, 'ADMIN_GRANT');
+        $this->grant($user, $alias, 'CREDIT_BALANCE', 2_000_000, [], null, 'ORDER');
+
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.quota_remaining', '360')
+            ->assertJsonPath('data.credit_remaining', null)
+            ->assertJsonCount(0, 'data.credit_balances')
+            ->assertJsonPath('data.package', 'Token Test');
+
+        $this->actingAs($user)
+            ->getJson("/api/v1/me/api-keys/{$issued['key']->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.token_quota_remaining', '360')
+            ->assertJsonPath('data.credit_remaining', null)
+            ->assertJsonCount(0, 'data.credit_balances');
+    }
+
+    public function test_customer_key_check_and_status_exclude_daily_playground_quota(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], null, 'PLAYGROUND_DAILY');
+        $paid = $this->grant($user, $alias, 'TOKEN_QUOTA', 100, [], null, 'ADMIN_GRANT');
+        $paid->update(['reserved_units' => 25]);
+        $credit = $this->grant($user, $alias, 'CREDIT_BALANCE', 900_000, [], null, 'ORDER');
+        $credit->update(['reserved_units' => 100_000]);
+
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.quota_remaining', '75')
+            ->assertJsonPath('data.credit_remaining.minor', '800000');
+
+        $this->actingAs($user)
+            ->getJson("/api/v1/me/api-keys/{$issued['key']->id}/status")
+            ->assertOk()
+            ->assertJsonPath('data.token_quota_remaining', '75')
+            ->assertJsonPath('data.credit_remaining.minor', '800000');
     }
 
     public function test_check_reports_effective_expired_and_disabled_status(): void

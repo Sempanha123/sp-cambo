@@ -231,7 +231,11 @@ class ApiKeyController extends Controller
                     $query->orWhereJsonContains('allowed_model_aliases', $alias);
                 }
             })
-            ->when(! $isPlaygroundKey, fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'))
+            ->when(
+                $isPlaygroundKey,
+                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+            )
             ->orderBy('created_at')
             ->orderBy('id')
             ->get(['billing_mode', 'remaining_units', 'reserved_units', 'currency', 'currency_exponent', 'package_name']);

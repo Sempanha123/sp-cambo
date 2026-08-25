@@ -34,10 +34,28 @@ class GatewayBillingController extends Controller
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
             ->exists();
-        $lots = EntitlementLot::query()->where('user_id', $key->user_id)->where('status', 'ACTIVE')
+        $allowedAliases = $key->modelAliases->pluck('public_alias')->filter()->values();
+        $lotsQuery = EntitlementLot::query()
+            ->where('user_id', $key->user_id)
+            ->where('status', 'ACTIVE')
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->when(! $isPlaygroundKey, fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'))
-            ->get();
+            ->when(
+                $isPlaygroundKey,
+                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
+                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
+            );
+
+        if ($allowedAliases->isEmpty()) {
+            $lotsQuery->whereRaw('1 = 0');
+        } else {
+            $lotsQuery->where(function ($query) use ($allowedAliases): void {
+                foreach ($allowedAliases as $alias) {
+                    $query->orWhereJsonContains('allowed_model_aliases', $alias);
+                }
+            });
+        }
+
+        $lots = $lotsQuery->get();
 
         return response()->json(['data' => [
             'key_id' => $key->id,

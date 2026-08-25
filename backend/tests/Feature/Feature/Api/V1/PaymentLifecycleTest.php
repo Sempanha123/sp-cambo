@@ -142,7 +142,8 @@ class PaymentLifecycleTest extends TestCase
     private function order(): array
     {
         $user = User::factory()->create();
-        Package::query()->firstOrCreate(['slug' => 'paid-package'], ['name' => 'Paid Package', 'billing_mode' => 'TOKEN_QUOTA', 'family' => 'claude', 'family_label' => 'Claude', 'advertised_units' => 1_000_000, 'unit_label' => 'tokens', 'price_minor' => 150, 'currency' => 'USD', 'currency_exponent' => 2, 'duration_seconds' => 86400, 'limits' => [], 'enabled' => true, 'customer_visible' => true]);
+        $package = Package::query()->firstOrCreate(['slug' => 'paid-package'], ['name' => 'Paid Package', 'billing_mode' => 'TOKEN_QUOTA', 'family' => 'claude', 'family_label' => 'Claude', 'advertised_units' => 1_000_000, 'unit_label' => 'tokens', 'price_minor' => 150, 'currency' => 'USD', 'currency_exponent' => 2, 'duration_seconds' => 86400, 'limits' => [], 'enabled' => true, 'customer_visible' => true]);
+        $this->publishPackage($package);
         $orderId = $this->actingAs($user)->postJson('/api/v1/orders', ['package_slug' => 'paid-package', 'idempotency_key' => 'payment-order-'.strtolower((string) Str::ulid())])->assertCreated()->json('data.id');
 
         return [$user, $orderId];

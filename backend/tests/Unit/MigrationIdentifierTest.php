@@ -2,9 +2,12 @@
 
 namespace Tests\Unit;
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Schema\Grammars\MySqlGrammar;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class MigrationIdentifierTest extends TestCase
@@ -109,6 +112,184 @@ class MigrationIdentifierTest extends TestCase
         }
     }
 
+    public function test_telegram_storefront_migration_preserves_existing_delivery_data(): void
+    {
+        Artisan::call('migrate:fresh', ['--force' => true]);
+
+        $announcementId = (string) Str::ulid();
+        $accountId = (string) Str::ulid();
+        $tenantId = (string) Str::ulid();
+        $now = now();
+
+        DB::table('tenants')->insert([
+            'id' => $tenantId,
+            'name' => 'Migration recovery tenant',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $userId = DB::table('users')->insertGetId([
+            'tenant_id' => $tenantId,
+            'name' => 'Migration recovery user',
+            'email' => 'migration-recovery@example.test',
+            'password' => 'not-used',
+            'status' => 'ACTIVE',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('telegram_accounts')->insert([
+            'id' => $accountId,
+            'tenant_id' => $tenantId,
+            'user_id' => $userId,
+            'telegram_user_id' => '987654321',
+            'chat_id' => '987654321',
+            'username' => 'migration_recovery',
+            'locale' => 'en',
+            'announcements_enabled' => true,
+            'linked_at' => $now,
+            'last_seen_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('telegram_announcements')->insert([
+            'id' => $announcementId,
+            'event_key' => 'migration-recovery-event',
+            'kind' => 'SYSTEM',
+            'title' => 'Migration recovery',
+            'body' => 'Preserve this delivery.',
+            'status' => 'QUEUED',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('telegram_announcement_deliveries')->insert([
+            'telegram_announcement_id' => $announcementId,
+            'telegram_account_id' => $accountId,
+            'status' => 'SENT',
+            'attempted_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $migration = require database_path('migrations/2026_08_26_000060_upgrade_telegram_storefront.php');
+        $migration->up();
+
+        $this->assertDatabaseHas('telegram_announcement_deliveries', [
+            'telegram_announcement_id' => $announcementId,
+            'telegram_account_id' => $accountId,
+            'status' => 'SENT',
+        ]);
+        $this->assertSame(1, DB::table('telegram_announcement_deliveries')->count());
+    }
+
+    public function test_telegram_storefront_migration_recovers_missing_delivery_table(): void
+    {
+        Artisan::call('migrate:fresh', ['--force' => true]);
+        Schema::drop('telegram_announcement_deliveries');
+
+        $migration = require database_path('migrations/2026_08_26_000060_upgrade_telegram_storefront.php');
+        $migration->up();
+
+        $this->assertCompleteTelegramDeliverySchema();
+    }
+
+    public function test_telegram_storefront_migration_repairs_partial_delivery_table_without_dropping_it(): void
+    {
+        Artisan::call('migrate:fresh', ['--force' => true]);
+        Schema::drop('telegram_announcement_deliveries');
+        Schema::create('telegram_announcement_deliveries', function (Blueprint $table): void {
+            $table->id();
+            $table->ulid('telegram_announcement_id')->nullable();
+            $table->ulid('telegram_account_id')->nullable();
+        });
+
+        $migration = require database_path('migrations/2026_08_26_000060_upgrade_telegram_storefront.php');
+        $migration->up();
+
+        $this->assertCompleteTelegramDeliverySchema();
+    }
+
+    public function test_telegram_storefront_migration_preserves_incomplete_partial_rows(): void
+    {
+        Artisan::call('migrate:fresh', ['--force' => true]);
+        Schema::drop('telegram_announcement_deliveries');
+        Schema::create('telegram_announcement_deliveries', function (Blueprint $table): void {
+            $table->id();
+            $table->ulid('telegram_announcement_id')->nullable();
+        });
+        $deliveryId = DB::table('telegram_announcement_deliveries')->insertGetId([
+            'telegram_announcement_id' => null,
+        ]);
+
+        $migration = require database_path('migrations/2026_08_26_000060_upgrade_telegram_storefront.php');
+        $migration->up();
+
+        $this->assertDatabaseHas('telegram_announcement_deliveries', [
+            'id' => $deliveryId,
+            'telegram_announcement_id' => null,
+            'telegram_account_id' => null,
+            'status' => 'PENDING',
+        ]);
+        $this->assertFalse(Schema::hasForeignKey(
+            'telegram_announcement_deliveries',
+            ['telegram_announcement_id'],
+        ));
+        $this->assertFalse(Schema::hasForeignKey(
+            'telegram_announcement_deliveries',
+            ['telegram_account_id'],
+        ));
+    }
+
+    public function test_telegram_storefront_migration_uses_mysql_safe_delivery_identifiers(): void
+    {
+        $connection = app('db')->connection();
+        $connection->useDefaultSchemaGrammar();
+        $originalGrammar = $connection->getSchemaGrammar();
+        $connection->setSchemaGrammar(new MySqlGrammar($connection));
+
+        try {
+            $blueprint = new Blueprint($connection, 'telegram_announcement_deliveries');
+            $blueprint->create();
+            $blueprint->id();
+            $blueprint->ulid('telegram_announcement_id');
+            $blueprint->ulid('telegram_account_id');
+            $blueprint->string('status', 24)->default('PENDING')->index();
+            $blueprint->timestamp('attempted_at')->nullable();
+            $blueprint->text('last_error')->nullable();
+            $blueprint->timestamps();
+            $blueprint->foreign('telegram_announcement_id', 'tg_ann_delivery_announcement_fk')
+                ->references('id')
+                ->on('telegram_announcements')
+                ->cascadeOnDelete();
+            $blueprint->foreign('telegram_account_id', 'tg_ann_delivery_account_fk')
+                ->references('id')
+                ->on('telegram_accounts')
+                ->cascadeOnDelete();
+            $blueprint->unique(
+                ['telegram_announcement_id', 'telegram_account_id'],
+                'tg_announcement_account_unique',
+            );
+
+            $identifiers = [];
+            foreach ($blueprint->toSql() as $statement) {
+                preg_match_all('/(?:constraint|index|unique) `([^`]+)`/i', $statement, $matches);
+                $identifiers = array_merge($identifiers, $matches[1]);
+            }
+            $identifiers = array_values(array_unique($identifiers));
+
+            $this->assertContains('tg_ann_delivery_announcement_fk', $identifiers);
+            $this->assertContains('tg_ann_delivery_account_fk', $identifiers);
+            $this->assertContains('tg_announcement_account_unique', $identifiers);
+            foreach ($identifiers as $identifier) {
+                $this->assertLessThanOrEqual(
+                    64,
+                    strlen($identifier),
+                    "MySQL identifier [{$identifier}] exceeds 64 characters.",
+                );
+            }
+        } finally {
+            $connection->setSchemaGrammar($originalGrammar);
+        }
+    }
+
     public function test_reseller_migration_compiles_with_mysql_safe_identifier_lengths(): void
     {
         $connection = app('db')->connection();
@@ -144,5 +325,34 @@ class MigrationIdentifierTest extends TestCase
         } finally {
             $connection->setSchemaGrammar($originalGrammar);
         }
+    }
+
+    private function assertCompleteTelegramDeliverySchema(): void
+    {
+        $this->assertTrue(Schema::hasTable('telegram_announcement_deliveries'));
+        $this->assertTrue(Schema::hasColumns('telegram_announcement_deliveries', [
+            'id',
+            'telegram_announcement_id',
+            'telegram_account_id',
+            'status',
+            'attempted_at',
+            'last_error',
+            'created_at',
+            'updated_at',
+        ]));
+        $this->assertTrue(Schema::hasIndex('telegram_announcement_deliveries', ['status']));
+        $this->assertTrue(Schema::hasIndex(
+            'telegram_announcement_deliveries',
+            ['telegram_announcement_id', 'telegram_account_id'],
+            'unique',
+        ));
+        $this->assertTrue(Schema::hasForeignKey(
+            'telegram_announcement_deliveries',
+            ['telegram_announcement_id'],
+        ));
+        $this->assertTrue(Schema::hasForeignKey(
+            'telegram_announcement_deliveries',
+            ['telegram_account_id'],
+        ));
     }
 }
