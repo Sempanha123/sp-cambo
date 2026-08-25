@@ -567,14 +567,30 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                     <table class="w-full text-xs">
                       <thead>
                         <tr class="border-b text-left text-muted">
-                          <th class="pb-2">Time</th>
-                          <th class="pb-2">Public Model</th>
-                          <th class="pb-2">Status</th>
-                          <th class="pb-2 text-right">Input</th>
-                          <th class="pb-2 text-right">Output</th>
-                          <th class="pb-2 text-right">Total</th>
-                          <th class="pb-2 text-right">Customer Charge</th>
-                          <th class="pb-2 text-right">Latency</th>
+                          <th class="pb-2">
+                            Time
+                          </th>
+                          <th class="pb-2">
+                            Public Model
+                          </th>
+                          <th class="pb-2">
+                            Status
+                          </th>
+                          <th class="pb-2 text-right">
+                            Input
+                          </th>
+                          <th class="pb-2 text-right">
+                            Output
+                          </th>
+                          <th class="pb-2 text-right">
+                            Total
+                          </th>
+                          <th class="pb-2 text-right">
+                            Customer Charge
+                          </th>
+                          <th class="pb-2 text-right">
+                            Latency
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -917,7 +933,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   Tokens remaining
                 </dt>
                 <dd class="sp-numeric text-default">
-                  {{ testReport.token_quota_remaining === null ? 'Not reported by this check' : formatUnits(testReport.token_quota_remaining) }}
+                  {{ testReport.token_quota_remaining === null ? 'Not applicable' : formatUnits(testReport.token_quota_remaining) }}
                 </dd>
               </div>
               <div class="flex items-center justify-between gap-4 px-4 py-2.5">
@@ -925,7 +941,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   Credit remaining
                 </dt>
                 <dd class="sp-numeric text-default">
-                  {{ testReport.credit_remaining ? formatMoney(testReport.credit_remaining) : 'Not reported by this check' }}
+                  {{ testReport.credit_remaining ? formatMoney(testReport.credit_remaining) : testReport.credit_balances?.length ? testReport.credit_balances.map(formatMoney).join(' + ') : 'Not applicable' }}
                 </dd>
               </div>
               <div class="flex items-center justify-between gap-4 px-4 py-2.5">
@@ -938,21 +954,15 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
               </div>
             </dl>
 
-            <!--
-              "Not reported" above is not "nothing left". This check answers whether the
-              key works; the balance it draws on is published separately, and pointing at
-              it is the only honest way to read a blank.
-            -->
-            <p
-              v-if="testReport.token_quota_remaining === null || !testReport.credit_remaining"
-              class="text-xs text-muted"
-            >
-              A blank balance here means this check does not report it, not that there is
-              nothing left. Your quota and credit are on
+            <p class="text-xs text-muted">
+              This non-billable check reports only balances this credential can actually spend,
+              after active reservations. “Not applicable” means the key has no active balance in
+              that billing mode. See
               <NuxtLink
                 to="/dashboard/entitlements"
                 class="text-primary underline underline-offset-2"
-              >your entitlements</NuxtLink>.
+              >your entitlements</NuxtLink>
+              for the lot-by-lot ledger.
             </p>
 
             <div class="space-y-1.5">

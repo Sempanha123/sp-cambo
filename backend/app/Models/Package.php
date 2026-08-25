@@ -24,6 +24,7 @@ class Package extends Model
     {
         return $query->where('enabled', true)->where('customer_visible', true)
             ->where(fn (Builder $q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
-            ->where(fn (Builder $q) => $q->whereNull('ends_at')->orWhere('ends_at', '>', now()));
+            ->where(fn (Builder $q) => $q->whereNull('ends_at')->orWhere('ends_at', '>', now()))
+            ->whereHas('modelAliases', fn (Builder $alias) => $alias->published());
     }
 }

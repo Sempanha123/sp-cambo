@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\Admin\ModelAliasController as AdminModelAliasCon
 use App\Http\Controllers\Api\V1\Admin\ModelPricingController as AdminModelPricingController;
 use App\Http\Controllers\Api\V1\Admin\OverviewController as AdminOverviewController;
 use App\Http\Controllers\Api\V1\Admin\PackageController as AdminPackageController;
+use App\Http\Controllers\Api\V1\Admin\PlaygroundSettingController as AdminPlaygroundSettingController;
 use App\Http\Controllers\Api\V1\Admin\PromotionController as AdminPromotionController;
 use App\Http\Controllers\Api\V1\Admin\ProviderAliasController;
 use App\Http\Controllers\Api\V1\Admin\ProviderConnectionRevisionController;
@@ -81,6 +82,8 @@ Route::prefix('v1')->group(function (): void {
 
         Route::get('providers/{provider}/models', [ProviderModelController::class, 'index']);
         Route::post('providers/{provider}/models', [ProviderModelController::class, 'store']);
+        Route::post('providers/{provider}/models/discover', [ProviderModelController::class, 'discover']);
+        Route::post('providers/{provider}/models/import', [ProviderModelController::class, 'import']);
         Route::put('providers/{provider}/models/{model}', [ProviderModelController::class, 'update']);
         Route::delete('providers/{provider}/models/{model}', [ProviderModelController::class, 'destroy']);
 
@@ -104,6 +107,8 @@ Route::prefix('v1')->group(function (): void {
         Route::get('promotions', [AdminPromotionController::class, 'index']);
         Route::post('promotions', [AdminPromotionController::class, 'store']);
         Route::put('promotions/{promotion}', [AdminPromotionController::class, 'update']);
+        Route::get('playground-settings', [AdminPlaygroundSettingController::class, 'show']);
+        Route::put('playground-settings', [AdminPlaygroundSettingController::class, 'update']);
         Route::get('redeem-codes', [AdminRedeemCodeController::class, 'index']);
         Route::post('redeem-codes', [AdminRedeemCodeController::class, 'store'])->middleware('throttle:20,1');
         Route::put('redeem-codes/{redeemCode}', [AdminRedeemCodeController::class, 'update']);

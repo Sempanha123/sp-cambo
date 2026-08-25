@@ -37,7 +37,7 @@ const aliases = await useSpResource('admin:model-aliases', () => api.admin.model
 
 const all = computed(() => aliases.data.value ?? [])
 const priced = computed(() => all.value.filter(alias => !isAliasUnpriced(alias)))
-const onSale = computed(() => all.value.filter(alias => alias.enabled && alias.customer_visible))
+const onSale = computed(() => all.value.filter(alias => alias.publication_ready ?? (alias.enabled && alias.customer_visible)))
 const needingVerification = computed(() => aliasesNeedingCostVerification(all.value))
 
 type Filter = 'all' | 'needs_cost' | 'unpriced' | 'on_sale'
@@ -229,8 +229,8 @@ const submit = async () => {
       error-title="Model pricing could not be loaded"
       forbidden-permission="catalog.manage"
       :forbidden-code="aliases.error.value?.code"
-      empty-title="No models exist yet"
-      empty-description="Models are registered in the control plane. This page prices the ones that exist; it does not create them."
+      empty-title="No public models exist yet"
+      empty-description="Private provider models do not appear here directly. Open Providers, create or discover a private model, then create a public alias mapped to it. The alias will appear here automatically for pricing."
       empty-icon="i-lucide-route"
       loading-variant="cards"
       :loading-count="3"
@@ -338,6 +338,15 @@ const submit = async () => {
                     size="sm"
                   >
                     Enabled · hidden
+                  </UBadge>
+                  <UBadge
+                    v-if="alias.publication_ready === false"
+                    color="warning"
+                    variant="subtle"
+                    size="sm"
+                    :title="(alias.publication_blockers ?? []).join(', ')"
+                  >
+                    Publication blocked
                   </UBadge>
                 </div>
                 <code class="block font-mono text-xs text-dimmed">{{ alias.public_alias }}</code>

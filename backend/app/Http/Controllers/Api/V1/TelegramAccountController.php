@@ -25,9 +25,10 @@ class TelegramAccountController extends Controller
         return response()->json(['data' => $telegram->createLinkToken($request->user())], 201);
     }
 
-    public function destroy(Request $request): JsonResponse
+    public function destroy(Request $request, TelegramCommerceService $telegram): JsonResponse
     {
-        TelegramAccount::query()->where('user_id', $request->user()->id)->whereNull('revoked_at')->update(['revoked_at' => now()]);
+        $telegram->unlink($request->user());
+
         return response()->json(['data' => ['linked' => false]]);
     }
 }

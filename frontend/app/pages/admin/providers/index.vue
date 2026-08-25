@@ -447,7 +447,7 @@ useSeoMeta({
             name="enabled"
             help="Whether this provider is enabled for use."
           >
-            <UToggle
+            <USwitch
               v-model="editForm.enabled"
               on-icon="i-lucide-check"
               off-icon="i-lucide-x"
@@ -530,7 +530,7 @@ useSeoMeta({
             name="enabled"
             help="Whether this provider is enabled for use."
           >
-            <UToggle
+            <USwitch
               v-model="createForm.enabled"
               on-icon="i-lucide-check"
               off-icon="i-lucide-x"

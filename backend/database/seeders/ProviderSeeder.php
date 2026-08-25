@@ -131,19 +131,27 @@ class ProviderSeeder extends Seeder
         );
 
         // Create provider connection revision
-        ProviderConnectionRevision::query()->updateOrCreate(
+        $credential = (string) env('OMNIROUTE_API_KEY', 'test-secret');
+        $origin = rtrim((string) env('OMNIROUTE_BASE_URL', 'http://127.0.0.1:20128'), '/');
+        if (str_ends_with(strtolower($origin), '/v1')) {
+            $origin = substr($origin, 0, -3);
+        }
+
+        $revision = ProviderConnectionRevision::query()->firstOrCreate(
             ['provider_id' => $provider->id, 'route_version' => 1],
             [
-                'origin' => env('OMNIROUTE_BASE_URL', 'http://127.0.0.1:20128/v1'),
+                'origin' => $origin,
                 'connection_type' => 'omniroute',
-                'credential' => env('OMNIROUTE_API_KEY', 'test-secret'),
-                'credential_suffix' => 'test',
-                'timeout_ms' => 120000,
+                'credential' => $credential,
+                'credential_suffix' => ctype_alnum(substr($credential, -4)) ? substr($credential, -4) : null,
+                'timeout_ms' => 60000,
                 'policy_version' => 1,
                 'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
                 'last_probe_status' => 'SUCCESS',
                 'last_probe_at' => now(),
             ]
         );
+
+        $provider->activateConnectionRevision($revision);
     }
 }

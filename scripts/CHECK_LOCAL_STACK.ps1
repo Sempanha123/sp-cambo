@@ -30,6 +30,21 @@ if (-not $khqrOk) {
     Write-Host "  Start: .\scripts\START_KHQR.ps1" -ForegroundColor Yellow
 }
 
+
+if ($laravelOk) {
+  try {
+    $status = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8000/api/v1/status' -TimeoutSec 5
+    $control = $status.data.components | Where-Object { $_.key -eq 'control_plane' } | Select-Object -First 1
+    if ($control -and $control.status -eq 'operational') {
+      Write-Host "[OK] Scheduler/control plane heartbeat is healthy" -ForegroundColor Green
+    } else {
+      Write-Host "[WARN] Scheduler/control plane is degraded. Keep .\scripts\START_SCHEDULER.ps1 running for automatic payment and Telegram delivery." -ForegroundColor Yellow
+    }
+  } catch {
+    Write-Host "[WARN] Could not read public system status: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
+
 if ($ApiKey -and $gatewayOk) {
   try {
     $headers = @{ 'x-api-key' = $ApiKey }

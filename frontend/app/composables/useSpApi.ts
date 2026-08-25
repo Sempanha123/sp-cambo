@@ -22,6 +22,7 @@ import type {
   AdminRedeemCode,
   AdminRedeemCodeInput,
   AdminRedeemCodeUpdateInput,
+  AdminPlaygroundSettings,
   AdminProvider,
   AdminProviderModel,
   AdminProviderAlias,
@@ -29,12 +30,15 @@ import type {
   ModelAliasPricingInput,
   PackageProfitability,
   ProviderActiveConnectionUpdateInput,
+  ProviderConnectionProbeResult,
   ProviderConnectionRevision,
   ProviderConnectionRevisionInput,
   ProviderConnectionRevisionUpdateInput,
   ProviderConnectionStatusUpdateInput,
   ProviderModelInput,
-  ProviderAliasInput
+  ProviderAliasInput,
+  DiscoveredProviderModel,
+  ProviderModelImportResult
 } from '~/types/admin'
 import type {
   ResellerAllocation,
@@ -64,7 +68,8 @@ import type {
   SystemStatus,
   UsageSummary,
   TelegramAccountStatus,
-  TelegramLinkToken
+  TelegramLinkToken,
+  PlaygroundQuota
 } from '~/types/commerce'
 
 interface SpRequestOptions {
@@ -291,9 +296,9 @@ export function useSpApi() {
         request<RequestActivity[]>('/me/activity', { collection: true, query }),
       usageSummary: (query?: { from?: string, to?: string, bucket?: 'hour' | 'day' }) =>
         request<UsageSummary>('/me/usage/summary', { query }),
-      playgroundQuota: () => request<{ limit: number, remaining: number, reset_at: string, enabled: boolean }>('/me/playground/quota'),
-      runPlayground: (input: { model: string, protocol: 'messages' | 'responses' | 'chat_completions', system_prompt?: string | null, prompt: string, max_output_tokens: number, temperature?: number | null }) =>
-        request<{ response: unknown, request_id: string, quota: { limit: number, remaining: number, reset_at: string, enabled: boolean } }>('/me/playground/run', { method: 'POST', body: { ...input } }),
+      playgroundQuota: () => request<PlaygroundQuota>('/me/playground/quota'),
+      runPlayground: (input: { model: string, protocol: 'messages' | 'responses' | 'chat_completions', system_prompt?: string | null, prompt?: string | null, messages?: Array<{ role: 'user' | 'assistant', content: string }>, max_output_tokens: number, temperature?: number | null }) =>
+        request<{ response: unknown, message: string, request_id: string, quota: PlaygroundQuota }>('/me/playground/run', { method: 'POST', body: { ...input } }),
       redeemCode: (input: { code: string, idempotency_key: string }) =>
         request<{ entitlement_id: string, package_name: string, billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE', units: string, expires_at: string | null, allowed_model_aliases: string[] }>('/redeem-codes/redeem', { method: 'POST', body: { ...input } }),
       telegram: () => request<TelegramAccountStatus>('/me/telegram'),
@@ -415,6 +420,10 @@ export function useSpApi() {
       updatePromotion: (id: string, input: AdminPromotionInput) =>
         request<AdminPromotion>(`/admin/promotions/${apiSegment(id)}`, { method: 'PUT', body: { ...input } }),
 
+      playgroundSettings: () => request<AdminPlaygroundSettings>('/admin/playground-settings'),
+      updatePlaygroundSettings: (input: AdminPlaygroundSettings) =>
+        request<AdminPlaygroundSettings>('/admin/playground-settings', { method: 'PUT', body: { ...input } }),
+
       redeemCodes: () => request<AdminRedeemCode[]>('/admin/redeem-codes', { collection: true }),
       createRedeemCode: (input: AdminRedeemCodeInput) =>
         request<AdminRedeemCode>('/admin/redeem-codes', { method: 'POST', body: { ...input } }),
@@ -447,7 +456,7 @@ export function useSpApi() {
         request<AdminProvider>(`/admin/providers/${apiSegment(providerId)}/active-connection-revision`, { method: 'PUT', body: { ...input } }),
       /** Probe a connection revision */
       probeProviderConnectionRevision: (providerId: string, revisionId: string) =>
-        request<ProviderConnectionRevision>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}/probe`, { method: 'POST' }),
+        request<ProviderConnectionProbeResult>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}/probe`, { method: 'POST' }),
       /** Update the status of a connection revision */
       updateProviderConnectionRevisionStatus: (providerId: string, revisionId: string, input: ProviderConnectionStatusUpdateInput) =>
         request<ProviderConnectionRevision>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}/status`, { method: 'PATCH', body: { ...input } }),
@@ -457,6 +466,12 @@ export function useSpApi() {
       /** Create a new private model for a provider */
       createProviderModel: (providerId: string, input: ProviderModelInput) =>
         request<AdminProviderModel>(`/admin/providers/${apiSegment(providerId)}/models`, { method: 'POST', body: { ...input } }),
+      /** Discover model ids advertised by the provider's active READY connection. */
+      discoverProviderModels: (providerId: string) =>
+        request<DiscoveredProviderModel[]>(`/admin/providers/${apiSegment(providerId)}/models/discover`, { method: 'POST', collection: true }),
+      /** Import selected discovered model ids as private provider models. */
+      importProviderModels: (providerId: string, modelIds: string[]) =>
+        request<ProviderModelImportResult>(`/admin/providers/${apiSegment(providerId)}/models/import`, { method: 'POST', body: { model_ids: modelIds } }),
       /** Update a private model for a provider */
       updateProviderModel: (providerId: string, modelId: string, input: ProviderModelInput) =>
         request<AdminProviderModel>(`/admin/providers/${apiSegment(providerId)}/models/${apiSegment(modelId)}`, { method: 'PUT', body: { ...input } }),

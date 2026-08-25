@@ -1,7 +1,7 @@
 param(
   [string]$ProjectRoot = ".",
   [string]$RemoteUrl = "https://github.com/Sempanha123/sp-cambo.git",
-  [string]$CommitMessage = "V7: isolate Playground quota and harden provider revision editing"
+  [string]$CommitMessage = "V9: harden automatic payment recovery and Telegram relinking"
 )
 
 $ErrorActionPreference = 'Stop'

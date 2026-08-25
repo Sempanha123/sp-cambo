@@ -250,13 +250,16 @@ class PaymentService
             );
         }
 
+        $intervalSeconds = max(15, (int) config('services.bakong.reconcile_interval_seconds', 60));
+        $expiredGraceSeconds = max(0, (int) config('services.bakong.reconcile_expired_grace_seconds', 900));
+
         $ids = PaymentAttempt::query()
-            ->where('status', 'PENDING')
-            ->where('expires_at', '>', now())
+            ->whereIn('status', ['PENDING', 'EXPIRED'])
+            ->where('expires_at', '>=', now()->subSeconds($expiredGraceSeconds))
             ->where(
                 fn ($query) => $query
                     ->whereNull('last_checked_at')
-                    ->orWhere('last_checked_at', '<=', now()->subMinutes(15))
+                    ->orWhere('last_checked_at', '<=', now()->subSeconds($intervalSeconds))
             )
             ->orderByRaw('last_checked_at IS NOT NULL')
             ->orderBy('last_checked_at')

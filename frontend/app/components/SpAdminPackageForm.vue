@@ -105,7 +105,8 @@ const aliasChoices = computed(() => props.aliases.map(alias => ({
   idUsable: /^\d+$/.test(alias.id),
   publicAlias: alias.public_alias,
   displayName: alias.display_name,
-  onSale: alias.enabled && alias.customer_visible,
+  onSale: alias.publication_ready ?? (alias.enabled && alias.customer_visible),
+  publicationBlockers: alias.publication_blockers ?? [],
   costVerified: alias.upstream_cost?.verified_at != null,
   unpriced: isAliasUnpriced(alias)
 })))
@@ -529,7 +530,7 @@ const submit = () => {
                 v-else-if="aliasChoices.length === 0"
                 class="text-sm text-muted"
               >
-                No models are registered in the control plane, so no package can allow any.
+                No public model aliases exist yet. Create a private model under Providers, map it to a public alias, then return here. Pricing and packages intentionally use public aliases rather than private upstream IDs.
               </p>
 
               <div
@@ -567,11 +568,12 @@ const submit = () => {
                     </UBadge>
                     <UBadge
                       v-if="!choice.onSale"
-                      color="neutral"
+                      color="warning"
                       variant="subtle"
                       size="sm"
+                      :title="choice.publicationBlockers.join(', ')"
                     >
-                      Not on sale
+                      Publication blocked
                     </UBadge>
                   </div>
                   <code class="block font-mono text-xs text-dimmed">{{ choice.publicAlias }}</code>
@@ -666,8 +668,6 @@ const submit = () => {
               label="Include API access activation after payment"
               description="After payment, SP Cambo creates a secure activation claim. The customer can create a new key or attach the purchased model access to an existing active key."
             />
-
-
           </div>
 
           <div class="grid gap-4 sm:grid-cols-2">

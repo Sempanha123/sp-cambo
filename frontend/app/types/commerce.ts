@@ -114,6 +114,22 @@ export interface PublicPackage {
 }
 
 /** `GET /me/balance` — aggregate of spendable entitlement lots. */
+
+export interface PlaygroundQuota {
+  enabled: boolean
+  limit: number
+  remaining: number
+  reset_at: string
+  max_output_tokens: number
+  free_model_aliases: string[]
+  redeem_token_remaining: number
+  paid_token_remaining: number
+  paid_credit_remaining: number
+  fallback_available: boolean
+  default_model_alias: string | null
+  allow_model_switching: boolean
+}
+
 export interface BalanceSummary {
   token_quota: {
     /** Spendable metered units across all non-expired TOKEN_QUOTA lots. */
@@ -203,6 +219,7 @@ export interface ApiKeyStatusReport {
   allowed_model_aliases: string[]
   token_quota_remaining: string | null
   credit_remaining: MoneyAmount | null
+  credit_balances?: MoneyAmount[]
   limits: ApiKeySummary['limits']
   service_status: 'operational' | 'degraded' | 'unavailable'
 }
@@ -360,7 +377,6 @@ export interface ExternalIdentity {
   avatar_url: string | null
   created_at: string
 }
-
 
 export interface TelegramAccountStatus {
   linked: boolean

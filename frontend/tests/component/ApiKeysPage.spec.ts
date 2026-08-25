@@ -485,18 +485,19 @@ describe('api keys ceilings', () => {
   })
 
   /**
-   * The key check reports no balance at all today. A blank next to "Tokens remaining"
-   * reads as "you have none", which would send a customer to buy quota they already
-   * hold — so the blank has to say what it is.
+   * The non-billable check now reports the credential's actual spendable pool.
+   * `null` means that billing mode is not applicable, while an exact zero must
+   * remain visible as zero rather than being mistaken for a missing balance.
    */
-  it('does not let an unreported balance read as an empty one', async () => {
+  it('distinguishes an inapplicable balance mode from an exact zero balance', async () => {
     testKey.mockResolvedValue({
       valid: true,
       status: 'ACTIVE',
       expires_at: null,
       allowed_model_aliases: [],
-      token_quota_remaining: null,
+      token_quota_remaining: '0',
       credit_remaining: null,
+      credit_balances: [],
       limits: {
         requests_per_minute: null,
         tokens_per_minute: null,
@@ -513,8 +514,9 @@ describe('api keys ceilings', () => {
     await selectMenuItem(vm, plane.keys[0]!, 'Test key')
     await nextTick()
 
-    expect(documentText()).toContain('Not reported by this check')
-    expect(squashed(documentText())).toContain('not that there is nothing left')
+    expect(squashed(documentText())).toContain('Tokens remaining 0')
+    expect(squashed(documentText())).toContain('Credit remaining Not applicable')
+    expect(squashed(documentText())).toContain('reports only balances this credential can actually spend')
   })
 })
 

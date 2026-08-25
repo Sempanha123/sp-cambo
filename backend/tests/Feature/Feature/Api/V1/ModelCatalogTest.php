@@ -5,6 +5,7 @@ namespace Tests\Feature\Feature\Api\V1;
 use App\Models\AiModel;
 use App\Models\ModelAlias;
 use App\Models\Provider;
+use App\Models\ProviderConnectionRevision;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -20,6 +21,20 @@ class ModelCatalogTest extends TestCase
     public function test_only_commercially_verified_published_aliases_are_returned_without_internal_ids(): void
     {
         $provider = Provider::query()->create(['name' => 'Private router', 'slug' => 'private-router', 'enabled' => true]);
+        $revision = ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => 'http://127.0.0.1:3010',
+            'connection_type' => 'omniroute',
+            'credential' => 'test-provider-credential',
+            'credential_suffix' => 'test',
+            'timeout_ms' => 30000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+            'last_probe_status' => 'SUCCESS',
+            'last_probe_at' => now(),
+        ]);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
         $verified = AiModel::query()->create([
             'provider_id' => $provider->id,
             'internal_model_id' => 'internal-secret-route-name',
@@ -39,7 +54,7 @@ class ModelCatalogTest extends TestCase
                 'context_tokens' => 200000, 'max_output_tokens' => 64000,
             ],
             'limits' => ['requests_per_minute' => 60, 'tokens_per_minute' => 200000, 'concurrency' => 4],
-            'status' => 'available',
+            'status' => 'active',
             'enabled' => true,
             'customer_visible' => true,
         ]);
@@ -56,7 +71,7 @@ class ModelCatalogTest extends TestCase
         ModelAlias::query()->create([
             'ai_model_id' => $unverified->id, 'public_alias' => 'must-not-publish',
             'display_name' => 'Hidden', 'capabilities' => [], 'limits' => [],
-            'status' => 'available', 'enabled' => true, 'customer_visible' => true,
+            'status' => 'active', 'enabled' => true, 'customer_visible' => true,
         ]);
 
         $response = $this->getJson('/api/v1/catalog/models')->assertOk()->assertJsonCount(1, 'data');

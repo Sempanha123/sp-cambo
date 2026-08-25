@@ -7,6 +7,7 @@ use App\Models\AiModel;
 use App\Models\AuditLog;
 use App\Models\ModelAlias;
 use App\Models\Provider;
+use App\Models\ProviderConnectionRevision;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\ApiKeySecretService;
@@ -372,8 +373,22 @@ class ResellerApiTest extends TestCase
     private function alias(): ModelAlias
     {
         $provider = Provider::query()->create(['name' => 'Provider', 'slug' => 'provider', 'enabled' => true]);
+        $revision = ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => 'http://127.0.0.1:3010',
+            'connection_type' => 'omniroute',
+            'credential' => 'test-provider-credential',
+            'credential_suffix' => 'test',
+            'timeout_ms' => 30000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+            'last_probe_status' => 'SUCCESS',
+            'last_probe_at' => now(),
+        ]);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
         $model = AiModel::query()->create(['provider_id' => $provider->id, 'internal_model_id' => 'private', 'family' => 'claude', 'family_label' => 'Claude', 'commercial_resale_verified_at' => now(), 'enabled' => true]);
 
-        return ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => [], 'limits' => [], 'status' => 'available', 'enabled' => true, 'customer_visible' => true]);
+        return ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => [], 'limits' => [], 'status' => 'active', 'enabled' => true, 'customer_visible' => true]);
     }
 }

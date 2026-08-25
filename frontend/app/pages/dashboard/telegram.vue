@@ -1,105 +1,94 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'dashboard', middleware: ['auth'] })
-useSeoMeta({ title: 'Telegram bot', robots: 'noindex, nofollow' })
+useSeoMeta({ title: 'Telegram Store', robots: 'noindex, nofollow' })
 
-const api = useSpApi()
-const toast = useToast()
-const account = await useSpResource('me:telegram', () => api.account.telegram(), { server: false })
-const creating = ref(false)
-const unlinking = ref(false)
-const linkToken = ref<{ token: string, expires_at: string } | null>(null)
-
-const createToken = async () => {
-  creating.value = true
-  try {
-    linkToken.value = await api.account.createTelegramLinkToken()
-    toast.add({ title: 'Link code created', description: 'Send this one-time code to the SP Cambo Telegram bot within 10 minutes.', color: 'success' })
-  } catch (error) {
-    toast.add({ title: 'Could not create link code', description: error instanceof Error ? error.message : 'Please try again.', color: 'error' })
-  } finally {
-    creating.value = false
-  }
-}
-
-const unlink = async () => {
-  unlinking.value = true
-  try {
-    await api.account.unlinkTelegram()
-    linkToken.value = null
-    await account.refresh()
-    toast.add({ title: 'Telegram disconnected', color: 'success' })
-  } catch (error) {
-    toast.add({ title: 'Could not disconnect Telegram', description: error instanceof Error ? error.message : 'Please try again.', color: 'error' })
-  } finally {
-    unlinking.value = false
-  }
-}
+const config = useRuntimeConfig()
+const botUsername = computed(() => String(config.public.telegramBotUsername || '').trim().replace(/^@/, ''))
+const botUrl = computed(() => botUsername.value ? `https://t.me/${botUsername.value}?start=store` : null)
 </script>
 
 <template>
   <SpDashboardPage
-    title="Telegram bot"
-    description="Link Telegram securely, browse plans, pay with Bakong KHQR, and receive your SP Cambo API access after server-side payment verification."
-    eyebrow="Account integration"
+    title="Telegram Store"
+    eyebrow="Standalone sales channel"
+    description="Customers do not need to link a website account. They open the bot, choose a product, pay by Bakong KHQR, and receive a newly generated SP Cambo API key automatically after server-side payment verification."
   >
     <div class="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(20rem,.85fr)]">
-      <UCard>
+      <UCard class="sp-premium-card">
         <template #header>
           <div>
-            <h2 class="font-semibold text-highlighted">Connection</h2>
-            <p class="mt-1 text-sm text-muted">A one-time dashboard code binds this SP Cambo account to exactly one Telegram chat.</p>
+            <h2 class="font-semibold text-highlighted">
+              Customer flow
+            </h2>
+            <p class="mt-1 text-sm text-muted">
+              The Telegram identity becomes its own SP Cambo customer workspace automatically.
+            </p>
           </div>
         </template>
 
-        <SpResourceState
-          :loading="account.initialLoading.value"
-          :unavailable="account.unavailable.value"
-          :failed="account.failed.value"
-          :offline="account.error.value?.code === 'network_unreachable'"
-          :error-message="account.error.value?.message"
-          error-title="Telegram status could not be loaded"
-          @retry="account.refresh()"
-        >
-          <div v-if="account.data.value?.linked" class="space-y-4">
-            <UAlert
-              color="success"
+        <div class="space-y-5">
+          <ol class="space-y-4 text-sm text-muted">
+            <li><strong class="text-highlighted">1.</strong> Customer opens the bot and sends <code>/start</code> or <code>/shop</code>.</li>
+            <li><strong class="text-highlighted">2.</strong> The bot shows only published API-access packages with inline <strong>Buy</strong> buttons.</li>
+            <li><strong class="text-highlighted">3.</strong> Tapping Buy creates the exact order and returns its Bakong KHQR payment payload.</li>
+            <li><strong class="text-highlighted">4.</strong> The server reconciles payment automatically; the customer may also tap <strong>I've paid — check now</strong>.</li>
+            <li><strong class="text-highlighted">5.</strong> After verified payment, the bot creates and sends a one-time API key, model aliases, Claude Code setup commands, and the no-login Key Checker URL.</li>
+          </ol>
+
+          <div class="flex flex-wrap gap-3">
+            <UButton
+              v-if="botUrl"
+              :to="botUrl"
+              target="_blank"
+              icon="i-lucide-send"
+              trailing-icon="i-lucide-external-link"
+            >
+              Open @{{ botUsername }}
+            </UButton>
+            <UButton
+              to="/public/key-checker"
+              color="neutral"
               variant="subtle"
-              icon="i-lucide-circle-check"
-              title="Telegram is linked"
-              :description="account.data.value.username ? `@${account.data.value.username}` : 'Your Telegram chat is connected.'"
-            />
-            <UButton color="error" variant="soft" icon="i-lucide-unlink" :loading="unlinking" @click="unlink">
-              Disconnect Telegram
+              icon="i-lucide-gauge"
+            >
+              Open public Key Checker
             </UButton>
           </div>
 
-          <div v-else class="space-y-4">
-            <UButton icon="i-lucide-link" :loading="creating" @click="createToken">Create one-time link code</UButton>
-            <UAlert v-if="linkToken" color="info" variant="subtle" title="Send this command to the SP Cambo bot">
-              <template #description>
-                <div class="mt-2 space-y-2">
-                  <code class="block overflow-x-auto rounded-md bg-default px-3 py-2 text-sm">/link {{ linkToken.token }}</code>
-                  <p class="text-xs">Expires {{ new Date(linkToken.expires_at).toLocaleString() }}. The code becomes unusable after it is linked.</p>
-                </div>
-              </template>
-            </UAlert>
-          </div>
-        </SpResourceState>
+          <UAlert
+            v-if="!botUrl"
+            color="warning"
+            variant="subtle"
+            icon="i-lucide-settings"
+            title="Set the public bot username"
+            description="Set NUXT_PUBLIC_TELEGRAM_BOT_USERNAME to your bot username (without @) so this dashboard can open it directly. The Telegram webhook itself uses TELEGRAM_BOT_TOKEN on Laravel."
+          />
+        </div>
       </UCard>
 
-      <UCard>
-        <template #header>
-          <h2 class="font-semibold text-highlighted">Bot purchase flow</h2>
-        </template>
-        <ol class="space-y-4 text-sm text-muted">
-          <li><strong class="text-highlighted">1.</strong> Link this dashboard account with <code>/link CODE</code>.</li>
-          <li><strong class="text-highlighted">2.</strong> Send <code>/plans</code> and then <code>/buy PLAN_SLUG</code>.</li>
-          <li><strong class="text-highlighted">3.</strong> Pay the Bakong KHQR generated for that exact order.</li>
-          <li><strong class="text-highlighted">4.</strong> Use <code>/check</code>, or let the server reconciler verify it automatically.</li>
-          <li><strong class="text-highlighted">5.</strong> After verification, the bot delivers a new one-time SP Cambo API key, base URLs and purchased model aliases.</li>
-        </ol>
-        <UAlert class="mt-5" color="warning" variant="subtle" icon="i-lucide-shield-alert" title="Treat delivered API keys like passwords" description="The full secret is sent once. Do not forward or publish that Telegram message." />
-      </UCard>
+      <div class="space-y-5">
+        <UAlert
+          color="success"
+          variant="subtle"
+          icon="i-lucide-badge-check"
+          title="No /link code required"
+          description="The old one-time dashboard link flow is not part of the normal purchase experience. Existing linked Telegram accounts remain usable, but a new Telegram customer can buy directly."
+        />
+        <UAlert
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-shield-check"
+          title="API keys are secrets"
+          description="The full generated key is delivered once in the customer's private Telegram chat. The public Key Checker accepts that key without website login, so customers should never forward the key or the delivery message."
+        />
+        <UAlert
+          color="neutral"
+          variant="subtle"
+          icon="i-lucide-refresh-cw"
+          title="Automatic payment delivery"
+          description="Keep the Laravel scheduler running. telegram:reconcile-purchases checks pending Telegram orders every minute and delivers the API key when the payment provider confirms the order."
+        />
+      </div>
     </div>
   </SpDashboardPage>
 </template>

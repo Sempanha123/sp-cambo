@@ -30,6 +30,8 @@ return [
         'merchant_city' => env('BAKONG_MERCHANT_CITY', 'Phnom Penh'),
         'currency' => env('BAKONG_CURRENCY', 'USD'),
         'attempt_ttl_seconds' => (int) env('BAKONG_PAYMENT_ATTEMPT_TTL_SECONDS', 300),
+        'reconcile_interval_seconds' => max(15, (int) env('BAKONG_RECONCILE_INTERVAL_SECONDS', 60)),
+        'reconcile_expired_grace_seconds' => max(0, (int) env('BAKONG_RECONCILE_EXPIRED_GRACE_SECONDS', 900)),
         'khqr_generator_url' => env('BAKONG_KHQR_GENERATOR_URL'),
         'khqr_generator_secret' => env('BAKONG_KHQR_GENERATOR_SECRET'),
     ],

@@ -36,6 +36,9 @@ export default defineNuxtConfig({
       // Overridden by NUXT_PUBLIC_INFERENCE_ROOT_URL.
       inferenceRootUrl: 'http://127.0.0.1:3010',
 
+      // Public Telegram bot username without @. Used only to open the standalone store.
+      telegramBotUsername: '',
+
       // Marketing/canonical site origin, used for SEO metadata.
       siteUrl: 'http://localhost:3000',
 
@@ -118,7 +121,6 @@ export default defineNuxtConfig({
     }
   },
 
-
   eslint: {
     config: {
       stylistic: {
@@ -156,10 +158,13 @@ export default defineNuxtConfig({
         'lucide:eye',
         'lucide:eye-off',
         'lucide:file-text',
+        'lucide:flask-conical',
+        'lucide:gift',
         'lucide:gauge',
         'lucide:hourglass',
         'lucide:key',
         'lucide:key-round',
+        'lucide:layers-3',
         'lucide:layout-dashboard',
         'lucide:loader-circle',
         'lucide:lock-keyhole',
@@ -168,11 +173,14 @@ export default defineNuxtConfig({
         'lucide:menu',
         'lucide:package',
         'lucide:plug-zap',
+        'lucide:plus',
         'lucide:qr-code',
         'lucide:receipt',
         'lucide:refresh-cw',
         'lucide:rocket',
         'lucide:route',
+        'lucide:send',
+        'lucide:shopping-bag',
         'lucide:server',
         'lucide:settings',
         'lucide:shield-check',

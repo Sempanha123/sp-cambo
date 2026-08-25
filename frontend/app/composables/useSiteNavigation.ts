@@ -143,6 +143,11 @@ export function useSiteNavigation() {
         to: '/admin/promotions',
         active: route.path.startsWith('/admin/promotions')
       }, {
+        label: 'Playground settings',
+        icon: 'i-lucide-flask-conical',
+        to: '/admin/playground',
+        active: route.path.startsWith('/admin/playground')
+      }, {
         label: 'Redeem codes',
         icon: 'i-lucide-gift',
         to: '/admin/redeem-codes',

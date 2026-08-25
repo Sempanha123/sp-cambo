@@ -10,7 +10,7 @@
         "laravel/framework": "^13.17",
         "laravel/reverb": "^1.11",
         "laravel/sanctum": "^4.0",
-        "laravel/socialite": "*",
+        "laravel/socialite": "^5.30",
         "laravel/tinker": "^3.0",
         "predis/predis": "^3.6",
         "pusher/pusher-php-server": "^7.3"

@@ -53,11 +53,18 @@ return new class extends Migration
             });
         }
 
-        DB::table('orders')
-            ->join('users', 'users.id', '=', 'orders.user_id')
-            ->whereNull('orders.tenant_id')
-            ->whereNotNull('users.tenant_id')
-            ->update(['orders.tenant_id' => DB::raw('users.tenant_id')]);
+        DB::table('users')
+            ->whereNotNull('tenant_id')
+            ->orderBy('id')
+            ->select(['id', 'tenant_id'])
+            ->chunkById(100, function ($users): void {
+                foreach ($users as $user) {
+                    DB::table('orders')
+                        ->where('user_id', $user->id)
+                        ->whereNull('tenant_id')
+                        ->update(['tenant_id' => $user->tenant_id]);
+                }
+            }, 'id');
     }
 
     public function down(): void

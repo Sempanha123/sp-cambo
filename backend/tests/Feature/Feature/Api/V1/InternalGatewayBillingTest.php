@@ -322,7 +322,7 @@ class InternalGatewayBillingTest extends TestCase
         ]);
         $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
         $model = AiModel::query()->create(['provider_id' => $provider->id, 'internal_model_id' => 'private-route', 'family' => 'claude', 'family_label' => 'Claude', 'commercial_resale_verified_at' => now(), 'enabled' => true]);
-        $alias = ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => ['messages_api' => true, 'max_output_tokens' => 100], 'limits' => [], 'status' => 'available', 'enabled' => true, 'customer_visible' => true]);
+        $alias = ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => ['messages_api' => true, 'max_output_tokens' => 100], 'limits' => [], 'status' => 'active', 'enabled' => true, 'customer_visible' => true]);
         $created = app(ApiKeySecretService::class)->create($user, ['label' => 'Gateway', ...$keyAttributes], [$alias->id]);
 
         return [$user, $alias, $created];

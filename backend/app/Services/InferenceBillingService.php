@@ -72,58 +72,70 @@ class InferenceBillingService
                 ->where('status', 'ACTIVE')
                 ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
                 ->whereJsonContains('allowed_model_aliases', $alias->public_alias)
-                ->when(
-                    $isPlaygroundKey,
-                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-                )
+                // Ordinary API keys must never spend the hosted Playground's
+                // free daily allowance. The encrypted system Playground key is
+                // allowed to fall through from free -> redeem -> paid lots.
+                ->when(! $isPlaygroundKey, fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'))
                 ->orderByRaw('expires_at IS NULL')
                 ->orderBy('expires_at')
                 ->orderBy('created_at')
                 ->lockForUpdate()
                 ->get();
 
-            foreach (['TOKEN_QUOTA', 'CREDIT_BALANCE'] as $billingMode) {
-                /** @var Collection<int, EntitlementLot> $matching */
-                $matching = $lots->where('billing_mode', $billingMode);
-                if ($matching->isEmpty()) {
-                    continue;
-                }
+            $sourceBuckets = $isPlaygroundKey
+                ? ['PLAYGROUND_DAILY', 'REDEEM_CODE', 'ORDER', 'PROMOTION', 'RESELLER_TRANSFER', '__OTHER__']
+                : ['__ALL__'];
 
-                foreach ($this->groups($matching) as $group) {
-                    $snapshot = $this->snapshot($billingMode, $alias, $group->firstOrFail());
-                    $snapshot['request_fingerprint'] = $requestFingerprint;
-                    $snapshot['route_revision_id'] = (string) $revision->id;
-                    $snapshot['route_version'] = (int) $revision->route_version;
-                    $snapshot['internal_model_id'] = (string) $model->internal_model_id;
-                    $snapshot['estimated_input_tokens'] = $estimatedInputTokens;
-                    $snapshot['requested_max_output_tokens'] = $boundedOutput;
-                    $reserveUnits = $this->reservationUnits($snapshot, $estimatedInputTokens, $boundedOutput);
-                    $available = $group->sum(fn (EntitlementLot $lot): int => max(0, $lot->remaining_units - $lot->reserved_units));
-                    if ($available < $reserveUnits) {
+            foreach ($sourceBuckets as $sourceBucket) {
+                $sourceLots = match ($sourceBucket) {
+                    '__ALL__' => $lots,
+                    '__OTHER__' => $lots->whereNotIn('source_type', ['PLAYGROUND_DAILY', 'REDEEM_CODE', 'ORDER', 'PROMOTION', 'RESELLER_TRANSFER']),
+                    default => $lots->where('source_type', $sourceBucket),
+                };
+
+                foreach (['TOKEN_QUOTA', 'CREDIT_BALANCE'] as $billingMode) {
+                    /** @var Collection<int, EntitlementLot> $matching */
+                    $matching = $sourceLots->where('billing_mode', $billingMode);
+                    if ($matching->isEmpty()) {
                         continue;
                     }
 
-                    $reservation = $this->reservations->reserve(
-                        $user,
-                        $alias->public_alias,
-                        $billingMode,
-                        $reserveUnits,
-                        $requestId,
-                        $apiKey->id,
-                        $group->pluck('id')->all(),
-                        $snapshot,
-                        (string) $revision->id,
-                    );
+                    foreach ($this->groups($matching) as $group) {
+                        $snapshot = $this->snapshot($billingMode, $alias, $group->firstOrFail());
+                        $snapshot['request_fingerprint'] = $requestFingerprint;
+                        $snapshot['route_revision_id'] = (string) $revision->id;
+                        $snapshot['route_version'] = (int) $revision->route_version;
+                        $snapshot['internal_model_id'] = (string) $model->internal_model_id;
+                        $snapshot['estimated_input_tokens'] = $estimatedInputTokens;
+                        $snapshot['requested_max_output_tokens'] = $boundedOutput;
+                        $snapshot['funding_source_type'] = (string) $group->firstOrFail()->source_type;
+                        $reserveUnits = $this->reservationUnits($snapshot, $estimatedInputTokens, $boundedOutput);
+                        $available = $group->sum(fn (EntitlementLot $lot): int => max(0, $lot->remaining_units - $lot->reserved_units));
+                        if ($available < $reserveUnits) {
+                            continue;
+                        }
 
-                    return [
-                        'reservation' => $reservation,
-                        'billing_mode' => $billingMode,
-                        'hard_max_output_tokens' => $hardMaxOutput,
-                        'route_revision_id' => (string) $revision->id,
-                        'route_version' => (int) $revision->route_version,
-                        'internal_model_id' => (string) $model->internal_model_id,
-                    ];
+                        $reservation = $this->reservations->reserve(
+                            $user,
+                            $alias->public_alias,
+                            $billingMode,
+                            $reserveUnits,
+                            $requestId,
+                            $apiKey->id,
+                            $group->pluck('id')->all(),
+                            $snapshot,
+                            (string) $revision->id,
+                        );
+
+                        return [
+                            'reservation' => $reservation,
+                            'billing_mode' => $billingMode,
+                            'hard_max_output_tokens' => $hardMaxOutput,
+                            'route_revision_id' => (string) $revision->id,
+                            'route_version' => (int) $revision->route_version,
+                            'internal_model_id' => (string) $model->internal_model_id,
+                        ];
+                    }
                 }
             }
 

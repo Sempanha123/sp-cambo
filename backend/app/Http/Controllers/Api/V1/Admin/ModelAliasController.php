@@ -44,7 +44,7 @@ class ModelAliasController extends Controller
             'customer_visible' => ['boolean'],
         ]);
 
-        $alias = DB::transaction(function () use ($data, $audit): ModelAlias {
+        $alias = DB::transaction(function () use ($request, $data, $audit): ModelAlias {
             $aiModel = AiModel::query()->findOrFail($data['ai_model_id']);
 
             $alias = ModelAlias::query()->create([
@@ -104,7 +104,7 @@ class ModelAliasController extends Controller
         $reason = $data['reason'];
         unset($data['reason']);
 
-        $alias = DB::transaction(function () use ($modelAlias, $data, $reason, $audit): ModelAlias {
+        $alias = DB::transaction(function () use ($request, $modelAlias, $data, $reason, $audit): ModelAlias {
             $before = $modelAlias->only([
                 'ai_model_id', 'public_alias', 'display_name', 'description',
                 'capabilities', 'limits', 'status', 'enabled', 'customer_visible',

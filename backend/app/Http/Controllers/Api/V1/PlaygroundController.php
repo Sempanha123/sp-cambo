@@ -27,8 +27,11 @@ class PlaygroundController extends Controller
             'model' => ['required', 'string', 'max:150'],
             'protocol' => ['required', Rule::in(['messages', 'responses', 'chat_completions'])],
             'system_prompt' => ['nullable', 'string', 'max:12000'],
-            'prompt' => ['required', 'string', 'max:50000'],
-            'max_output_tokens' => ['required', 'integer', 'between:1,2048'],
+            'prompt' => ['nullable', 'string', 'max:50000', 'required_without:messages'],
+            'messages' => ['nullable', 'array', 'min:1', 'max:30', 'required_without:prompt'],
+            'messages.*.role' => ['required', Rule::in(['user', 'assistant'])],
+            'messages.*.content' => ['required', 'string', 'max:20000'],
+            'max_output_tokens' => ['required', 'integer', 'between:1,65536'],
             'temperature' => ['nullable', 'numeric', 'between:0,2'],
         ]);
 

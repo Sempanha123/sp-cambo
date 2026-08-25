@@ -1,597 +1,485 @@
 <script setup lang="ts">
-import type { PlaygroundProtocol } from '~/utils/playgroundRequest'
+import type { PublicModel } from '~/types/commerce'
 
-/**
- * API playground: run a bounded server-side request with the daily free quota,
- * or build the exact customer-key request for local/CLI use. Browser code never
- * receives the system-managed Playground credential or an upstream secret.
- *
- * Everything the controls allow is bounded by what the catalogue publishes for the
- * selected alias. A protocol the alias does not state is not offered, because the
- * control plane refuses it with `model_unavailable`.
- */
-definePageMeta({
-  layout: 'dashboard',
-  middleware: ['auth']
-})
+type ChatMessage = { role: 'user' | 'assistant', content: string }
+type PlaygroundProtocol = 'messages' | 'responses' | 'chat_completions'
 
+definePageMeta({ layout: 'dashboard', middleware: ['auth'] })
 useSeoMeta({
-  title: 'API playground',
-  description: 'Build a request against your own model alias and copy it as cURL, Python, Node or CLI configuration.',
+  title: 'Playground',
+  description: 'Chat with SP Cambo models using daily free quota, redeem balance or purchased balance.',
   robots: 'noindex'
 })
 
 const api = useSpApi()
-const config = useRuntimeConfig()
+const toast = useToast()
+const models = await useSpResource('catalog:models:playground-chat', () => api.catalog.models(), { server: false })
+const quota = await useSpResource('dashboard:playground-quota', () => api.account.playgroundQuota(), { server: false })
 
-const models = await useSpResource('catalog:models', () => api.catalog.models(), { server: false })
-const keys = await useSpResource('dashboard:api-keys', () => api.account.apiKeys(), { server: false })
-
-/** ------------------------------------------------------------- selection */
-
-const selectedAlias = ref<string | undefined>(undefined)
-
-const aliasOptions = computed(() =>
-  (models.data.value ?? []).map(model => ({ label: model.public_alias, value: model.public_alias }))
-)
-
-/** Default to the first alias the catalogue publishes, if any. */
-watch(aliasOptions, (options) => {
-  if (!selectedAlias.value && options.length > 0) {
-    selectedAlias.value = options[0]!.value
-  }
-}, { immediate: true })
-
-const selectedModel = computed(() =>
-  (models.data.value ?? []).find(model => model.public_alias === selectedAlias.value) ?? null
-)
-
-/**
- * The protocols this alias may actually be called on.
- *
- * Only an explicit `true` counts. The control plane reads the same flags with a
- * false default, so an unstated protocol is a refused one — offering it here would
- * hand over a snippet that 400s.
- *
- * With no catalogue published there is nothing to filter on, so all three are
- * offered and the copy says the support could not be confirmed.
- */
-const protocolOptions = computed(() => {
-  const model = selectedModel.value
-
-  if (!model) {
-    return [...PLAYGROUND_PROTOCOLS]
-  }
-
-  return PLAYGROUND_PROTOCOLS.filter(info => model.capabilities[info.capability] === true)
-})
-
-const noStatedProtocol = computed(() => selectedModel.value !== null && protocolOptions.value.length === 0)
-
-const protocol = ref<PlaygroundProtocol>('messages')
-
-/** Keep the selection on something the alias actually offers. */
-watch(protocolOptions, (options) => {
-  if (options.length > 0 && !options.some(info => info.value === protocol.value)) {
-    protocol.value = options[0]!.value
-  }
-}, { immediate: true })
-
-const protocolItems = computed(() =>
-  protocolOptions.value.map(info => ({ label: info.label, value: info.value, description: info.summary }))
-)
-
-/** -------------------------------------------------------------- controls */
-
+const selectedAlias = ref<string | undefined>()
+const messages = ref<ChatMessage[]>([])
+const composer = ref('')
 const systemPrompt = ref('')
-const userPrompt = ref(PLAYGROUND_DEFAULT_PROMPT)
-const maxOutputTokens = ref(256)
+const maxOutputTokens = ref(1024)
 const temperatureEnabled = ref(false)
 const temperature = ref(0.7)
-const streaming = ref(false)
+const sending = ref(false)
+const lastRawResponse = ref<unknown | null>(null)
+const lastRequestId = ref<string | null>(null)
+const errorMessage = ref<string | null>(null)
+const redeemCode = ref('')
+const redeeming = ref(false)
 
-/** The catalogue states this alias cannot stream, so the toggle must not offer it. */
-const streamingUnsupported = computed(() => selectedModel.value?.capabilities.streaming === false)
-
-watch(streamingUnsupported, (unsupported) => {
-  if (unsupported) {
-    streaming.value = false
-  }
+const allModels = computed(() => models.data.value ?? [])
+const availableModels = computed(() => {
+  const q = quota.data.value
+  if (!q || q.allow_model_switching) return allModels.value
+  const locked = q.default_model_alias
+  if (!locked) return allModels.value.slice(0, 1)
+  return allModels.value.filter(model => model.public_alias === locked)
 })
 
-/**
- * A value the gateway will parse. Below 1 it answers `invalid_max_output_tokens`,
- * so the snippet carries a legal value and the field says what is wrong instead of
- * emitting a request that cannot succeed.
- */
-const outputTokens = computed(() =>
-  Number.isSafeInteger(maxOutputTokens.value) && maxOutputTokens.value >= 1 ? maxOutputTokens.value : 1
+const modelOptions = computed(() => availableModels.value.map(model => ({
+  label: `${model.display_name} · ${model.public_alias}`,
+  value: model.public_alias
+})))
+
+const selectedModel = computed<PublicModel | null>(() =>
+  allModels.value.find(model => model.public_alias === selectedAlias.value) ?? null
 )
 
-const outputTokensInvalid = computed(() => outputTokens.value !== maxOutputTokens.value)
+const preferredProtocol = (model: PublicModel | null): PlaygroundProtocol | null => {
+  if (!model) return null
+  if (model.capabilities.responses_api === true) return 'responses'
+  if (model.capabilities.messages_api === true) return 'messages'
+  if (model.capabilities.chat_completions_api === true) return 'chat_completions'
+  return null
+}
 
-const ceilingNote = computed(() =>
-  outputCeilingNote(outputTokens.value, selectedModel.value?.capabilities.max_output_tokens)
-)
+const protocol = computed(() => preferredProtocol(selectedModel.value))
+const protocolLabels: Record<PlaygroundProtocol, string> = {
+  responses: 'Responses API',
+  messages: 'Anthropic Messages',
+  chat_completions: 'Chat Completions'
+}
+const protocolLabel = computed(() => protocol.value ? protocolLabels[protocol.value] : 'No chat protocol')
 
-/** --------------------------------------------------------------- request */
+watch([allModels, () => quota.data.value], () => {
+  const q = quota.data.value
+  const candidate = q?.default_model_alias
+    || q?.free_model_aliases?.[0]
+    || allModels.value[0]?.public_alias
 
-const request = computed(() => buildPlaygroundRequest({
-  inferenceRootUrl: config.public.inferenceRootUrl,
-  protocol: protocol.value,
-  modelAlias: selectedAlias.value,
-  systemPrompt: systemPrompt.value,
-  userPrompt: userPrompt.value,
-  maxOutputTokens: outputTokens.value,
-  temperature: temperatureEnabled.value ? temperature.value : null,
-  streaming: streaming.value
-}))
+  if (!selectedAlias.value || !availableModels.value.some(model => model.public_alias === selectedAlias.value)) {
+    selectedAlias.value = availableModels.value.some(model => model.public_alias === candidate)
+      ? candidate
+      : availableModels.value[0]?.public_alias
+  }
 
-const requestTabs = computed(() => [
-  { label: 'cURL', value: 'curl', code: request.value.curl, filename: 'bash' },
-  { label: 'Python', value: 'python', code: request.value.python, filename: 'main.py' },
-  { label: 'Node / TypeScript', value: 'node', code: request.value.node, filename: 'main.ts' }
-])
+  if (q) {
+    maxOutputTokens.value = Math.min(maxOutputTokens.value, q.max_output_tokens || 1024)
+  }
+}, { immediate: true })
 
-/** The raw headers as a single pasteable block, for anyone using another client. */
-const headerBlock = computed(() =>
-  request.value.headers.map(header => `${header.name}: ${header.value}`).join('\n')
-)
+const fundingForSelectedModel = computed(() => {
+  const q = quota.data.value
+  if (!q || !selectedAlias.value) return false
+  const dailyAvailable = q.remaining > 0 && q.free_model_aliases.includes(selectedAlias.value)
+  return dailyAvailable || q.fallback_available
+})
 
-/** ------------------------------------------------------------------- CLI */
+const quotaExhausted = computed(() => quota.data.value?.enabled === true && !fundingForSelectedModel.value)
+const canSend = computed(() => Boolean(
+  quota.data.value?.enabled
+  && selectedAlias.value
+  && protocol.value
+  && composer.value.trim()
+  && fundingForSelectedModel.value
+  && !sending.value
+))
 
-const { claudeCodeShell, codexConfig } = useCliSnippets({ modelAlias: selectedAlias })
+const formatUnits = (value: number) => new Intl.NumberFormat().format(Math.max(0, Number(value) || 0))
 
-const cliTabs = computed(() => [
-  { label: 'Claude Code', value: 'claude', code: claudeCodeShell.value, filename: 'bash' },
-  { label: 'Codex CLI', value: 'codex', code: codexConfig.value, filename: '~/.codex/config.toml' }
-])
+const refreshResources = async () => {
+  await Promise.all([models.refresh(), quota.refresh()])
+}
 
-/**
- * Whether the selected alias states the protocol each CLI speaks. `null` means the
- * catalogue has not said, in which case nothing is claimed either way.
- */
-const claudeCodeUsable = computed(() => selectedModel.value?.capabilities.messages_api ?? null)
-const codexUsable = computed(() => selectedModel.value?.capabilities.responses_api ?? null)
+const newChat = () => {
+  messages.value = []
+  composer.value = ''
+  errorMessage.value = null
+  lastRawResponse.value = null
+  lastRequestId.value = null
+}
 
-const activeKeys = computed(() => (keys.data.value ?? []).filter(key => key.status === 'ACTIVE').length)
+const send = async () => {
+  const text = composer.value.trim()
+  if (!canSend.value || !text || !selectedAlias.value || !protocol.value) return
 
-const playgroundQuota = await useSpResource('dashboard:playground-quota', () => api.account.playgroundQuota(), { server: false })
-const playgroundRunning = ref(false)
-const playgroundResult = ref<unknown | null>(null)
-const playgroundRequestId = ref<string | null>(null)
-const playgroundError = ref<string | null>(null)
+  const userMessage: ChatMessage = { role: 'user', content: text }
+  messages.value.push(userMessage)
+  composer.value = ''
+  sending.value = true
+  errorMessage.value = null
 
-const runPlayground = async () => {
-  if (!selectedAlias.value || noStatedProtocol.value || playgroundRunning.value) return
-  playgroundRunning.value = true
-  playgroundError.value = null
-  playgroundResult.value = null
   try {
     const result = await api.account.runPlayground({
       model: selectedAlias.value,
       protocol: protocol.value,
-      system_prompt: systemPrompt.value || null,
-      prompt: userPrompt.value,
-      max_output_tokens: Math.min(2048, outputTokens.value),
-      temperature: temperatureEnabled.value ? temperature.value : null
+      system_prompt: systemPrompt.value.trim() || null,
+      messages: messages.value.slice(-30),
+      max_output_tokens: Math.min(
+        Number(maxOutputTokens.value) || 1024,
+        quota.data.value?.max_output_tokens ?? 2048,
+        selectedModel.value?.capabilities.max_output_tokens ?? Number.MAX_SAFE_INTEGER
+      ),
+      temperature: temperatureEnabled.value ? Number(temperature.value) : null
     })
-    playgroundResult.value = result.response
-    playgroundRequestId.value = result.request_id
-    playgroundQuota.data.value = result.quota
+
+    messages.value.push({
+      role: 'assistant',
+      content: result.message || 'The model returned a non-text response. Open the raw response below to inspect it.'
+    })
+    lastRawResponse.value = result.response
+    lastRequestId.value = result.request_id
+    quota.data.value = result.quota
   } catch (error) {
-    playgroundError.value = error instanceof Error ? error.message : 'The Playground request could not be completed.'
+    errorMessage.value = error instanceof Error ? error.message : 'The Playground request could not be completed.'
+    await quota.refresh()
   } finally {
-    playgroundRunning.value = false
+    sending.value = false
   }
 }
 
-const playgroundQuotaPercent = computed(() => {
-  const q = playgroundQuota.data.value
-  if (!q || q.limit <= 0) return 0
-  return Math.max(0, Math.min(100, Math.round((q.remaining / q.limit) * 100)))
-})
+const redeem = async () => {
+  const code = redeemCode.value.trim()
+  if (!code || redeeming.value) return
+
+  redeeming.value = true
+  try {
+    const result = await api.account.redeemCode({
+      code,
+      idempotency_key: `playground:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    })
+    redeemCode.value = ''
+    await quota.refresh()
+    toast.add({
+      title: 'Redeem code applied',
+      description: `${result.units} ${result.billing_mode === 'TOKEN_QUOTA' ? 'token units' : 'credit units'} added.`,
+      color: 'success'
+    })
+  } catch (error) {
+    toast.add({ title: 'Redeem failed', description: error instanceof Error ? error.message : 'Please try again.', color: 'error' })
+  } finally {
+    redeeming.value = false
+  }
+}
 </script>
 
 <template>
   <SpDashboardPage
-    title="API playground"
-    icon="i-lucide-flask-conical"
-    description="Build a request against one of your model aliases and copy it as cURL, an SDK call or CLI configuration. Every field is one the gateway accepts, and the host comes from this deployment's configuration."
+    title="Playground"
+    eyebrow="Customer chat"
+    description="Chat with models published by SP Cambo. Daily free quota is spent first; when it runs out, redeem-code or purchased balance can continue the same Playground."
   >
     <template #actions>
       <UButton
-        to="/docs/api-reference"
         color="neutral"
         variant="subtle"
-        icon="i-lucide-book-open"
+        icon="i-lucide-plus"
+        @click="newChat"
       >
-        API reference
+        New chat
       </UButton>
     </template>
 
-    <UAlert
-      icon="i-lucide-shield-check"
-      color="neutral"
-      variant="subtle"
-      title="Server-side Playground — no API key pasted into the browser"
-      description="Run a small non-streaming request with today's free Playground quota. Laravel holds an encrypted system-managed credential and calls the same SP Cambo gateway used by customer API keys, so normal reservation, routing and settlement still apply. Your own API key is never required for this button."
-    />
+    <SpAsyncSection
+      :loading="models.initialLoading.value || quota.initialLoading.value"
+      :unavailable="models.unavailable.value || quota.unavailable.value"
+      :failed="models.failed.value || quota.failed.value"
+      :error-message="models.error.value?.message || quota.error.value?.message"
+      error-title="Playground could not be loaded"
+      @retry="refreshResources"
+    >
+      <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <UCard class="sp-premium-card overflow-hidden">
+          <template #header>
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 class="font-semibold text-highlighted">
+                  Chat
+                </h2>
+                <p class="mt-1 text-sm text-muted">
+                  Requests are routed through the configured SP Cambo gateway and are metered exactly like customer API traffic.
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <UBadge
+                  color="neutral"
+                  variant="subtle"
+                >
+                  {{ protocolLabel }}
+                </UBadge>
+                <USelectMenu
+                  v-model="selectedAlias"
+                  :items="modelOptions"
+                  value-key="value"
+                  class="w-full min-w-64 lg:w-80"
+                  :disabled="quota.data.value?.allow_model_switching === false"
+                  placeholder="Choose model"
+                />
+              </div>
+            </div>
+          </template>
 
-    <section class="space-y-4">
-      <SpSectionHeading
-        title="Request"
-        description="The alias and the protocols offered come from the published catalogue. A protocol an alias does not state is refused by the control plane, so it is not offered here."
-      />
+          <div class="flex min-h-[34rem] flex-col">
+            <div class="flex-1 space-y-4 overflow-y-auto py-2">
+              <div
+                v-if="messages.length === 0"
+                class="flex min-h-80 flex-col items-center justify-center px-4 text-center"
+              >
+                <div class="mb-4 flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <UIcon
+                    name="i-lucide-sparkles"
+                    class="size-6"
+                  />
+                </div>
+                <h3 class="text-lg font-semibold text-highlighted">
+                  Start a conversation
+                </h3>
+                <p class="mt-2 max-w-xl text-sm text-muted">
+                  Choose a published model and send a message. You do not need to paste an API key into this Playground.
+                </p>
+              </div>
 
-      <SpAsyncSection
-        :loading="models.initialLoading.value"
-        :unavailable="models.unavailable.value"
-        :failed="models.failed.value"
-        :offline="models.error.value?.code === 'network_unreachable'"
-        :error-message="models.error.value?.message"
-        unavailable-title="The model catalogue is not published yet"
-        unavailable-description="Without it, SP Cambo cannot tell you which aliases exist or which protocols they accept. The request below still shows the correct shape with a placeholder alias to replace by hand."
-        loading-variant="rows"
-        :loading-count="3"
-        @retry="models.refresh()"
-      >
-        <div class="grid gap-4 lg:grid-cols-2">
-          <UFormField
-            label="Model alias"
-            :help="aliasOptions.length === 0
-              ? 'No alias is published, so the request shows a placeholder to replace by hand.'
-              : 'Aliases are stable across upstream routing changes.'"
-          >
-            <USelectMenu
-              v-model="selectedAlias"
-              :items="aliasOptions"
-              value-key="value"
-              :disabled="aliasOptions.length === 0"
-              :loading="models.loading.value"
-              placeholder="<your-model-alias>"
-              class="w-full"
+              <div
+                v-for="(message, index) in messages"
+                :key="index"
+                class="flex"
+                :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+              >
+                <div
+                  class="max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6"
+                  :class="message.role === 'user' ? 'bg-primary text-inverted' : 'border border-default bg-elevated/55 text-default'"
+                >
+                  {{ message.content }}
+                </div>
+              </div>
+
+              <div
+                v-if="sending"
+                class="flex justify-start"
+              >
+                <div class="flex items-center gap-2 rounded-2xl border border-default bg-elevated/55 px-4 py-3 text-sm text-muted">
+                  <UIcon
+                    name="i-lucide-loader-circle"
+                    class="size-4 animate-spin"
+                  />
+                  Thinking…
+                </div>
+              </div>
+            </div>
+
+            <UAlert
+              v-if="errorMessage"
+              class="mb-3"
+              color="error"
+              variant="subtle"
+              icon="i-lucide-circle-alert"
+              title="Request failed"
+              :description="errorMessage"
             />
-          </UFormField>
 
-          <UFormField
-            label="Protocol"
-            :help="selectedModel
-              ? 'Only surfaces this alias states are listed.'
-              : 'The catalogue is not published, so support per protocol could not be confirmed.'"
-          >
-            <USelectMenu
-              v-model="protocol"
-              :items="protocolItems"
-              value-key="value"
-              :disabled="protocolItems.length === 0"
-              class="w-full"
+            <UAlert
+              v-if="selectedModel && !protocol"
+              class="mb-3"
+              color="warning"
+              variant="subtle"
+              title="This alias has no published chat protocol"
+              description="Enable Responses API, Anthropic Messages or Chat Completions on the public model alias before using it in the Playground."
             />
-          </UFormField>
-        </div>
 
-        <UAlert
-          v-if="noStatedProtocol"
-          class="mt-4"
-          icon="i-lucide-triangle-alert"
-          color="warning"
-          variant="subtle"
-          title="This alias states no inference protocol"
-          :description="`${selectedAlias} is published but names none of the three surfaces. The control plane refuses a protocol an alias does not state, so every call would return model_unavailable. Nothing can be built against it — pick another alias, or ask an operator to state its protocols.`"
-        />
-
-        <div
-          v-else
-          class="mt-4 space-y-4"
-        >
-          <div class="grid gap-4 lg:grid-cols-2">
-            <UFormField
-              label="System prompt"
-              :help="protocol === 'responses'
-                ? 'Sent as instructions. Left out entirely when empty.'
-                : 'Left out entirely when empty — never sent as a default.'"
-            >
+            <div class="border-t border-default pt-4">
               <UTextarea
-                v-model="systemPrompt"
-                :rows="4"
-                placeholder="Optional. E.g. Answer in one sentence."
+                v-model="composer"
+                :rows="3"
+                autoresize
                 class="w-full"
+                placeholder="Message SP Cambo…"
+                :disabled="!quota.data.value?.enabled"
+                @keydown.enter.exact.prevent="send"
               />
-            </UFormField>
-
-            <UFormField
-              label="Prompt"
-              required
-            >
-              <UTextarea
-                v-model="userPrompt"
-                :rows="4"
-                class="w-full"
-              />
-            </UFormField>
+              <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p class="text-xs text-muted">
+                  Enter to send · Shift+Enter for a new line
+                </p>
+                <UButton
+                  icon="i-lucide-send"
+                  :loading="sending"
+                  :disabled="!canSend"
+                  @click="send"
+                >
+                  Send
+                </UButton>
+              </div>
+            </div>
           </div>
+        </UCard>
 
-          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <UFormField
-              label="Max output tokens"
-              :error="outputTokensInvalid ? 'Must be a whole number of at least 1.' : undefined"
-              :help="selectedModel?.capabilities.max_output_tokens
-                ? `This alias publishes a ceiling of ${formatCount(selectedModel.capabilities.max_output_tokens)}.`
-                : 'No ceiling is published for this alias.'"
+        <div class="space-y-5">
+          <UCard class="sp-premium-card">
+            <template #header>
+              <h3 class="font-semibold text-highlighted">
+                Playground balance
+              </h3>
+            </template>
+            <div
+              v-if="quota.data.value"
+              class="space-y-3 text-sm"
             >
-              <UInputNumber
-                v-model="maxOutputTokens"
-                :min="1"
-                :step="256"
-                class="w-full"
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-muted">Daily free</span><strong class="sp-numeric">{{ formatUnits(quota.data.value.remaining) }} / {{ formatUnits(quota.data.value.limit) }}</strong>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-muted">Redeem tokens</span><strong class="sp-numeric">{{ formatUnits(quota.data.value.redeem_token_remaining) }}</strong>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-muted">Purchased tokens</span><strong class="sp-numeric">{{ formatUnits(quota.data.value.paid_token_remaining) }}</strong>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-muted">Credit units</span><strong class="sp-numeric">{{ formatUnits(quota.data.value.paid_credit_remaining) }}</strong>
+              </div>
+              <p class="border-t border-default pt-3 text-xs text-muted">
+                Daily free models: {{ quota.data.value.free_model_aliases.join(', ') || 'None configured' }}
+              </p>
+            </div>
+          </UCard>
+
+          <UCard
+            v-if="quotaExhausted"
+            class="sp-premium-card"
+          >
+            <template #header>
+              <h3 class="font-semibold text-highlighted">
+                Continue chatting
+              </h3>
+            </template>
+            <p class="text-sm text-muted">
+              The selected model has no spendable Playground balance. Buy tokens/credit or redeem a code to continue.
+            </p>
+            <UButton
+              to="/pricing"
+              class="mt-4 w-full"
+              icon="i-lucide-shopping-bag"
+            >
+              Buy tokens / credit
+            </UButton>
+            <div class="mt-4 flex gap-2">
+              <UInput
+                v-model="redeemCode"
+                class="min-w-0 flex-1"
+                placeholder="Redeem code"
+                @keyup.enter="redeem"
               />
-            </UFormField>
+              <UButton
+                color="neutral"
+                variant="subtle"
+                :loading="redeeming"
+                :disabled="!redeemCode.trim()"
+                @click="redeem"
+              >
+                Redeem
+              </UButton>
+            </div>
+          </UCard>
 
-            <UFormField
-              label="Temperature"
-              :help="temperatureEnabled
-                ? 'Whether an upstream model honours it is not published per alias.'
-                : 'Off means the field is not sent at all.'"
-            >
-              <div class="flex items-center gap-3">
-                <USwitch v-model="temperatureEnabled" />
+          <UCard
+            v-else
+            class="sp-premium-card"
+          >
+            <template #header>
+              <h3 class="font-semibold text-highlighted">
+                Redeem code
+              </h3>
+            </template>
+            <div class="flex gap-2">
+              <UInput
+                v-model="redeemCode"
+                class="min-w-0 flex-1"
+                placeholder="SPFREE-…"
+                @keyup.enter="redeem"
+              />
+              <UButton
+                color="neutral"
+                variant="subtle"
+                :loading="redeeming"
+                :disabled="!redeemCode.trim()"
+                @click="redeem"
+              >
+                Apply
+              </UButton>
+            </div>
+          </UCard>
+
+          <UCard class="sp-premium-card">
+            <template #header>
+              <h3 class="font-semibold text-highlighted">
+                Chat controls
+              </h3>
+            </template>
+            <div class="space-y-4">
+              <UFormField label="System prompt">
+                <UTextarea
+                  v-model="systemPrompt"
+                  :rows="3"
+                  class="w-full"
+                  placeholder="Optional instructions"
+                />
+              </UFormField>
+              <UFormField label="Maximum output tokens">
+                <UInputNumber
+                  v-model="maxOutputTokens"
+                  :min="1"
+                  :max="quota.data.value?.max_output_tokens ?? 65536"
+                  class="w-full"
+                />
+              </UFormField>
+              <USwitch
+                v-model="temperatureEnabled"
+                label="Custom temperature"
+              />
+              <UFormField
+                v-if="temperatureEnabled"
+                label="Temperature"
+              >
                 <UInputNumber
                   v-model="temperature"
                   :min="0"
                   :max="2"
                   :step="0.1"
-                  :disabled="!temperatureEnabled"
-                  class="flex-1"
+                  class="w-full"
                 />
-              </div>
-            </UFormField>
-
-            <UFormField
-              label="Streaming"
-              :help="streamingUnsupported
-                ? 'The catalogue states this alias does not stream.'
-                : 'Sends stream: true and uses each SDK\'s streaming call.'"
-            >
-              <USwitch
-                v-model="streaming"
-                :disabled="streamingUnsupported"
-                :label="streaming ? 'Server-sent events' : 'Single response'"
-              />
-            </UFormField>
-
-            <UFormField
-              label="Context window"
-              help="Prompt plus output, as published."
-            >
-              <p class="sp-numeric pt-1.5 text-sm text-highlighted">
-                {{ selectedModel?.capabilities.context_tokens
-                  ? `${formatCount(selectedModel.capabilities.context_tokens)} tokens`
-                  : 'Not published' }}
-              </p>
-            </UFormField>
-          </div>
-
-          <UAlert
-            v-if="ceilingNote"
-            icon="i-lucide-triangle-alert"
-            color="warning"
-            variant="subtle"
-            title="Above this alias's published output ceiling"
-            :description="ceilingNote"
-          />
-        </div>
-      </SpAsyncSection>
-    </section>
-
-    <section v-if="!noStatedProtocol" class="space-y-4">
-      <SpSectionHeading
-        title="Run with today's free quota"
-        description="This request executes on the server and is settled through the normal billing pipeline. Streaming is intentionally disabled for the browser Playground."
-      />
-
-      <div class="rounded-xl border border-default bg-elevated/30 p-4 sm:p-5">
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p class="text-sm font-medium text-highlighted">Daily Playground quota</p>
-            <p v-if="playgroundQuota.data.value" class="mt-1 text-sm text-muted">
-              {{ formatCount(playgroundQuota.data.value.remaining) }} / {{ formatCount(playgroundQuota.data.value.limit) }} tokens remaining
-              · resets {{ new Date(playgroundQuota.data.value.reset_at).toLocaleString() }}
-            </p>
-            <p v-else class="mt-1 text-sm text-muted">Loading today's quota…</p>
-          </div>
-          <UButton
-            icon="i-lucide-play"
-            :loading="playgroundRunning"
-            :disabled="!selectedAlias || playgroundRunning || playgroundQuota.data.value?.enabled === false || playgroundQuota.data.value?.remaining === 0"
-            @click="runPlayground"
-          >
-            Run free test
-          </UButton>
-        </div>
-
-        <div v-if="playgroundQuota.data.value" class="mt-4 h-2 overflow-hidden rounded-full bg-muted/20">
-          <div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${playgroundQuotaPercent}%` }" />
-        </div>
-
-        <UAlert
-          v-if="playgroundError"
-          class="mt-4"
-          color="error"
-          variant="subtle"
-          icon="i-lucide-circle-alert"
-          title="Playground request failed"
-          :description="playgroundError"
-        />
-
-        <div v-if="playgroundResult !== null" class="mt-4 space-y-2">
-          <div class="flex items-center justify-between gap-3">
-            <p class="text-sm font-medium text-highlighted">Response</p>
-            <code v-if="playgroundRequestId" class="text-xs text-dimmed">{{ playgroundRequestId }}</code>
-          </div>
-          <SpCodeBlock :code="JSON.stringify(playgroundResult, null, 2)" filename="response.json" />
-        </div>
-      </div>
-    </section>
-
-    <section
-      v-if="!noStatedProtocol"
-      class="space-y-4"
-    >
-      <SpSectionHeading
-        title="What you will send with your own key"
-        :description="`POST ${request.protocol.path} — ${request.protocol.summary}`"
-      />
-
-      <div class="grid gap-4 lg:grid-cols-2">
-        <div class="space-y-3">
-          <div class="rounded-lg border border-default bg-elevated/30 p-4">
-            <p class="text-xs font-medium tracking-wide text-dimmed uppercase">
-              Endpoint
-            </p>
-            <div class="mt-2 flex items-center gap-2">
-              <code class="min-w-0 flex-1 truncate font-mono text-sm text-toned">
-                {{ request.method }} {{ request.url }}
-              </code>
-              <SpCopyButton :value="request.url" />
+              </UFormField>
             </div>
-          </div>
+          </UCard>
 
-          <SpCodeBlock
-            :code="headerBlock"
-            filename="headers"
-          />
-
-          <p class="text-xs text-muted">
-            Replace the placeholder with a key you hold.
-            <template v-if="activeKeys === 0">
-              You have no active key —
-              <NuxtLink
-                to="/dashboard/api-keys"
-                class="text-primary underline decoration-dotted underline-offset-4"
-              >create one</NuxtLink>.
-            </template>
-            <template v-else>
-              Lost the secret? Rotate the key on the
-              <NuxtLink
-                to="/dashboard/api-keys"
-                class="text-primary underline decoration-dotted underline-offset-4"
-              >keys page</NuxtLink>.
-            </template>
-          </p>
-        </div>
-
-        <SpCodeBlock
-          :code="request.bodyJson"
-          filename="body.json"
-        />
-      </div>
-
-      <UTabs :items="requestTabs">
-        <template #content="{ item }">
-          <SpCodeBlock
-            :code="item.code"
-            :filename="item.filename"
-          />
-        </template>
-      </UTabs>
-    </section>
-
-    <section class="space-y-4">
-      <SpSectionHeading
-        title="Or run it through a CLI"
-        description="Claude Code and Codex CLI build their own request bodies, so the prompt and sampling controls above do not apply to them. What carries over is the alias."
-        :level="3"
-      >
-        <template #actions>
-          <UButton
-            to="/dashboard/cli-setup"
-            color="neutral"
-            variant="ghost"
-            size="sm"
-            trailing-icon="i-lucide-arrow-right"
+          <details
+            v-if="lastRawResponse !== null"
+            class="rounded-xl border border-default bg-elevated/30 p-4 text-sm"
           >
-            Full CLI setup
-          </UButton>
-        </template>
-      </SpSectionHeading>
-
-      <UTabs :items="cliTabs">
-        <template #content="{ item }">
-          <SpCodeBlock
-            :code="item.code"
-            :filename="item.filename"
-          />
-        </template>
-      </UTabs>
-
-      <UAlert
-        v-if="claudeCodeUsable === false || codexUsable === false"
-        icon="i-lucide-triangle-alert"
-        color="warning"
-        variant="subtle"
-        title="One of these CLIs cannot use this alias"
-        :description="claudeCodeUsable === false && codexUsable === false
-          ? `${selectedAlias} states neither the Claude Messages nor the OpenAI Responses surface, so neither CLI can call it.`
-          : claudeCodeUsable === false
-            ? `${selectedAlias} does not state the Claude Messages surface, so Claude Code cannot call it. Codex CLI can.`
-            : `${selectedAlias} does not state the OpenAI Responses surface, so Codex CLI cannot call it. Claude Code can.`"
-      />
-    </section>
-
-    <section class="space-y-4">
-      <SpSectionHeading
-        title="Where the real figures appear"
-        :level="3"
-      />
-
-      <div class="grid gap-3 sm:grid-cols-3">
-        <div class="rounded-lg border border-default p-4">
-          <p class="font-medium text-highlighted">
-            Tokens and latency
-          </p>
-          <p class="mt-1 text-sm text-muted">
-            Every request is recorded with its model, token counts, outcome and duration. It appears on
-            <NuxtLink
-              to="/dashboard/usage"
-              class="text-primary underline decoration-dotted underline-offset-4"
-            >usage &amp; activity</NuxtLink>
-            within seconds.
-          </p>
-        </div>
-        <div class="rounded-lg border border-default p-4">
-          <p class="font-medium text-highlighted">
-            What it cost
-          </p>
-          <p class="mt-1 text-sm text-muted">
-            The charge is calculated by SP Cambo when the request settles, from the tokens the upstream model
-            actually reported. This page will not estimate it — an estimate that differs from the charge is
-            worse than no figure.
-          </p>
-        </div>
-        <div class="rounded-lg border border-default p-4">
-          <p class="font-medium text-highlighted">
-            What is left
-          </p>
-          <p class="mt-1 text-sm text-muted">
-            Remaining quota and credit, per lot and with exact expiry, are on
-            <NuxtLink
-              to="/dashboard/entitlements"
-              class="text-primary underline decoration-dotted underline-offset-4"
-            >entitlements</NuxtLink>.
-          </p>
+            <summary class="cursor-pointer font-medium text-highlighted">
+              Raw response
+            </summary>
+            <p
+              v-if="lastRequestId"
+              class="mt-2 font-mono text-xs text-dimmed"
+            >
+              {{ lastRequestId }}
+            </p>
+            <pre class="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs text-muted">{{ JSON.stringify(lastRawResponse, null, 2) }}</pre>
+          </details>
         </div>
       </div>
-
-      <p class="text-sm text-muted">
-        Prompts and completions are never stored, so no request you send is replayable here. What SP Cambo
-        keeps is listed in
-        <NuxtLink
-          to="/legal/privacy"
-          class="text-primary underline decoration-dotted underline-offset-4"
-        >
-          the privacy notice
-        </NuxtLink>.
-      </p>
-    </section>
+    </SpAsyncSection>
   </SpDashboardPage>
 </template>

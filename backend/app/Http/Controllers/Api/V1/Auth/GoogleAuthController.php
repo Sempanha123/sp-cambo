@@ -180,8 +180,8 @@ class GoogleAuthController extends Controller
                 'email_verified_at' => now(),
                 'password' => Str::random(64),
                 'status' => AccountStatus::Active,
+                'tenant_id' => $tenant->id,
             ]);
-            $user->forceFill(['tenant_id' => $tenant->id])->save();
 
             $customerRole = Role::query()->firstOrCreate(
                 ['name' => 'CUSTOMER'],

@@ -4,34 +4,87 @@ namespace Tests\Unit;
 
 use App\Models\AiModel;
 use App\Models\ApiKey;
+use App\Models\ApiRequestLog;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
 use App\Models\Provider;
+use App\Models\ProviderConnectionRevision;
+use App\Models\Reservation;
+use App\Models\UsageRecord;
 use App\Models\User;
-use App\Services\ApiKeySecretService;
 use App\Services\EntitlementService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ApiKeyCheckTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function alias(): ModelAlias
+    private function alias(string $publicAlias = 'claude-coding'): ModelAlias
     {
-        $provider = Provider::query()->create(['name' => 'Provider', 'slug' => 'provider', 'enabled' => true]);
-        $model = AiModel::query()->create(['provider_id' => $provider->id, 'internal_model_id' => 'private', 'family' => 'claude', 'family_label' => 'Claude', 'commercial_resale_verified_at' => now(), 'enabled' => true]);
+        $provider = Provider::query()->create(['name' => 'Provider '.$publicAlias, 'slug' => 'provider-'.$publicAlias, 'enabled' => true]);
+        $revision = ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => 'http://127.0.0.1:3010',
+            'connection_type' => 'omniroute',
+            'credential' => 'test-provider-credential',
+            'credential_suffix' => 'test',
+            'timeout_ms' => 30000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+            'last_probe_status' => 'SUCCESS',
+            'last_probe_at' => now(),
+        ]);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
 
-        return ModelAlias::query()->create(['ai_model_id' => $model->id, 'public_alias' => 'claude-coding', 'display_name' => 'Claude Coding', 'capabilities' => ['messages_api' => true], 'limits' => [], 'status' => 'available', 'enabled' => true, 'customer_visible' => true]);
+        $model = AiModel::query()->create([
+            'provider_id' => $provider->id,
+            'internal_model_id' => 'private-'.$publicAlias,
+            'family' => 'claude',
+            'family_label' => 'Claude',
+            'commercial_resale_verified_at' => now(),
+            'enabled' => true,
+        ]);
+
+        return ModelAlias::query()->create([
+            'ai_model_id' => $model->id,
+            'public_alias' => $publicAlias,
+            'display_name' => 'Model '.$publicAlias,
+            'capabilities' => ['messages_api' => true],
+            'limits' => [],
+            'status' => 'active',
+            'enabled' => true,
+            'customer_visible' => true,
+        ]);
     }
 
-    private function grant(User $user, ModelAlias $alias, string $mode, int $units, array $billingRules, ?\DateTimeInterface $expiresAt = null): EntitlementLot
+    /** @return array{key: ApiKey, secret: string} */
+    private function issueKey(User $user, ModelAlias $alias): array
     {
+        $created = $this->actingAs($user)->postJson('/api/v1/me/api-keys', [
+            'label' => 'Test Key',
+            'allowed_model_aliases' => [$alias->public_alias],
+        ])->assertCreated();
+
+        return [
+            'key' => $user->apiKeys()->firstOrFail(),
+            'secret' => (string) $created->json('data.secret'),
+        ];
+    }
+
+    private function grant(
+        User $user,
+        ModelAlias $alias,
+        string $mode,
+        int $units,
+        array $billingRules = [],
+        ?\DateTimeInterface $expiresAt = null,
+    ): EntitlementLot {
         return app(EntitlementService::class)->grant($user, [
             'source_type' => 'ADMIN_GRANT',
             'source_id' => uniqid('grant-', true),
-            'package_name' => 'Test',
+            'package_name' => $mode === 'CREDIT_BALANCE' ? 'Credit Test' : 'Token Test',
             'family_label' => 'Claude',
             'billing_mode' => $mode,
             'original_units' => $units,
@@ -40,57 +93,185 @@ class ApiKeyCheckTest extends TestCase
             'currency_exponent' => $mode === 'CREDIT_BALANCE' ? 6 : null,
             'allowed_model_aliases' => [$alias->public_alias],
             'billing_snapshot' => ['billing_rules' => $billingRules],
-            'expires_at' => $expiresAt ?? now()->addDay()
+            'expires_at' => $expiresAt ?? now()->addDay(),
         ], 'grant:'.uniqid('', true));
     }
 
-    public function test_check_returns_credit_remaining(): void
+    public function test_check_uses_the_same_hmac_digest_as_issued_keys(): void
     {
         $user = User::factory()->create();
         $alias = $this->alias();
-        $created = $this->actingAs($user)->postJson('/api/v1/me/api-keys', ['label' => 'Test Key', 'allowed_model_aliases' => [$alias->public_alias]])->assertCreated();
-        $apiKey = $user->apiKeys()->firstOrFail();
+        $issued = $this->issueKey($user, $alias);
 
-        $this->grant($user, $alias, 'TOKEN_QUOTA', 1000, []);
-        $this->grant($user, $alias, 'TOKEN_QUOTA', 500, []);
+        // No test-only digest rewrite is required. A real issued secret must work.
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.valid', true)
+            ->assertJsonPath('data.status', 'ACTIVE');
+    }
 
-        // Expired lot (should not be counted)
+    public function test_check_separates_token_quota_from_credit_balance_and_subtracts_reservations(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 1000);
+        $reservedTokens = $this->grant($user, $alias, 'TOKEN_QUOTA', 500);
+        $reservedTokens->update(['reserved_units' => 125]);
+
+        $credit = $this->grant($user, $alias, 'CREDIT_BALANCE', 2_500_000);
+        $credit->update(['reserved_units' => 500_000]);
+
+        // Expired and inactive lots cannot appear in the spendable balance.
         $this->grant($user, $alias, 'TOKEN_QUOTA', 2000, [], now()->subDays(5));
+        $inactive = $this->grant($user, $alias, 'CREDIT_BALANCE', 3_000_000);
+        $inactive->update(['status' => 'INACTIVE']);
 
-        // Inactive lot (should not be counted)
-        $lot = $this->grant($user, $alias, 'TOKEN_QUOTA', 3000, []);
-        $lot->update(['status' => 'INACTIVE']);
+        $response = $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])->assertOk();
 
-        $secret = $created->json('data.secret');
-        $digest = hash('sha256', $secret);
-        $apiKey->update(['lookup_digest' => $digest]);
+        $response->assertJsonPath('data.quota_remaining', '1375');
+        $response->assertJsonPath('data.credit_remaining.minor', '2000000');
+        $response->assertJsonPath('data.credit_remaining.currency', 'USD');
+        $response->assertJsonPath('data.credit_remaining.exponent', 6);
+        $response->assertJsonCount(1, 'data.credit_balances');
+        $response->assertJsonPath('data.package', 'Token Test, Credit Test');
+    }
 
-        $response = $this->postJson('/api/v1/keys/check', [
-            'api_key' => $secret,
-        ]);
+    public function test_check_excludes_entitlements_outside_the_key_model_scope(): void
+    {
+        $user = User::factory()->create();
+        $allowed = $this->alias('claude-coding');
+        $other = $this->alias('other-model');
+        $issued = $this->issueKey($user, $allowed);
 
-        $response->assertOk();
-        $response->assertJsonPath('data.credit_remaining', 1500); // 1000 + 500
-        $response->assertJsonPath('data.quota_remaining', 1500); // 1000 + 500
-        }
+        $this->grant($user, $allowed, 'TOKEN_QUOTA', 100);
+        $this->grant($user, $other, 'TOKEN_QUOTA', 900);
 
-    public function test_check_returns_null_for_no_credit_remaining(): void
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.quota_remaining', '100');
+    }
+
+    public function test_zero_spendable_quota_is_reported_as_zero_not_unlimited(): void
     {
         $user = User::factory()->create();
         $alias = $this->alias();
-        $created = $this->actingAs($user)->postJson('/api/v1/me/api-keys', ['label' => 'Test Key', 'allowed_model_aliases' => [$alias->public_alias]])->assertCreated();
-        $apiKey = $user->apiKeys()->firstOrFail();
+        $issued = $this->issueKey($user, $alias);
+        $lot = $this->grant($user, $alias, 'TOKEN_QUOTA', 100);
+        $lot->update(['remaining_units' => 50, 'reserved_units' => 50]);
 
-        $secret = $created->json('data.secret');
-        $digest = hash('sha256', $secret);
-        $apiKey->update(['lookup_digest' => $digest]);
+        $response = $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])->assertOk();
 
-        $response = $this->postJson('/api/v1/keys/check', [
-            'api_key' => $secret,
+        $response->assertJsonPath('data.quota_remaining', '0');
+        $response->assertJsonPath('data.credit_remaining', null);
+    }
+
+    public function test_authenticated_status_reports_the_same_spendable_balances_without_billing(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+        $tokens = $this->grant($user, $alias, 'TOKEN_QUOTA', 500);
+        $tokens->update(['reserved_units' => 50]);
+        $credit = $this->grant($user, $alias, 'CREDIT_BALANCE', 1_500_000);
+        $credit->update(['reserved_units' => 250_000]);
+
+        $response = $this->actingAs($user)
+            ->getJson("/api/v1/me/api-keys/{$issued['key']->id}/status")
+            ->assertOk();
+
+        $response->assertJsonPath('data.token_quota_remaining', '450');
+        $response->assertJsonPath('data.credit_remaining.minor', '1250000');
+        $response->assertJsonPath('data.credit_remaining.currency', 'USD');
+        $response->assertJsonPath('data.credit_remaining.exponent', 6);
+    }
+
+    public function test_check_reports_effective_expired_and_disabled_status(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+
+        $issued['key']->update(['expires_at' => now()->subMinute()]);
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.valid', false)
+            ->assertJsonPath('data.status', 'EXPIRED');
+
+        $issued['key']->update(['expires_at' => null, 'status' => 'DISABLED']);
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.valid', false)
+            ->assertJsonPath('data.status', 'DISABLED');
+    }
+
+    public function test_check_returns_real_metering_spend_and_recent_requests(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+
+        $reservation = Reservation::query()->create([
+            'user_id' => $user->id,
+            'api_key_id' => $issued['key']->id,
+            'public_model_alias' => $alias->public_alias,
+            'billing_mode' => 'CREDIT_BALANCE',
+            'reserved_units' => 150_000,
+            'settled_units' => 125_000,
+            'status' => 'SETTLED',
+            'idempotency_key' => 'key-check-usage',
+            'expires_at' => now()->addMinute(),
+            'settled_at' => now(),
+            'billing_snapshot' => ['currency' => 'USD', 'currency_exponent' => 6],
         ]);
 
-        $response->assertOk();
-        $response->assertJsonPath('data.credit_remaining', null);
-        $response->assertJsonPath('data.quota_remaining', null);
+        ApiRequestLog::query()->create([
+            'reservation_id' => $reservation->id,
+            'user_id' => $user->id,
+            'api_key_id' => $issued['key']->id,
+            'public_model' => $alias->public_alias,
+            'endpoint' => '/v1/messages',
+            'state' => 'SETTLED',
+            'duration_ms' => 420,
+            'started_at' => now()->subSecond(),
+            'finished_at' => now(),
+        ]);
+
+        UsageRecord::query()->create([
+            'reservation_id' => $reservation->id,
+            'user_id' => $user->id,
+            'api_key_id' => $issued['key']->id,
+            'public_model' => $alias->public_alias,
+            'provider_family' => 'claude',
+            'endpoint' => '/v1/messages',
+            'input_tokens' => 100,
+            'output_tokens' => 20,
+            'cache_read_tokens' => 5,
+            'cache_write_tokens' => 0,
+            'reasoning_tokens' => 10,
+            'total_tokens' => 135,
+            'metered_units' => 125_000,
+            'credit_charge_minor' => 125_000,
+            'upstream_cost_minor' => 80_000,
+            'currency' => 'USD',
+            'currency_exponent' => 6,
+            'settled_at' => now(),
+        ]);
+
+        $response = $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])->assertOk();
+
+        $response->assertJsonPath('data.tokens_used.input', '100');
+        $response->assertJsonPath('data.tokens_used.output', '20');
+        $response->assertJsonPath('data.tokens_used.total', '135');
+        $response->assertJsonPath('data.total_spend.minor', '125000');
+        $response->assertJsonPath('data.total_spend.currency', 'USD');
+        $response->assertJsonPath('data.total_spend.exponent', 6);
+        $response->assertJsonCount(1, 'data.recent_requests');
+        $response->assertJsonPath('data.recent_requests.0.model', $alias->public_alias);
+        $response->assertJsonPath('data.recent_requests.0.status', 'success');
+        $response->assertJsonPath('data.recent_requests.0.input_tokens', '100');
+        $response->assertJsonPath('data.recent_requests.0.output_tokens', '20');
+        $response->assertJsonPath('data.recent_requests.0.charge.minor', '125000');
     }
 }

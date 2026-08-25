@@ -148,6 +148,32 @@ class ProviderAliasController extends Controller
 
     private function resource(ModelAlias $alias, Provider $provider): array
     {
+        $provider->loadMissing('activeConnectionRevision');
+        $alias->loadMissing('model');
+        $model = $alias->model;
+        $blockers = [];
+
+        if (! $provider->enabled) {
+            $blockers[] = 'Provider is disabled.';
+        }
+        if (! $provider->activeConnectionRevision || ! $provider->activeConnectionRevision->isRouteReady()) {
+            $blockers[] = 'Provider has no active READY connection.';
+        }
+        if (! $model || ! $model->enabled) {
+            $blockers[] = 'Private model is disabled or missing.';
+        } elseif ($model->commercial_resale_verified_at === null) {
+            $blockers[] = 'Commercial resale is not verified for the private model.';
+        }
+        if (! $alias->enabled) {
+            $blockers[] = 'Public alias is disabled.';
+        }
+        if (! $alias->customer_visible) {
+            $blockers[] = 'Public alias is hidden from customers.';
+        }
+        if (! in_array($alias->status, ['active', 'beta'], true)) {
+            $blockers[] = 'Public alias lifecycle status is not publishable.';
+        }
+
         return [
             'id' => (string) $alias->id,
             'provider_id' => (string) $provider->id,
@@ -158,6 +184,8 @@ class ProviderAliasController extends Controller
             'enabled' => (bool) $alias->enabled,
             'customer_visible' => (bool) $alias->customer_visible,
             'mapped_model_id' => $alias->ai_model_id ? (string) $alias->ai_model_id : null,
+            'publication_ready' => $blockers === [],
+            'publication_blockers' => $blockers,
             'created_at' => $alias->created_at->toAtomString(),
             'updated_at' => $alias->updated_at->toAtomString(),
         ];

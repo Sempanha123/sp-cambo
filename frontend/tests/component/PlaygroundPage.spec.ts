@@ -1,27 +1,10 @@
 // @vitest-environment nuxt
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime'
-import { enableAutoUnmount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { PublicModel, PublicModelCapabilities } from '~/types/commerce'
 import PlaygroundPage from '~/pages/dashboard/playground.vue'
-
-/**
- * The playground, mounted for real.
- *
- * Its whole value is that a copied request works, so the two things under test are
- * the ones that would make it worthless:
- *
- * The first is that a protocol the alias does not state can never be the one the
- * page builds against. The control plane gates each surface on the matching
- * capability flag and refuses an unstated one with `model_unavailable`, so handing
- * a customer a snippet for it produces a 400 they have every reason to blame on
- * their account rather than on our page.
- *
- * The second is that nothing on the page is a figure SP Cambo has not measured.
- * There is no response, no token count and no charge until the request actually
- * settles, and inventing any of them here is worse than showing none.
- */
 
 const capabilities = (overrides: Partial<PublicModelCapabilities> = {}): PublicModelCapabilities => ({
   streaming: true,
@@ -45,180 +28,103 @@ const model = (overrides: Partial<PublicModel> & { public_alias: string }): Publ
   ...overrides
 })
 
-/** What the mocked control plane will answer with, set per test. */
-const plane = {
-  models: [] as PublicModel[]
-}
-
-const { listModels, listKeys, getPlaygroundQuota, runPlayground } = vi.hoisted(() => ({
+const plane = { models: [] as PublicModel[] }
+const { listModels, getPlaygroundQuota, runPlayground, redeemCode } = vi.hoisted(() => ({
   listModels: vi.fn(),
-  listKeys: vi.fn(),
   getPlaygroundQuota: vi.fn(),
-  runPlayground: vi.fn()
+  runPlayground: vi.fn(),
+  redeemCode: vi.fn()
 }))
 
 mockNuxtImport('useSpApi', () => () => ({
   catalog: { models: listModels },
-  account: {
-    apiKeys: listKeys,
-    playgroundQuota: getPlaygroundQuota,
-    runPlayground
-  }
+  account: { playgroundQuota: getPlaygroundQuota, runPlayground, redeemCode }
 }))
 
 enableAutoUnmount(afterEach)
 
+const quota = (overrides = {}) => ({
+  enabled: true,
+  limit: 4096,
+  remaining: 4096,
+  reset_at: '2026-08-26T00:00:00+07:00',
+  max_output_tokens: 2048,
+  free_model_aliases: ['sp-sonnet'],
+  redeem_token_remaining: 0,
+  paid_token_remaining: 0,
+  paid_credit_remaining: 0,
+  fallback_available: false,
+  default_model_alias: 'sp-sonnet',
+  allow_model_switching: true,
+  ...overrides
+})
+
 beforeEach(() => {
   plane.models = [model({ public_alias: 'sp-sonnet', capabilities: capabilities({ messages_api: true }) })]
-
   listModels.mockReset().mockImplementation(async () => plane.models)
-  listKeys.mockReset().mockImplementation(async () => [])
-  getPlaygroundQuota.mockReset().mockResolvedValue({
-    enabled: true,
-    limit: 4096,
-    remaining: 4096,
-    reset_at: '2026-08-25T00:00:00+07:00'
-  })
+  getPlaygroundQuota.mockReset().mockResolvedValue(quota())
   runPlayground.mockReset().mockResolvedValue({
     request_id: 'req-playground-test',
-    response: { content: [{ type: 'text', text: 'working' }] },
-    quota: {
-      enabled: true,
-      limit: 4096,
-      remaining: 4000,
-      reset_at: '2026-08-25T00:00:00+07:00'
-    }
+    message: 'Hello from the model',
+    response: { content: [{ type: 'text', text: 'Hello from the model' }] },
+    quota: quota({ remaining: 4000 })
   })
-
-  /*
-   * `useSpResource` keys into Nuxt's payload, which is shared for the whole test
-   * file, so without clearing it a later test renders an earlier test's catalogue.
-   */
+  redeemCode.mockReset()
   clearNuxtData()
   clearNuxtState()
 })
 
 const mountPlayground = async () => {
   const page = await mountSuspended(PlaygroundPage)
-
+  await flushPromises()
   await nextTick()
-  await nextTick()
-
   return page
 }
 
-describe('protocol selection', () => {
-  it('builds against the surface the alias states rather than the page default', async () => {
-    plane.models = [model({
-      public_alias: 'sp-codex',
-      capabilities: capabilities({ responses_api: true })
-    })]
+describe('customer chat Playground', () => {
+  it('renders as chat and automatically chooses a supported protocol', async () => {
+    plane.models = [model({ public_alias: 'sp-codex', capabilities: capabilities({ responses_api: true }) })]
+    getPlaygroundQuota.mockResolvedValue(quota({ free_model_aliases: ['sp-codex'], default_model_alias: 'sp-codex' }))
 
     const page = await mountPlayground()
-    const text = page.text()
-
-    expect(text).toContain('/v1/responses')
-    expect(text).not.toContain('/v1/messages')
-    expect(text).toContain('sp-codex')
+    expect(page.text()).toContain('Start a conversation')
+    expect(page.text()).toContain('Responses API')
+    expect(page.text()).not.toContain('What you will send with your own key')
   })
 
-  it('refuses to build anything for an alias that states no protocol', async () => {
-    plane.models = [model({ public_alias: 'sp-orphan' })]
-
+  it('sends conversation history to the hosted Playground and renders normalized assistant text', async () => {
     const page = await mountPlayground()
-    const text = page.text()
+    const textarea = page.find('textarea')
+    await textarea.setValue('Hello')
+    await textarea.trigger('keydown.enter')
+    await nextTick()
+    await nextTick()
 
-    expect(text).toContain('This alias states no inference protocol')
-    expect(text).toContain('model_unavailable')
-
-    // No request section, so no snippet a customer could copy and be refused for.
-    expect(text).not.toContain('What you will send')
-    expect(text).not.toContain('curl ')
+    expect(runPlayground).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'sp-sonnet',
+      protocol: 'messages',
+      messages: [{ role: 'user', content: 'Hello' }]
+    }))
+    expect(page.text()).toContain('Hello from the model')
   })
 
-  it('names the output ceiling field the selected protocol actually reads', async () => {
-    plane.models = [model({
-      public_alias: 'sp-chat',
-      capabilities: capabilities({ chat_completions_api: true })
-    })]
-
+  it('shows buy and redeem actions after the selected model exhausts all spendable funding', async () => {
+    getPlaygroundQuota.mockResolvedValue(quota({ remaining: 0 }))
     const page = await mountPlayground()
-
-    expect(page.text()).toContain('"max_completion_tokens": 256')
+    expect(page.text()).toContain('Continue chatting')
+    expect(page.text()).toContain('Buy tokens / credit')
+    expect(page.text()).toContain('Redeem code')
   })
 
-  it('always sends max_tokens on Claude Messages, which has no server-side default', async () => {
+  it('locks the model selector when admin disables customer model switching', async () => {
+    plane.models = [
+      model({ public_alias: 'sp-sonnet', capabilities: capabilities({ messages_api: true }) }),
+      model({ public_alias: 'sp-other', capabilities: capabilities({ responses_api: true }) })
+    ]
+    getPlaygroundQuota.mockResolvedValue(quota({ allow_model_switching: false }))
     const page = await mountPlayground()
 
-    expect(page.text()).toContain('"max_tokens": 256')
-  })
-})
-
-describe('what the catalogue has not published', () => {
-  it('shows a placeholder to replace rather than inventing an alias', async () => {
-    plane.models = []
-
-    const page = await mountPlayground()
-    const text = page.text()
-
-    expect(text).toContain('<your-model-alias>')
-    expect(text).toContain('No alias is published')
-  })
-
-  it('does not offer streaming for an alias the catalogue says cannot stream', async () => {
-    plane.models = [model({
-      public_alias: 'sp-batch',
-      capabilities: capabilities({ messages_api: true, streaming: false })
-    })]
-
-    const page = await mountPlayground()
-
-    expect(page.text()).toContain('The catalogue states this alias does not stream')
-
-    // Temperature first, streaming second. The streaming one must be unusable.
-    const switches = page.findAll('[role="switch"]')
-
-    expect(switches.length).toBe(2)
-    expect(switches.at(-1)!.attributes()).toHaveProperty('disabled')
-  })
-
-  it('says a missing ceiling is missing instead of showing a number', async () => {
-    plane.models = [model({
-      public_alias: 'sp-sonnet',
-      capabilities: capabilities({ messages_api: true, max_output_tokens: null, context_tokens: null })
-    })]
-
-    const page = await mountPlayground()
-    const text = page.text()
-
-    expect(text).toContain('No ceiling is published for this alias')
-    expect(text).toContain('Not published')
-  })
-})
-
-describe('figures it must not invent', () => {
-  it('states no amount of money anywhere, because no charge exists until the request settles', async () => {
-    const page = await mountPlayground()
-    const text = page.text()
-
-    expect(text).not.toContain('$')
-    expect(text).not.toContain('៛')
-    expect(text).toContain('will not estimate it')
-  })
-
-  it('says plainly that the free run is executed server-side without exposing the system credential', async () => {
-    const page = await mountPlayground()
-    const text = page.text()
-    expect(text).toContain('Server-side Playground')
-    expect(text).toContain('Your own API key is never required')
-    expect(text).toContain('Run free test')
-  })
-
-  it('never puts a credential in the request it shows', async () => {
-    const page = await mountPlayground()
-    const text = page.text()
-
-    expect(text).toContain('sk-spc-your-key')
-    expect(text).not.toMatch(/sk-spc-(?!your-key)/)
+    expect(page.text()).toContain('sp-sonnet')
+    expect(page.text()).not.toContain('sp-other')
   })
 })

@@ -30,9 +30,13 @@ class ModelAlias extends Model
     {
         return $query->where('enabled', true)
             ->where('customer_visible', true)
+            ->whereIn('status', ['active', 'beta'])
             ->whereHas('model', fn (Builder $model) => $model
                 ->where('enabled', true)
                 ->whereNotNull('commercial_resale_verified_at')
-                ->whereHas('provider', fn (Builder $provider) => $provider->where('enabled', true)));
+                ->whereHas('provider', fn (Builder $provider) => $provider
+                    ->where('enabled', true)
+                    ->whereHas('activeConnectionRevision', fn (Builder $revision) => $revision
+                        ->where('lifecycle_status', ProviderConnectionRevision::STATUS_READY))));
     }
 }

@@ -355,9 +355,11 @@ export interface AdminModelAlias {
   id: string
   public_alias: string
   display_name: string
-  status: 'available' | 'degraded' | 'unavailable'
+  status: 'active' | 'beta' | 'deprecated'
   enabled: boolean
   customer_visible: boolean
+  publication_ready?: boolean
+  publication_blockers?: string[]
   /** Null when the alias has no pricing record. */
   currency: string | null
   exponent: number | null
@@ -429,15 +431,25 @@ export interface ProviderConnectionRevisionUpdateInput {
   route_version: number
   origin: string
   connection_type: 'omniroute' | 'openai_compatible'
-  credential?: string | null
+  credential?: string
   timeout_ms: number
   policy_version?: number
   resolve_until?: string | null
 }
 
+export type ProviderConnectionStatusTransition = 'DRAINING' | 'REVOKED'
+
 export interface ProviderConnectionStatusUpdateInput {
-  lifecycle_status: 'READY' | 'DRAINING' | 'REVOKED'
+  lifecycle_status: ProviderConnectionStatusTransition
   reason: string
+}
+
+export type ProviderConnectionProbeResult = ProviderConnectionRevision & {
+  probe_success: boolean
+  probe_message: string
+  probe_endpoint_kind?: 'health' | 'models' | null
+  auto_activated?: boolean
+  active_connection_revision_id?: string | null
 }
 
 export interface ProviderActiveConnectionUpdateInput {
@@ -464,6 +476,9 @@ export interface AdminProviderModel {
   provider_id: string
   internal_model_id: string
   display_name: string
+  commercial_resale_verified: boolean
+  commercial_resale_verified_at: string | null
+  alias_count: number
   capabilities: AdminProviderModelCapabilities
   limits: AdminProviderModelLimits
   created_at: string
@@ -473,8 +488,22 @@ export interface AdminProviderModel {
 export interface ProviderModelInput {
   internal_model_id: string
   display_name: string
+  commercial_resale_verified: boolean
   capabilities: AdminProviderModelCapabilities
   limits: AdminProviderModelLimits
+}
+
+export interface DiscoveredProviderModel {
+  internal_model_id: string
+  display_name: string
+  registered_model_id: string | null
+  already_registered: boolean
+}
+
+export interface ProviderModelImportResult {
+  created: string[]
+  already_registered: string[]
+  models: AdminProviderModel[]
 }
 
 export interface AdminProviderAliasCapabilities {
@@ -505,11 +534,14 @@ export interface AdminProviderAlias {
   enabled: boolean
   customer_visible: boolean
   mapped_model_id: string | null
+  publication_ready: boolean
+  publication_blockers: string[]
   created_at: string
   updated_at: string
 }
 
 export interface ProviderAliasInput {
+  model_id: string
   public_alias: string
   display_name: string
   capabilities: AdminProviderAliasCapabilities
@@ -528,6 +560,15 @@ export interface AdminProvider {
   updated_at: string
 }
 
+export interface AdminPlaygroundSettings {
+  enabled: boolean
+  daily_token_quota: number
+  max_output_tokens: number
+  allowed_model_aliases: string[]
+  gateway_base_url: string | null
+  default_model_alias: string | null
+  allow_model_switching: boolean
+}
 
 export interface AdminRedeemCode {
   id: string

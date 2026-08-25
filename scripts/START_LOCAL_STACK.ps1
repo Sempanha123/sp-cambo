@@ -1,10 +1,21 @@
 ﻿param(
-  [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
+  [string]$ProjectRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = (Resolve-Path $ProjectRoot).Path
 
+# Resolve the project root after parameter binding. Windows PowerShell 5.1 can
+# expose an empty $PSScriptRoot while evaluating a parameter default in some
+# launch paths, so use the actual script path from $MyInvocation instead.
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+        throw 'Could not resolve the current script path. Pass -ProjectRoot explicitly.'
+    }
+    $scriptDir = Split-Path -Parent $scriptPath
+    $ProjectRoot = Split-Path -Parent $scriptDir
+}
+$ProjectRoot = (Resolve-Path $ProjectRoot).Path
 $repair = Join-Path $ProjectRoot 'scripts\APPLY_LOCAL_STACK_FIX.ps1'
 if (-not (Test-Path $repair)) {
     throw "APPLY_LOCAL_STACK_FIX.ps1 not found."
@@ -19,9 +30,10 @@ if ($LASTEXITCODE -ne 0) {
 $laravelScript = Join-Path $ProjectRoot 'scripts\START_LARAVEL.ps1'
 $gatewayScript = Join-Path $ProjectRoot 'scripts\START_LOCAL_GATEWAY.ps1'
 $khqrScript = Join-Path $ProjectRoot 'scripts\START_KHQR.ps1'
+$schedulerScript = Join-Path $ProjectRoot 'scripts\START_SCHEDULER.ps1'
 
 Write-Host ""
-Write-Host "Opening three local service terminals..." -ForegroundColor Cyan
+Write-Host "Opening four local service terminals..." -ForegroundColor Cyan
 
 Start-Process powershell -ArgumentList @(
     '-NoExit',
@@ -43,6 +55,13 @@ Start-Process powershell -ArgumentList @(
     '-NoExit',
     '-ExecutionPolicy', 'Bypass',
     '-File', ('"' + $khqrScript + '"'),
+    '-ProjectRoot', ('"' + $ProjectRoot + '"')
+)
+
+Start-Process powershell -ArgumentList @(
+    '-NoExit',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', ('"' + $schedulerScript + '"'),
     '-ProjectRoot', ('"' + $ProjectRoot + '"')
 )
 

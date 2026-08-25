@@ -2,15 +2,17 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Exceptions\CatalogPublicationException;
 use App\Exceptions\ProviderConnectionException;
 use App\Http\Controllers\Controller;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
 use App\Services\AuditService;
+use App\Services\ProviderEndpointService;
+use Illuminate\Http\Client\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -189,32 +191,27 @@ class ProviderConnectionRevisionController extends Controller
             'revision_id' => ['required', 'string', 'exists:provider_connection_revisions,id'],
         ]);
 
-        $revision = ProviderConnectionRevision::query()
-            ->where('id', $data['revision_id'])
-            ->where('provider_id', $provider->id)
-            ->firstOrFail();
+        $revision = ProviderConnectionRevision::query()->findOrFail($data['revision_id']);
 
-        if (! $revision->isRouteReady()) {
-            throw new CatalogPublicationException('Cannot activate a revision that is not route-ready.');
-        }
+        $provider = DB::transaction(function () use ($request, $provider, $revision, $audit): Provider {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            $previousRevisionId = $lockedProvider->active_connection_revision_id;
+            $activatedProvider = $lockedProvider->activateConnectionRevision($revision);
 
-        $previousRevisionId = $provider->active_connection_revision_id;
+            $audit->record(
+                $request->user(),
+                'provider.active_connection_revision_changed',
+                'provider',
+                $activatedProvider->id,
+                'Changed active provider connection revision.',
+                [
+                    'previous_revision_id' => $previousRevisionId,
+                    'new_revision_id' => $activatedProvider->active_connection_revision_id,
+                ]
+            );
 
-        $provider->update([
-            'active_connection_revision_id' => $revision->id,
-        ]);
-
-        $audit->record(
-            $request->user(),
-            'provider.active_connection_revision_changed',
-            'provider',
-            $provider->id,
-            'Changed active provider connection revision.',
-            [
-                'previous_revision_id' => $previousRevisionId,
-                'new_revision_id' => $revision->id,
-            ]
-        );
+            return $activatedProvider;
+        });
 
         return response()->json([
             'data' => $this->providerResource($provider),
@@ -224,82 +221,160 @@ class ProviderConnectionRevisionController extends Controller
     /**
      * Initiate a probe for a provider connection revision.
      */
-    public function probe(Request $request, string $provider, string $revision): JsonResponse
-    {
-        $provider = Provider::query()
-            ->where('id', $provider)
-            ->firstOrFail();
-
+    public function probe(
+        Request $request,
+        string $provider,
+        string $revision,
+        AuditService $audit,
+        ProviderEndpointService $endpoints
+    ): JsonResponse {
+        $provider = Provider::query()->findOrFail($provider);
         $revision = ProviderConnectionRevision::query()
-            ->where('id', $revision)
             ->where('provider_id', $provider->id)
-            ->firstOrFail();
+            ->findOrFail($revision);
 
-        // Decrypt credential for the probe
-        $credential = $revision->credential;
+        $probeFingerprint = $this->probeFingerprint($revision);
+        $response = null;
+        $successfulCandidate = null;
+        $attempts = [];
 
-        try {
-            $base = rtrim($revision->origin, '/');
-            $headers = [
-                'Authorization' => 'Bearer '.$credential,
-                'Accept' => 'application/json',
-            ];
+        foreach ($endpoints->probeCandidates($revision) as $candidate) {
+            try {
+                $response = Http::timeout(max(1, $revision->timeout_ms / 1000))
+                    ->acceptJson()
+                    ->withToken($revision->credential)
+                    ->get($candidate['url']);
 
-            // OmniRoute installations are not guaranteed to expose /health.
-            // Prefer it when available, then fall back to the standard models
-            // endpoint which also verifies the configured credential.
-            $attempts = [
-                $base.'/health',
-                $base.'/v1/models',
-            ];
+                $attempts[] = [
+                    'kind' => $candidate['kind'],
+                    'status' => $response->status(),
+                ];
 
-            $response = null;
-            $probedUrl = null;
-            foreach ($attempts as $url) {
-                $candidate = Http::timeout($revision->timeout_ms / 1000)
-                    ->withHeaders($headers)
-                    ->get($url);
-
-                $response = $candidate;
-                $probedUrl = $url;
-                if ($candidate->successful()) {
+                if ($response->successful()) {
+                    $successfulCandidate = $candidate;
                     break;
                 }
+            } catch (\Throwable $exception) {
+                report($exception);
+                $attempts[] = [
+                    'kind' => $candidate['kind'],
+                    'status' => null,
+                ];
+            }
+        }
+
+        $success = $response instanceof Response && $response->successful();
+        [$revision, $canPromote, $autoActivated] = DB::transaction(function () use (
+            $request,
+            $provider,
+            $revision,
+            $probeFingerprint,
+            $success,
+            $attempts,
+            $audit
+        ): array {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            $lockedRevision = ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->lockForUpdate()
+                ->findOrFail($revision->id);
+
+            if (! hash_equals($probeFingerprint, $this->probeFingerprint($lockedRevision))) {
+                throw new ProviderConnectionException(
+                    'The connection revision changed while it was being probed. Probe the current revision again.',
+                    'provider_revision_changed_during_probe'
+                );
             }
 
-            $success = $response?->successful() ?? false;
-            $status = $success ? ProviderConnectionRevision::STATUS_READY : 'FAILED';
-            $message = $success
-                ? 'Connection successful via '.parse_url((string) $probedUrl, PHP_URL_PATH)
-                : 'Connection failed: '.($response?->status() ?? 0);
+            $canPromote = $success
+                && $lockedRevision->lifecycle_status === ProviderConnectionRevision::STATUS_PENDING
+                && $lockedProvider->active_connection_revision_id !== $lockedRevision->id
+                && ! $lockedRevision->reservations()->exists();
 
-            $revision->update([
+            $lockedRevision->update([
                 'last_probe_status' => $success ? 'SUCCESS' : 'FAILED',
                 'last_probe_at' => now(),
-                'lifecycle_status' => $success && $revision->lifecycle_status === ProviderConnectionRevision::STATUS_PENDING
+                'lifecycle_status' => $canPromote
                     ? ProviderConnectionRevision::STATUS_READY
-                    : $revision->lifecycle_status,
+                    : $lockedRevision->lifecycle_status,
             ]);
+            $lockedRevision->refresh();
+
+            // First-time provider setup should not require a second, easy-to-miss
+            // activation click. A successful READY probe becomes active only when
+            // this provider has no active route yet. Existing active routes are
+            // never replaced automatically.
+            $autoActivated = false;
+            if ($success
+                && $lockedProvider->active_connection_revision_id === null
+                && $lockedRevision->lifecycle_status === ProviderConnectionRevision::STATUS_READY) {
+                $lockedProvider->forceFill([
+                    'active_connection_revision_id' => $lockedRevision->id,
+                ])->saveOrFail();
+                $autoActivated = true;
+
+                $audit->record(
+                    $request->user(),
+                    'provider.active_connection_revision_changed',
+                    'provider',
+                    $lockedProvider->id,
+                    'Activated the first healthy provider connection automatically after a successful probe.',
+                    [
+                        'previous_revision_id' => null,
+                        'new_revision_id' => $lockedRevision->id,
+                        'source' => 'probe_auto_activation',
+                    ]
+                );
+            }
+
+            $audit->record(
+                $request->user(),
+                'provider_connection_revision.probed',
+                'provider_connection_revision',
+                $lockedRevision->id,
+                $success ? 'Provider connection probe succeeded.' : 'Provider connection probe failed.',
+                [
+                    'provider_id' => $lockedProvider->id,
+                    'route_version' => $lockedRevision->route_version,
+                    'success' => $success,
+                    'promoted_to_ready' => $canPromote,
+                    'auto_activated' => $autoActivated,
+                    'lifecycle_status' => $lockedRevision->lifecycle_status,
+                    'attempts' => $attempts,
+                ]
+            );
+
+            return [$lockedRevision, $canPromote, $autoActivated];
+        });
+
+        if (! $success) {
+            $message = 'Provider connection probe failed. Verify the origin, credential, and provider availability.';
 
             return response()->json([
-                'data' => $this->resource($revision->fresh()) + [
-                    'probe_success' => $success,
+                'message' => $message,
+                'code' => 'provider_connection_probe_failed',
+                'data' => $this->resource($revision) + [
+                    'probe_success' => false,
                     'probe_message' => $message,
                 ],
-            ]);
-        } catch (\Throwable $e) {
-            $revision->update([
-                'last_probe_status' => 'FAILED',
-                'last_probe_at' => now(),
-            ]);
-
-            return response()->json([
-                'data' => $this->resource($revision->fresh()) + [
-                    'probe_success' => false,
-                    'probe_message' => 'Probe failed: '.$e->getMessage(),
-                ],
-            ]);
+            ], 502);
         }
+
+        $message = $autoActivated
+            ? 'Connection probe succeeded, the revision is READY, and it was set active automatically.'
+            : ($canPromote
+                ? 'Connection probe succeeded and the revision is READY.'
+                : 'Connection probe succeeded.');
+
+        return response()->json([
+            'data' => $this->resource($revision) + [
+                'probe_success' => true,
+                'probe_message' => $message,
+                'probe_endpoint_kind' => $successfulCandidate['kind'] ?? null,
+                'auto_activated' => $autoActivated,
+                'active_connection_revision_id' => $autoActivated ? (string) $revision->id : ($provider->active_connection_revision_id ? (string) $provider->active_connection_revision_id : null),
+            ],
+        ]);
     }
 
     /**
@@ -311,36 +386,58 @@ class ProviderConnectionRevisionController extends Controller
             ->where('id', $provider)
             ->firstOrFail();
 
-        $revision = ProviderConnectionRevision::query()
-            ->where('id', $revision)
-            ->where('provider_id', $provider->id)
-            ->firstOrFail();
-
         $data = $request->validate([
             'lifecycle_status' => ['required', 'string', Rule::in([
-                ProviderConnectionRevision::STATUS_READY,
                 ProviderConnectionRevision::STATUS_DRAINING,
                 ProviderConnectionRevision::STATUS_REVOKED,
             ])],
             'reason' => ['required', 'string', 'min:10', 'max:2000'],
         ]);
 
-        $previousStatus = $revision->lifecycle_status;
-        $revision->update([
-            'lifecycle_status' => $data['lifecycle_status'],
-        ]);
+        $revision = DB::transaction(function () use ($request, $provider, $revision, $data, $audit): ProviderConnectionRevision {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            $lockedRevision = ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->lockForUpdate()
+                ->findOrFail($revision);
 
-        $audit->record(
-            $request->user(),
-            'provider_connection_revision.status_changed',
-            'provider_connection_revision',
-            $revision->id,
-            $data['reason'],
-            [
-                'previous_status' => $previousStatus,
-                'new_status' => $data['lifecycle_status'],
-            ]
-        );
+            $previousStatus = $lockedRevision->lifecycle_status;
+            $allowedTransitions = [
+                ProviderConnectionRevision::STATUS_PENDING => [ProviderConnectionRevision::STATUS_REVOKED],
+                ProviderConnectionRevision::STATUS_READY => [
+                    ProviderConnectionRevision::STATUS_DRAINING,
+                    ProviderConnectionRevision::STATUS_REVOKED,
+                ],
+                ProviderConnectionRevision::STATUS_DRAINING => [ProviderConnectionRevision::STATUS_REVOKED],
+                ProviderConnectionRevision::STATUS_REVOKED => [],
+            ];
+
+            if (! in_array($data['lifecycle_status'], $allowedTransitions[$previousStatus] ?? [], true)) {
+                throw new ProviderConnectionException(
+                    "Cannot transition a provider connection revision from {$previousStatus} to {$data['lifecycle_status']}.",
+                    'invalid_provider_revision_transition'
+                );
+            }
+
+            $lockedRevision->update([
+                'lifecycle_status' => $data['lifecycle_status'],
+            ]);
+            $lockedRevision->refresh();
+
+            $audit->record(
+                $request->user(),
+                'provider_connection_revision.status_changed',
+                'provider_connection_revision',
+                $lockedRevision->id,
+                $data['reason'],
+                [
+                    'previous_status' => $previousStatus,
+                    'new_status' => $lockedRevision->lifecycle_status,
+                ]
+            );
+
+            return $lockedRevision;
+        });
 
         return response()->json([
             'data' => $this->resource($revision),
@@ -357,6 +454,19 @@ class ProviderConnectionRevisionController extends Controller
         return $origin;
     }
 
+    protected function probeFingerprint(ProviderConnectionRevision $revision): string
+    {
+        return hash('sha256', implode("\n", [
+            (string) $revision->provider_id,
+            (string) $revision->route_version,
+            $revision->origin,
+            $revision->connection_type,
+            $revision->credential,
+            (string) $revision->timeout_ms,
+            (string) $revision->policy_version,
+        ]));
+    }
+
     /**
      * Validate that the origin is safe and allowed.
      */
@@ -368,9 +478,17 @@ class ProviderConnectionRevisionController extends Controller
                 function (string $attribute, string $value, \Closure $fail): void {
                     $parsed = parse_url($value);
 
-                    // Reject userinfo, path, query, fragment
-                    if (isset($parsed['user']) || isset($parsed['pass']) || isset($parsed['query']) || isset($parsed['fragment'])) {
-                        $fail('The origin must not contain userinfo, query parameters, or fragments.');
+                    // Allow only an origin root or the conventional OpenAI-compatible
+                    // /v1 base path. Arbitrary paths make endpoint construction ambiguous.
+                    $path = rtrim((string) ($parsed['path'] ?? ''), '/');
+                    if (
+                        isset($parsed['user'])
+                        || isset($parsed['pass'])
+                        || isset($parsed['query'])
+                        || isset($parsed['fragment'])
+                        || ! in_array(strtolower($path), ['', '/v1'], true)
+                    ) {
+                        $fail('The origin may only include the optional /v1 path and must not contain userinfo, query parameters, or fragments.');
 
                         return;
                     }

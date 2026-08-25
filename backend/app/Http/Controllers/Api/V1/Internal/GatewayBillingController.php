@@ -36,11 +36,7 @@ class GatewayBillingController extends Controller
             ->exists();
         $lots = EntitlementLot::query()->where('user_id', $key->user_id)->where('status', 'ACTIVE')
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->when(
-                $isPlaygroundKey,
-                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-            )
+            ->when(! $isPlaygroundKey, fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'))
             ->get();
 
         return response()->json(['data' => [

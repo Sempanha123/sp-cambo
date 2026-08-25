@@ -68,9 +68,19 @@ function Get-DotEnvValue {
 }
 
 function New-HexSecret {
+    # Windows PowerShell 5.1 runs on .NET Framework, where the newer static
+    # RandomNumberGenerator.Fill() and Convert.ToHexString() APIs do not exist.
+    # Use the older cryptographic APIs so this works on both Windows PowerShell
+    # 5.1 and PowerShell 7+.
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    return ([Convert]::ToHexString($bytes)).ToLowerInvariant()
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    } finally {
+        if ($null -ne $rng) { $rng.Dispose() }
+    }
+
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
@@ -78,6 +88,13 @@ $backend = Join-Path $ProjectRoot 'backend'
 $gateway = Join-Path $ProjectRoot 'gateway'
 $backendEnv = Join-Path $backend '.env'
 $gatewayEnv = Join-Path $gateway '.env'
+
+if (-not (Test-Path $backendEnv)) {
+    $backendExample = Join-Path $backend '.env.example'
+    if (-not (Test-Path $backendExample)) { throw "backend/.env.example is missing." }
+    Copy-Item $backendExample $backendEnv
+    Write-Host "Created backend/.env from .env.example (no credentials were invented)." -ForegroundColor Yellow
+}
 
 if (-not (Test-Path (Join-Path $backend 'artisan'))) {
     throw "Laravel backend not found: $backend"
@@ -119,20 +136,41 @@ Set-DotEnvValue -Path $gatewayEnv -Name 'GATEWAY_RATE_STORE' -Value 'memory'
 # Local gateway advertised by Laravel/frontend.
 Set-DotEnvValue -Path $backendEnv -Name 'SP_CAMBO_GATEWAY_BASE_URL' -Value 'http://127.0.0.1:3010'
 
-# Keep KHQR settings aligned if a generator secret already exists in backend.
-$khqrSecret = Get-DotEnvValue -Path $backendEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET'
-if ($khqrSecret -and $khqrSecret.Length -ge 32) {
-    Set-DotEnvValue -Path $gatewayEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET' -Value $khqrSecret
+# Keep the private KHQR sidecar secret synchronized too. Reuse the
+# customer's existing value when present; otherwise generate a separate secret.
+$backendKhqrSecret = Get-DotEnvValue -Path $backendEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET'
+$gatewayKhqrSecret = Get-DotEnvValue -Path $gatewayEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET'
+if ($backendKhqrSecret -and $backendKhqrSecret.Length -ge 32) {
+    $khqrSecret = $backendKhqrSecret
+} elseif ($gatewayKhqrSecret -and $gatewayKhqrSecret.Length -ge 32) {
+    $khqrSecret = $gatewayKhqrSecret
+} else {
+    $khqrSecret = New-HexSecret
 }
+Set-DotEnvValue -Path $backendEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET' -Value $khqrSecret
+Set-DotEnvValue -Path $gatewayEnv -Name 'BAKONG_KHQR_GENERATOR_SECRET' -Value $khqrSecret
+Set-DotEnvValue -Path $backendEnv -Name 'BAKONG_KHQR_GENERATOR_URL' -Value 'http://127.0.0.1:3011/v1/khqr/generate'
 
 Set-DotEnvValue -Path $gatewayEnv -Name 'KHQR_HOST' -Value '127.0.0.1'
 Set-DotEnvValue -Path $gatewayEnv -Name 'KHQR_PORT' -Value '3011'
+
+# Generate local server-side Telegram integrity/link secrets when absent. The
+# Telegram bot token itself is never invented or changed.
+$telegramWebhookSecret = Get-DotEnvValue -Path $backendEnv -Name 'TELEGRAM_WEBHOOK_SECRET'
+if (-not $telegramWebhookSecret -or $telegramWebhookSecret.Length -lt 32) {
+    Set-DotEnvValue -Path $backendEnv -Name 'TELEGRAM_WEBHOOK_SECRET' -Value (New-HexSecret)
+}
+$telegramLinkSecret = Get-DotEnvValue -Path $backendEnv -Name 'TELEGRAM_LINK_SECRET'
+if (-not $telegramLinkSecret -or $telegramLinkSecret.Length -lt 32) {
+    Set-DotEnvValue -Path $backendEnv -Name 'TELEGRAM_LINK_SECRET' -Value (New-HexSecret)
+}
 
 Write-Host ""
 Write-Host "SP Cambo local environment repaired." -ForegroundColor Green
 Write-Host "Internal gateway secret synchronized between backend/.env and gateway/.env." -ForegroundColor Green
 Write-Host "Secret length: $($secret.Length) characters (value intentionally hidden)." -ForegroundColor DarkGray
 Write-Host "Gateway rate store: memory (Redis not required locally)." -ForegroundColor Green
+Write-Host "KHQR generator secret synchronized and Laravel generator URL set to port 3011." -ForegroundColor Green
 
 # Clear Laravel cached configuration so it sees the synchronized secret.
 Push-Location $backend

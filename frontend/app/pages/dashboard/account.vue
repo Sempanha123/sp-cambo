@@ -177,11 +177,17 @@ onMounted(async () => {
           </div>
         </template>
 
-        <div v-if="identitiesLoading" class="space-y-3 py-2">
+        <div
+          v-if="identitiesLoading"
+          class="space-y-3 py-2"
+        >
           <USkeleton class="h-16 w-full" />
         </div>
 
-        <div v-else-if="googleIdentity" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          v-else-if="googleIdentity"
+          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        >
           <div class="flex min-w-0 items-center gap-3">
             <img
               v-if="googleIdentity.avatar_url"
@@ -190,15 +196,25 @@ onMounted(async () => {
               class="size-11 shrink-0 rounded-full object-cover"
               referrerpolicy="no-referrer"
             >
-            <div v-else class="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10">
-              <UIcon name="i-lucide-user" class="size-5 text-primary" />
+            <div
+              v-else
+              class="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10"
+            >
+              <UIcon
+                name="i-lucide-user"
+                class="size-5 text-primary"
+              />
             </div>
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <p class="font-medium text-highlighted">
                   Google
                 </p>
-                <UBadge color="success" variant="subtle" size="sm">
+                <UBadge
+                  color="success"
+                  variant="subtle"
+                  size="sm"
+                >
                   Linked
                 </UBadge>
               </div>
@@ -223,8 +239,14 @@ onMounted(async () => {
           </UButton>
         </div>
 
-        <div v-else class="rounded-lg border border-dashed border-default p-5 text-center">
-          <UIcon name="i-lucide-link" class="mx-auto mb-2 size-5 text-muted" />
+        <div
+          v-else
+          class="rounded-lg border border-dashed border-default p-5 text-center"
+        >
+          <UIcon
+            name="i-lucide-link"
+            class="mx-auto mb-2 size-5 text-muted"
+          />
           <p class="text-sm font-medium text-highlighted">
             No Google account linked
           </p>
@@ -266,7 +288,12 @@ onMounted(async () => {
         </dl>
 
         <template #footer>
-          <UButton to="/dashboard/settings" color="neutral" variant="subtle" icon="i-lucide-settings">
+          <UButton
+            to="/dashboard/settings"
+            color="neutral"
+            variant="subtle"
+            icon="i-lucide-settings"
+          >
             Edit profile settings
           </UButton>
         </template>
@@ -285,8 +312,14 @@ onMounted(async () => {
         </div>
       </template>
 
-      <form class="grid gap-4 lg:grid-cols-3" @submit.prevent="changePassword">
-        <UFormField label="Current password" required>
+      <form
+        class="grid gap-4 lg:grid-cols-3"
+        @submit.prevent="changePassword"
+      >
+        <UFormField
+          label="Current password"
+          required
+        >
           <UInput
             v-model="passwordForm.current_password"
             type="password"
@@ -294,7 +327,11 @@ onMounted(async () => {
             class="w-full"
           />
         </UFormField>
-        <UFormField label="New password" hint="12+ chars, mixed case, number, symbol" required>
+        <UFormField
+          label="New password"
+          hint="12+ chars, mixed case, number, symbol"
+          required
+        >
           <UInput
             v-model="passwordForm.password"
             type="password"
@@ -302,7 +339,10 @@ onMounted(async () => {
             class="w-full"
           />
         </UFormField>
-        <UFormField label="Confirm new password" required>
+        <UFormField
+          label="Confirm new password"
+          required
+        >
           <UInput
             v-model="passwordForm.password_confirmation"
             type="password"
@@ -311,7 +351,11 @@ onMounted(async () => {
           />
         </UFormField>
         <div class="lg:col-span-3">
-          <UButton type="submit" :loading="passwordBusy" icon="i-lucide-key-round">
+          <UButton
+            type="submit"
+            :loading="passwordBusy"
+            icon="i-lucide-key-round"
+          >
             Update password
           </UButton>
         </div>
@@ -342,16 +386,25 @@ onMounted(async () => {
         </div>
       </template>
 
-      <div v-if="sessionsLoading" class="space-y-2">
+      <div
+        v-if="sessionsLoading"
+        class="space-y-2"
+      >
         <USkeleton class="h-14 w-full" />
         <USkeleton class="h-14 w-full" />
       </div>
 
-      <div v-else-if="sessions.length === 0" class="py-4 text-sm text-muted">
+      <div
+        v-else-if="sessions.length === 0"
+        class="py-4 text-sm text-muted"
+      >
         No bearer sessions were returned for this account.
       </div>
 
-      <ul v-else class="divide-y divide-default">
+      <ul
+        v-else
+        class="divide-y divide-default"
+      >
         <li
           v-for="session in sessions"
           :key="session.id"
@@ -362,7 +415,12 @@ onMounted(async () => {
               <p class="truncate text-sm font-medium text-highlighted">
                 {{ session.name }}
               </p>
-              <UBadge v-if="session.current" color="success" variant="subtle" size="sm">
+              <UBadge
+                v-if="session.current"
+                color="success"
+                variant="subtle"
+                size="sm"
+              >
                 Current
               </UBadge>
             </div>

@@ -5,6 +5,7 @@ use App\Exceptions\InferenceIdempotencyException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\PackagePublicationException;
 use App\Exceptions\PaymentException;
+use App\Exceptions\ProviderConnectionException;
 use App\Exceptions\ResellerCustomerStatusTransitionException;
 use App\Http\Middleware\AuthenticateGateway;
 use App\Http\Middleware\AuthenticateResellerManagementKey;
@@ -69,6 +70,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 $exception instanceof InsufficientBalanceException => [402, $exception->billingMode === 'CREDIT_BALANCE' ? 'insufficient_credits' : 'insufficient_tokens', $exception->getMessage(), null],
                 $exception instanceof PackagePublicationException => [409, 'profitability_review_required', $exception->getMessage(), null],
                 $exception instanceof PaymentException => [$exception->httpStatus, $exception->errorCode, $exception->getMessage(), null],
+                $exception instanceof ProviderConnectionException => [$exception->httpStatus, $exception->errorCode, $exception->getMessage(), null],
                 $exception instanceof ResellerCustomerStatusTransitionException => [409, 'invalid_status_transition', $exception->getMessage(), null],
                 $exception instanceof ModelNotFoundException => [404, 'not_found', 'The requested resource was not found.', null],
                 $exception instanceof TokenMismatchException || ($exception instanceof HttpExceptionInterface && $exception->getStatusCode() === 419) => [419, 'csrf_token_mismatch', 'The security token is missing or expired. Refresh the page and try again.', null],

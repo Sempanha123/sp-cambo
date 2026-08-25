@@ -116,7 +116,7 @@ Schedule::command('billing:expire-entitlements')
     ->withoutOverlapping();
 
 Schedule::command('payments:reconcile-pending --batch=1')
-    ->everyFifteenMinutes()
+    ->everyMinute()
     ->withoutOverlapping();
 
 

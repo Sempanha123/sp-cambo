@@ -18,7 +18,7 @@ const name = ref(auth.user?.name ?? '')
 const saving = ref(false)
 const errorMessage = ref<string | null>(null)
 
-watch(() => auth.user?.name, value => {
+watch(() => auth.user?.name, (value) => {
   if (typeof value === 'string') {
     name.value = value
   }
@@ -78,16 +78,35 @@ const saveProfile = async () => {
           </div>
         </template>
 
-        <form class="space-y-5" @submit.prevent="saveProfile">
-          <UFormField label="Display name" required>
-            <UInput v-model="name" autocomplete="name" class="w-full" />
+        <form
+          class="space-y-5"
+          @submit.prevent="saveProfile"
+        >
+          <UFormField
+            label="Display name"
+            required
+          >
+            <UInput
+              v-model="name"
+              autocomplete="name"
+              class="w-full"
+            />
           </UFormField>
 
           <UFormField label="Email">
-            <UInput :model-value="auth.user?.email ?? ''" type="email" disabled class="w-full" />
+            <UInput
+              :model-value="auth.user?.email ?? ''"
+              type="email"
+              disabled
+              class="w-full"
+            />
           </UFormField>
 
-          <UButton type="submit" :loading="saving" icon="i-lucide-check">
+          <UButton
+            type="submit"
+            :loading="saving"
+            icon="i-lucide-check"
+          >
             Save profile
           </UButton>
         </form>

@@ -46,11 +46,9 @@ class ReservationService
                     ->where('user_id', $user->id)
                     ->where('api_key_id', $apiKeyId)
                     ->exists();
-                $lotsQuery->when(
-                    $isPlaygroundKey,
-                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-                );
+                if (! $isPlaygroundKey) {
+                    $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY');
+                }
             }
 
             if ($eligibleLotIds !== null) {

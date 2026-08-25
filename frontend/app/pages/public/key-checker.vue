@@ -1,8 +1,9 @@
 <script setup lang="ts">
-definePageMeta({
-  layout: 'default'
-})
+import type { MoneyAmount } from '~/types/commerce'
+import type { PublicApiKeyStatus } from '~/types/api'
+import { formatMoney, formatUnits } from '~/utils/format'
 
+definePageMeta({ layout: 'default' })
 useSeoMeta({
   title: 'API key checker',
   description: 'Check an SP Cambo API key status, expiry, remaining usage and recent metering without signing in.',
@@ -11,108 +12,102 @@ useSeoMeta({
 
 const api = useSpApi()
 const toast = useToast()
-
 const keyForm = ref({ apiKey: '' })
 const checking = ref(false)
 const showKey = ref(false)
+const keyStatus = ref<PublicApiKeyStatus | null>(null)
 
-const keyStatus = ref<{
-  valid: boolean
-  masked_key?: string
-  status?: string
-  package?: string
-  allowed_models?: string[]
-  created_at?: string
-  expires_at?: string
-  time_remaining?: string
-  quota_remaining?: number | null
-  credit_remaining?: number | null
-  tokens_used?: { input: number, output: number, total: number }
-  total_spend?: number
-  last_used?: string | null
-  recent_requests?: Array<{
-    time: string
-    model: string
-    status: string
-    input_tokens: number
-    output_tokens: number
-    charge: number
-  }>
-  error?: string
-} | null>(null)
+// Kept only in page memory for optional live refresh. It is never put in a URL,
+// localStorage, sessionStorage or a cookie and disappears when this page closes.
+const sessionSecret = ref('')
+const autoRefresh = ref(false)
+const lastRefreshedAt = ref<Date | null>(null)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-const checkKey = async () => {
-  const secret = keyForm.value.apiKey.trim()
-
-  if (!secret) {
-    toast.add({
-      title: 'Enter your API key',
-      description: 'Paste the SP Cambo key you want to check.',
-      color: 'warning',
-      icon: 'i-lucide-key-round'
-    })
-    return
-  }
-
+const performCheck = async (secret: string, clearCurrent = true) => {
+  if (checking.value || !secret) return
   checking.value = true
-  keyStatus.value = null
+  if (clearCurrent) keyStatus.value = null
 
   try {
-    const response = await api.checkApiKey({ api_key: secret })
-
-    keyStatus.value = {
-      valid: true,
-      masked_key: response.masked_key,
-      status: response.status,
-      package: response.package,
-      allowed_models: response.allowed_models,
-      created_at: response.created_at,
-      expires_at: response.expires_at,
-      time_remaining: response.time_remaining,
-      quota_remaining: response.quota_remaining,
-      credit_remaining: response.credit_remaining,
-      tokens_used: response.tokens_used,
-      total_spend: response.total_spend,
-      last_used: response.last_used,
-      recent_requests: response.recent_requests
-    }
-
-    // The plaintext secret is no longer needed after a successful POST check.
+    keyStatus.value = await api.checkApiKey({ api_key: secret })
+    sessionSecret.value = secret
     keyForm.value.apiKey = ''
     showKey.value = false
+    lastRefreshedAt.value = new Date()
+    autoRefresh.value = true
   } catch (error) {
     const spError = toSpApiError(error)
-    keyStatus.value = {
-      valid: false,
-      error: spError.message
-    }
+    keyStatus.value = { valid: false, error: spError.message }
+    if (clearCurrent) sessionSecret.value = ''
   } finally {
     checking.value = false
   }
 }
 
+const checkKey = async () => {
+  const secret = keyForm.value.apiKey.trim()
+  if (!secret) {
+    toast.add({ title: 'Enter your API key', description: 'Paste the SP Cambo key you want to check.', color: 'warning', icon: 'i-lucide-key-round' })
+    return
+  }
+  await performCheck(secret)
+}
+
+const refreshNow = async () => {
+  if (sessionSecret.value) await performCheck(sessionSecret.value, false)
+}
+
+const stopTimer = () => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+watch([autoRefresh, sessionSecret], ([enabled, secret]) => {
+  if (!import.meta.client) return
+  stopTimer()
+  if (enabled && secret) {
+    refreshTimer = setInterval(() => { void refreshNow() }, 10_000)
+  }
+}, { immediate: true })
+
+onBeforeUnmount(stopTimer)
+
 const clear = () => {
   keyForm.value.apiKey = ''
+  sessionSecret.value = ''
+  autoRefresh.value = false
   keyStatus.value = null
+  lastRefreshedAt.value = null
   showKey.value = false
+  stopTimer()
 }
 
 const displayStatus = computed(() => keyStatus.value?.status?.toUpperCase() || 'UNKNOWN')
-
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Not available'
-const formatNumber = (value: number | null | undefined) => value === null || value === undefined ? 'Unlimited' : value.toLocaleString()
-const formatCurrency = (value: number | null | undefined) => new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 4
-}).format(value ?? 0)
-
+const formatTimeRemaining = (value?: string | null) => {
+  if (!value) return 'No expiry'
+  const remaining = new Date(value).getTime() - Date.now()
+  if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired'
+  const minutes = Math.ceil(remaining / 60_000)
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const mins = minutes % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+const formatMoneySet = (single: MoneyAmount | null | undefined, grouped: MoneyAmount[] | undefined) => {
+  if (single) return formatMoney(single)
+  if (grouped?.length) return grouped.map(amount => formatMoney(amount)).join(' + ')
+  return '—'
+}
 const statusColor = (status?: string) => {
   switch (status?.toLowerCase()) {
     case 'active': return 'success'
     case 'revoked': return 'error'
     case 'expired': return 'warning'
+    case 'disabled': return 'warning'
     default: return 'neutral'
   }
 }
@@ -196,6 +191,14 @@ const statusColor = (status?: string) => {
                 </UButton>
               </div>
             </UForm>
+
+            <div v-if="sessionSecret && keyStatus && !keyStatus.error" class="mt-5 flex flex-col gap-3 rounded-lg border border-default bg-elevated/35 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <USwitch v-model="autoRefresh" label="Live usage refresh every 10 seconds" />
+                <p class="mt-1 text-xs text-muted">Key is held only in page memory. Last refreshed {{ lastRefreshedAt?.toLocaleTimeString() || '—' }}.</p>
+              </div>
+              <UButton color="neutral" variant="subtle" icon="i-lucide-refresh-cw" :loading="checking" @click="refreshNow">Refresh now</UButton>
+            </div>
           </UCard>
 
           <div class="space-y-4">
@@ -213,7 +216,7 @@ const statusColor = (status?: string) => {
                 </li>
                 <li class="flex gap-2.5">
                   <UIcon name="i-lucide-check" class="mt-0.5 size-4 shrink-0 text-primary" />
-                  Successful checks clear the plaintext input automatically.
+                  After a successful check, the input is cleared. Optional live refresh keeps the key only in this page's memory until you clear or close it.
                 </li>
               </ul>
             </div>
@@ -225,7 +228,7 @@ const statusColor = (status?: string) => {
         </div>
 
         <UAlert
-          v-if="keyStatus && !keyStatus.valid"
+          v-if="keyStatus?.error"
           role="alert"
           color="error"
           variant="subtle"
@@ -234,7 +237,7 @@ const statusColor = (status?: string) => {
           :description="keyStatus.error"
         />
 
-        <template v-if="keyStatus?.valid">
+        <template v-if="keyStatus && !keyStatus.error">
           <section class="space-y-4">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -248,10 +251,10 @@ const statusColor = (status?: string) => {
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <SpMetric label="Time remaining" icon="i-lucide-clock" :value="keyStatus.time_remaining || 'Not available'" />
-              <SpMetric label="Quota remaining" icon="i-lucide-hourglass" :value="formatNumber(keyStatus.quota_remaining)" />
-              <SpMetric label="Credit remaining" icon="i-lucide-wallet" :value="formatCurrency(keyStatus.credit_remaining)" />
-              <SpMetric label="Total spend" icon="i-lucide-chart-line" :value="formatCurrency(keyStatus.total_spend)" />
+              <SpMetric label="Time remaining" icon="i-lucide-clock" :value="formatTimeRemaining(keyStatus.expires_at)" />
+              <SpMetric label="Quota remaining" icon="i-lucide-hourglass" :value="formatUnits(keyStatus.quota_remaining)" />
+              <SpMetric label="Credit remaining" icon="i-lucide-wallet" :value="formatMoneySet(keyStatus.credit_remaining, keyStatus.credit_balances)" />
+              <SpMetric label="Credit charged" icon="i-lucide-chart-line" :value="formatMoneySet(keyStatus.total_spend, keyStatus.total_spend_by_currency)" />
             </div>
           </section>
 
@@ -294,15 +297,15 @@ const statusColor = (status?: string) => {
               <dl class="grid gap-4 sm:grid-cols-3">
                 <div>
                   <dt class="text-xs text-muted">Input</dt>
-                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatNumber(keyStatus.tokens_used?.input ?? 0) }}</dd>
+                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatUnits(keyStatus.tokens_used?.input ?? '0') }}</dd>
                 </div>
                 <div>
                   <dt class="text-xs text-muted">Output</dt>
-                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatNumber(keyStatus.tokens_used?.output ?? 0) }}</dd>
+                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatUnits(keyStatus.tokens_used?.output ?? '0') }}</dd>
                 </div>
                 <div>
                   <dt class="text-xs text-muted">Total</dt>
-                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatNumber(keyStatus.tokens_used?.total ?? 0) }}</dd>
+                  <dd class="sp-numeric mt-1 text-xl font-semibold text-highlighted">{{ formatUnits(keyStatus.tokens_used?.total ?? '0') }}</dd>
                 </div>
               </dl>
 
@@ -342,9 +345,9 @@ const statusColor = (status?: string) => {
                         {{ request.status }}
                       </UBadge>
                     </td>
-                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatNumber(request.input_tokens) }}</td>
-                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatNumber(request.output_tokens) }}</td>
-                    <td class="sp-numeric px-3 py-3 text-right font-medium text-highlighted">{{ formatCurrency(request.charge) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatUnits(request.input_tokens) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatUnits(request.output_tokens) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right font-medium text-highlighted">{{ formatMoney(request.charge) }}</td>
                   </tr>
                 </tbody>
               </table>

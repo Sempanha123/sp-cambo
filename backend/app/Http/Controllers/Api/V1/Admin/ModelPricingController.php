@@ -14,7 +14,7 @@ class ModelPricingController extends Controller
     public function index(): JsonResponse
     {
         $aliases = ModelAlias::query()
-            ->with('pricing')
+            ->with(['pricing', 'model.provider.activeConnectionRevision'])
             ->orderBy('public_alias')
             ->get();
 
@@ -50,7 +50,7 @@ class ModelPricingController extends Controller
             return $pricing;
         });
 
-        return response()->json(['data' => $this->resource($modelAlias, $pricing)]);
+        return response()->json(['data' => $this->resource($modelAlias->loadMissing('model.provider.activeConnectionRevision'), $pricing)]);
     }
 
     /**
@@ -101,6 +101,31 @@ class ModelPricingController extends Controller
 
     private function resource(ModelAlias $alias, $pricing): array
     {
+        $alias->loadMissing('model.provider.activeConnectionRevision');
+        $model = $alias->model;
+        $provider = $model?->provider;
+        $blockers = [];
+
+        if (! $alias->enabled) {
+            $blockers[] = 'Alias disabled';
+        }
+        if (! $alias->customer_visible) {
+            $blockers[] = 'Alias hidden';
+        }
+        if (! in_array($alias->status, ['active', 'beta'], true)) {
+            $blockers[] = 'Alias lifecycle not publishable';
+        }
+        if (! $model || ! $model->enabled) {
+            $blockers[] = 'Private model unavailable';
+        } elseif ($model->commercial_resale_verified_at === null) {
+            $blockers[] = 'Resale not verified';
+        }
+        if (! $provider || ! $provider->enabled) {
+            $blockers[] = 'Provider disabled';
+        } elseif (! $provider->activeConnectionRevision || ! $provider->activeConnectionRevision->isRouteReady()) {
+            $blockers[] = 'No active READY connection';
+        }
+
         return [
             'id' => (string) $alias->id,
             'public_alias' => $alias->public_alias,
@@ -108,6 +133,8 @@ class ModelPricingController extends Controller
             'status' => $alias->status,
             'enabled' => (bool) $alias->enabled,
             'customer_visible' => (bool) $alias->customer_visible,
+            'publication_ready' => $blockers === [],
+            'publication_blockers' => $blockers,
             'currency' => $pricing?->currency,
             'exponent' => $pricing === null ? null : (int) $pricing->exponent,
             'sell' => $pricing === null ? null : ['input_per_million_minor' => (string) $pricing->input_per_million_minor, 'output_per_million_minor' => (string) $pricing->output_per_million_minor, 'cache_read_per_million_minor' => $pricing->cache_read_per_million_minor === null ? null : (string) $pricing->cache_read_per_million_minor, 'cache_write_per_million_minor' => $pricing->cache_write_per_million_minor === null ? null : (string) $pricing->cache_write_per_million_minor, 'reasoning_per_million_minor' => $pricing->reasoning_per_million_minor === null ? null : (string) $pricing->reasoning_per_million_minor],

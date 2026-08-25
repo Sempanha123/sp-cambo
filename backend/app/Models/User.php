@@ -10,6 +10,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -87,8 +90,51 @@ class User extends Authenticatable
         return $this->hasMany(ExternalIdentity::class);
     }
 
-    public function telegramAccount(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function telegramAccount(): HasOne
     {
         return $this->hasOne(TelegramAccount::class);
+    }
+
+    /**
+     * Return the customer's workspace tenant, repairing legacy rows created
+     * before tenant ownership was introduced. Commerce, API-key and Telegram
+     * services call this instead of assuming the relation is already present.
+     */
+    public function requireTenant(): Tenant
+    {
+        if ($this->tenant_id !== null) {
+            $tenant = $this->tenant()->first();
+            if ($tenant) {
+                return $tenant;
+            }
+        }
+
+        return DB::transaction(function (): Tenant {
+            /** @var User $locked */
+            $locked = static::query()->lockForUpdate()->findOrFail($this->getKey());
+
+            if ($locked->tenant_id !== null) {
+                $tenant = Tenant::query()->find($locked->tenant_id);
+                if ($tenant) {
+                    $this->setRelation('tenant', $tenant);
+                    $this->tenant_id = $tenant->id;
+                    return $tenant;
+                }
+            }
+
+            if (! \Illuminate\Support\Facades\Schema::hasColumn('users', 'tenant_id')) {
+                throw new RuntimeException('Tenant ownership migration has not been applied. Run php artisan migrate.');
+            }
+
+            $tenant = Tenant::query()->create([
+                'name' => trim((string) ($locked->name ?: $locked->email ?: "User {$locked->id}")),
+            ]);
+
+            $locked->forceFill(['tenant_id' => $tenant->id])->saveQuietly();
+            $this->tenant_id = $tenant->id;
+            $this->setRelation('tenant', $tenant);
+
+            return $tenant;
+        });
     }
 }

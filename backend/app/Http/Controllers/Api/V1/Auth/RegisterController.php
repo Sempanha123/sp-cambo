@@ -27,8 +27,8 @@ class RegisterController extends Controller
                 'name' => $name,
                 'email' => $request->string('email')->lower()->value(),
                 'password' => Hash::make($request->string('password')->value()),
+                'tenant_id' => $tenant->id,
             ]);
-            $user->forceFill(['tenant_id' => $tenant->id])->save();
             // Registration must remain available on a fresh migrated database.
             // Seeders still establish the complete authorization baseline, but a
             // missing CUSTOMER row should never turn a public sign-up into a 500.

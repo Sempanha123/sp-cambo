@@ -22,7 +22,7 @@ class PaymentLifecycleTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['services.bakong.account_id' => 'merchant@bank', 'services.bakong.merchant_name' => 'SP Cambo Test', 'services.bakong.merchant_city' => 'Phnom Penh', 'services.bakong.attempt_ttl_seconds' => 300]);
+        config(['services.bakong.account_id' => 'merchant@bank', 'services.bakong.merchant_name' => 'SP Cambo Test', 'services.bakong.merchant_city' => 'Phnom Penh', 'services.bakong.attempt_ttl_seconds' => 300, 'services.bakong.reconcile_interval_seconds' => 60, 'services.bakong.reconcile_expired_grace_seconds' => 900]);
         $this->generator = new FakeKhqrGenerator;
         $this->verifier = new FakeBakongVerifier;
         $this->app->instance(KhqrGenerator::class, $this->generator);
@@ -95,6 +95,48 @@ class PaymentLifecycleTest extends TestCase
         $this->assertSame(1, $this->verifier->calls);
         $this->artisan('payments:reconcile-pending')->assertSuccessful();
         $this->assertSame(1, $this->verifier->calls);
+    }
+
+
+    public function test_scheduled_reconciliation_rechecks_live_attempt_after_configured_interval(): void
+    {
+        [$user, $orderId] = $this->order();
+        $this->actingAs($user)->postJson("/api/v1/orders/{$orderId}/payment")->assertOk();
+
+        $this->artisan('payments:reconcile-pending')->assertSuccessful();
+        $this->assertSame(1, $this->verifier->calls);
+
+        $this->travel(59)->seconds();
+        $this->artisan('payments:reconcile-pending')->assertSuccessful();
+        $this->assertSame(1, $this->verifier->calls);
+
+        $this->travel(2)->seconds();
+        $this->artisan('payments:reconcile-pending')->assertSuccessful();
+        $this->assertSame(2, $this->verifier->calls);
+    }
+
+    public function test_scheduled_reconciliation_recovers_recently_expired_paid_attempt(): void
+    {
+        [$user, $orderId] = $this->order();
+        $attemptId = $this->actingAs($user)->postJson("/api/v1/orders/{$orderId}/payment")->assertOk()->json('data.id');
+        PaymentAttempt::query()->findOrFail($attemptId)->update([
+            'status' => 'EXPIRED',
+            'expires_at' => now()->subSecond(),
+            'last_checked_at' => now()->subMinutes(2),
+        ]);
+        $this->verifier->result = [
+            'found' => true,
+            'transaction_hash' => str_repeat('d', 64),
+            'to_account_id' => 'merchant@bank',
+            'currency' => 'USD',
+            'amount_decimal' => '1.50',
+        ];
+
+        $this->artisan('payments:reconcile-pending')->assertSuccessful();
+
+        $this->assertSame(1, $this->verifier->calls);
+        $this->assertDatabaseHas('payment_attempts', ['id' => $attemptId, 'status' => 'PAID']);
+        $this->assertDatabaseHas('orders', ['id' => $orderId, 'status' => 'FULFILLED']);
     }
 
     private function order(): array

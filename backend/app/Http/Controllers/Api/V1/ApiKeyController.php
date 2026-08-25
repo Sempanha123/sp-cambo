@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\V1;
 use App\Events\CustomerStateChanged;
 use App\Http\Controllers\Controller;
 use App\Models\ApiKey;
+use App\Models\ApiRequestLog;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
 use App\Models\PlaygroundCredential;
+use App\Models\UsageRecord;
 use App\Models\User;
 use App\Services\ApiKeySecretService;
 use Illuminate\Http\JsonResponse;
@@ -69,12 +71,12 @@ class ApiKeyController extends Controller
         return response()->json(['data' => ['success' => true, 'revoked_at' => $key->fresh()->revoked_at?->toAtomString()]]);
     }
 
-    public function check(Request $request): JsonResponse
+    public function check(Request $request, ApiKeySecretService $secrets): JsonResponse
     {
         $request->validate(['api_key' => ['required', 'string', 'min:10', 'max:255']]);
 
-        $digest = hash('sha256', $request->input('api_key'));
-        $key = ApiKey::query()->with(['modelAliases', 'user', 'user.entitlementLots'])->where('lookup_digest', $digest)->first();
+        $digest = $secrets->digest((string) $request->input('api_key'));
+        $key = ApiKey::query()->with(['modelAliases', 'user'])->where('lookup_digest', $digest)->first();
 
         if (! $key) {
             return response()->json(['message' => 'Invalid API key'], 404);
@@ -82,37 +84,161 @@ class ApiKeyController extends Controller
 
         Log::channel('security')->info('API key check', ['key_id' => $key->id, 'ip' => $request->ip()]);
 
-        // Report only the balance this particular credential is actually
-        // allowed to spend. Daily Playground quota is isolated from customer keys.
+        // A public key check proves possession of the secret, but it must still
+        // report only the entitlement pool this credential can actually spend.
+        // Playground daily lots are strictly isolated from normal customer keys.
         $isPlaygroundKey = PlaygroundCredential::query()
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
             ->exists();
-        $creditRemaining = EntitlementLot::query()
+
+        $eligibleLots = $this->eligibleLotsForKey($key, $isPlaygroundKey);
+
+        $tokenLots = $eligibleLots->where('billing_mode', 'TOKEN_QUOTA');
+        $creditLots = $eligibleLots->where('billing_mode', 'CREDIT_BALANCE');
+
+        $quotaRemaining = $tokenLots->isEmpty()
+            ? null
+            : (string) $tokenLots->sum(fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units));
+        $creditBalances = $this->moneyGroups(
+            $creditLots->map(fn (EntitlementLot $lot): array => [
+                'minor' => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units),
+                'currency' => $lot->currency ?? 'USD',
+                'exponent' => (int) ($lot->currency_exponent ?? 6),
+            ])->all()
+        );
+
+        $usageTotals = UsageRecord::query()
             ->where('user_id', $key->user_id)
-            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->where('status', 'ACTIVE')
-            ->when(
-                $isPlaygroundKey,
-                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-            )
-            ->get(['remaining_units', 'reserved_units'])
-            ->sum(fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units));
+            ->where('api_key_id', $key->id)
+            ->selectRaw('COALESCE(SUM(input_tokens), 0) as input_tokens')
+            ->selectRaw('COALESCE(SUM(output_tokens), 0) as output_tokens')
+            ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
+            ->first();
+
+        $spendRows = UsageRecord::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->whereNotNull('credit_charge_minor')
+            ->selectRaw("COALESCE(currency, 'USD') as currency, COALESCE(currency_exponent, 2) as exponent, SUM(credit_charge_minor) as minor")
+            ->groupBy('currency', 'currency_exponent')
+            ->get()
+            ->map(fn ($row): array => [
+                'minor' => (int) $row->minor,
+                'currency' => (string) $row->currency,
+                'exponent' => (int) $row->exponent,
+            ])
+            ->all();
+        $spend = $this->moneyGroups($spendRows);
+
+        $recentRequests = ApiRequestLog::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->with('usage')
+            ->latest('started_at')
+            ->limit(10)
+            ->get()
+            ->map(function (ApiRequestLog $log): array {
+                $usage = $log->usage;
+                $charge = $usage?->credit_charge_minor === null ? null : [
+                    'minor' => (string) $usage->credit_charge_minor,
+                    'currency' => (string) ($usage->currency ?? 'USD'),
+                    'exponent' => (int) ($usage->currency_exponent ?? 2),
+                ];
+
+                return [
+                    'time' => $log->started_at->toAtomString(),
+                    'model' => $log->public_model,
+                    'status' => match ($log->state) {
+                        'SETTLED' => 'success',
+                        'FAILED', 'RELEASED' => 'error',
+                        default => 'pending',
+                    },
+                    'input_tokens' => (string) ($usage?->input_tokens ?? 0),
+                    'output_tokens' => (string) ($usage?->output_tokens ?? 0),
+                    'charge' => $charge,
+                ];
+            })
+            ->values();
+
+        $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
+        $packages = $eligibleLots->pluck('package_name')->filter()->unique()->values();
 
         return response()->json(['data' => [
-            'valid' => $key->status === 'ACTIVE' && ! $key->expires_at?->isPast(),
+            'valid' => $status === 'ACTIVE',
             'masked_key' => $key->prefix.'...'.$key->last_four,
-            'status' => $key->status,
-            'package' => $key->user->entitlementLots->first()?->package_name ?? 'N/A',
+            'status' => $status,
+            'package' => $packages->isEmpty() ? null : $packages->implode(', '),
             'allowed_models' => $key->modelAliases->pluck('public_alias')->values(),
             'created_at' => $key->created_at->toAtomString(),
             'expires_at' => $key->expires_at?->toAtomString(),
             'last_used' => $key->last_used_at?->toAtomString(),
-            'total_spend' => 0.00, // TODO: calculate total spend
-            'quota_remaining' => $creditRemaining > 0 ? (int) $creditRemaining : null,
-            'credit_remaining' => $creditRemaining > 0 ? (float) $creditRemaining : null,
+            'tokens_used' => [
+                'input' => (string) ($usageTotals?->input_tokens ?? 0),
+                'output' => (string) ($usageTotals?->output_tokens ?? 0),
+                'total' => (string) ($usageTotals?->total_tokens ?? 0),
+            ],
+            // Money is never converted through float arithmetic. If historical
+            // records contain more than one currency/scale, the single-value
+            // compatibility field is null and the exact grouped values remain.
+            'total_spend' => count($spend) === 1 ? $spend[0] : null,
+            'total_spend_by_currency' => $spend,
+            'quota_remaining' => $quotaRemaining,
+            'credit_remaining' => count($creditBalances) === 1 ? $creditBalances[0] : null,
+            'credit_balances' => $creditBalances,
+            'recent_requests' => $recentRequests,
         ]]);
+    }
+
+    private function eligibleLotsForKey(ApiKey $key, ?bool $isPlaygroundKey = null)
+    {
+        $key->loadMissing('modelAliases');
+        $allowedAliases = $key->modelAliases->pluck('public_alias')->filter()->values();
+        if ($allowedAliases->isEmpty()) {
+            return EntitlementLot::query()->whereRaw('1 = 0')->get();
+        }
+
+        $isPlaygroundKey ??= PlaygroundCredential::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->exists();
+
+        return EntitlementLot::query()
+            ->where('user_id', $key->user_id)
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->where('status', 'ACTIVE')
+            ->where(function ($query) use ($allowedAliases): void {
+                foreach ($allowedAliases as $alias) {
+                    $query->orWhereJsonContains('allowed_model_aliases', $alias);
+                }
+            })
+            ->when(! $isPlaygroundKey, fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'))
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get(['billing_mode', 'remaining_units', 'reserved_units', 'currency', 'currency_exponent', 'package_name']);
+    }
+
+    /** @param array<int, array{minor:int,currency:string,exponent:int}> $rows */
+    private function moneyGroups(array $rows): array
+    {
+        $groups = [];
+        foreach ($rows as $row) {
+            $currency = strtoupper(trim($row['currency']));
+            $exponent = max(0, min(6, (int) $row['exponent']));
+            $group = $currency.':'.$exponent;
+            $groups[$group] ??= ['minor' => 0, 'currency' => $currency, 'exponent' => $exponent];
+            $groups[$group]['minor'] += max(0, (int) $row['minor']);
+        }
+
+        return collect($groups)
+            ->sortBy(fn (array $amount): string => $amount['currency'].':'.str_pad((string) $amount['exponent'], 2, '0', STR_PAD_LEFT))
+            ->map(fn (array $amount): array => [
+                'minor' => (string) $amount['minor'],
+                'currency' => $amount['currency'],
+                'exponent' => $amount['exponent'],
+            ])
+            ->values()
+            ->all();
     }
 
     public function status(Request $request, ApiKey $apiKey): JsonResponse
@@ -120,12 +246,36 @@ class ApiKeyController extends Controller
         $key = $this->owned($request, $apiKey)->load('modelAliases');
         $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
 
-        // Return 404 if key is revoked (don't leak existence)
+        // Return 404 if key is revoked (don't leak existence).
         if ($key->status === 'REVOKED') {
             return response()->json(['message' => 'API key not found'], 404);
         }
 
-        return response()->json(['data' => ['valid' => $status === 'ACTIVE', 'status' => $status, 'expires_at' => $key->expires_at?->toAtomString(), 'allowed_model_aliases' => $key->modelAliases->pluck('public_alias')->values(), 'token_quota_remaining' => null, 'credit_remaining' => null, 'limits' => $this->limits($key), 'service_status' => 'operational']]);
+        $eligibleLots = $this->eligibleLotsForKey($key);
+        $tokenLots = $eligibleLots->where('billing_mode', 'TOKEN_QUOTA');
+        $creditLots = $eligibleLots->where('billing_mode', 'CREDIT_BALANCE');
+        $tokenRemaining = $tokenLots->isEmpty()
+            ? null
+            : (string) $tokenLots->sum(fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units));
+        $creditBalances = $this->moneyGroups(
+            $creditLots->map(fn (EntitlementLot $lot): array => [
+                'minor' => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units),
+                'currency' => $lot->currency ?? 'USD',
+                'exponent' => (int) ($lot->currency_exponent ?? 6),
+            ])->all()
+        );
+
+        return response()->json(['data' => [
+            'valid' => $status === 'ACTIVE',
+            'status' => $status,
+            'expires_at' => $key->expires_at?->toAtomString(),
+            'allowed_model_aliases' => $key->modelAliases->pluck('public_alias')->values(),
+            'token_quota_remaining' => $tokenRemaining,
+            'credit_remaining' => count($creditBalances) === 1 ? $creditBalances[0] : null,
+            'credit_balances' => $creditBalances,
+            'limits' => $this->limits($key),
+            'service_status' => 'operational',
+        ]]);
     }
 
     private function aliasIds(array $aliases): array

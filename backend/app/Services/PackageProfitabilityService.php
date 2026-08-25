@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\PackagePublicationException;
+use App\Models\ModelAlias;
 use App\Models\Package;
 use RuntimeException;
 
@@ -42,6 +43,37 @@ class PackageProfitabilityService
 
     public function assertPublishable(Package $package): void
     {
+        $package->loadMissing('modelAliases.model.provider.activeConnectionRevision');
+
+        if ($package->modelAliases->isEmpty()) {
+            throw new PackagePublicationException('A customer-visible package must allow at least one public model.');
+        }
+
+        $selectedIds = $package->modelAliases->pluck('id')->map(fn ($id): int => (int) $id)->values();
+        $publishedIds = ModelAlias::query()->published()->whereIn('id', $selectedIds)->pluck('id')->map(fn ($id): int => (int) $id);
+        $blocked = $package->modelAliases->whereNotIn('id', $publishedIds)->pluck('public_alias')->values()->all();
+
+        if ($blocked !== []) {
+            $details = [];
+            foreach ($package->modelAliases->whereIn('public_alias', $blocked) as $alias) {
+                $reasons = [];
+                $model = $alias->model;
+                $provider = $model?->provider;
+                if (! $provider || ! $provider->enabled) $reasons[] = 'provider disabled/missing';
+                if ($provider && (! $provider->activeConnectionRevision || ! $provider->activeConnectionRevision->isRouteReady())) $reasons[] = 'no active READY connection';
+                if (! $model || ! $model->enabled) $reasons[] = 'private model disabled/missing';
+                elseif ($model->commercial_resale_verified_at === null) $reasons[] = 'commercial resale not verified';
+                if (! $alias->enabled) $reasons[] = 'public alias disabled';
+                if (! $alias->customer_visible) $reasons[] = 'public alias hidden';
+                if (! in_array($alias->status, ['active', 'beta'], true)) $reasons[] = 'public alias status not publishable';
+                $details[] = $alias->public_alias.' ['.implode(', ', $reasons ?: ['not publishable']).']';
+            }
+
+            throw new PackagePublicationException(
+                'Package contains public models that are not sell-ready: '.implode('; ', $details).'. Fix the listed provider/model/alias blockers and save again.'
+            );
+        }
+
         $analysis = $this->analyze($package);
         if ($analysis['profitable'] !== true && blank($package->profitability_override_reason)) {
             throw new PackagePublicationException('Package publication requires verified profitability or an explicit override reason.');
