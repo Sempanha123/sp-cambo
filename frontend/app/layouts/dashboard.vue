@@ -65,26 +65,16 @@ const accountItems = computed(() => [
             aria-label="SP Cambo dashboard"
           >
             <SpLogo :mark-only="collapsed" />
-            <span
-              v-if="!collapsed"
-              class="sp-khmer-chip shrink-0"
-            >កម្ពុជា</span>
+            <span v-if="!collapsed" class="sp-khmer-chip shrink-0">កម្ពុជា</span>
           </NuxtLink>
 
           <UDashboardSidebarCollapse class="ml-auto" />
         </template>
 
         <template #default="{ collapsed }">
-          <div
-            v-if="!collapsed"
-            class="mx-1 mb-3 rounded-lg border border-white/10 bg-white/5 backdrop-blur-md px-3 py-2.5 transition-all duration-300 hover:bg-white/10"
-          >
-            <p class="text-[10px] font-semibold tracking-[0.16em] text-dimmed uppercase">
-              Customer workspace
-            </p>
-            <p class="mt-1 truncate text-xs text-muted">
-              {{ auth.user?.email ?? 'Secure AI access' }}
-            </p>
+          <div v-if="!collapsed" class="mx-1 mb-3 rounded-lg border border-white/10 bg-white/5 backdrop-blur-md px-3 py-2.5 transition-all duration-300 hover:bg-white/10">
+            <p class="text-[10px] font-semibold tracking-[0.16em] text-dimmed uppercase">Customer workspace</p>
+            <p class="mt-1 truncate text-xs text-muted">{{ auth.user?.email ?? 'Secure AI access' }}</p>
           </div>
 
           <UNavigationMenu

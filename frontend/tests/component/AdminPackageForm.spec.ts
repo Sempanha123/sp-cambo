@@ -367,34 +367,17 @@ describe('package form refusals', () => {
     expect(bodyText()).toContain('The model list could not be loaded')
   })
 
-  /**
-   * `auto_creates_api_key` is stored and advertised but not acted on at fulfilment, so
-   * turning it on publishes a promise SP Cambo does not keep. The form does not block
-   * it — the flag is a real catalogue attribute and the operator may be staging one —
-   * but it must not present it as working, which is what the copy here used to do.
-   */
-  it('warns that an advertised automatic key is not issued at fulfilment', async () => {
+  it('saves the API access activation flag using the current fulfilment flow', async () => {
     const seed = packageFormFrom(PACKAGE)
-
-    seed.auto_creates_api_key = false
+    seed.auto_creates_api_key = true
 
     const wrapper = await mount({ initial: seed })
 
+    expect(bodyText()).toContain('Include API access activation after payment')
     expect(bodyText()).not.toContain('Fulfilment does not issue keys yet')
-
-    await wrapper.setProps({ open: false })
-    await wrapper.setProps({
-      initial: packageFormFrom({ ...PACKAGE, auto_creates_api_key: true }),
-      open: true
-    })
-    await nextTick()
-
-    expect(bodyText()).toContain('Fulfilment does not issue keys yet')
-    expect(bodyText()).toContain('still has to make one on their keys page')
 
     await submitForm()
 
-    // A warning, not a refusal: the attribute is real and the save must still go through.
     expect(wrapper.emitted('submit')![0]![0]).toMatchObject({ auto_creates_api_key: true })
   })
 })

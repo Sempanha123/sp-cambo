@@ -238,11 +238,17 @@ export type RequestState
 export interface RequestActivity {
   id: string
   public_model: string
+  internal_model: string | null
+  provider: string | null
+  provider_slug: string | null
+  route_version: number | null
+  api_key_id: string | null
   api_key_label: string
   api_key_prefix: string
   state: RequestState
   endpoint: string
   started_at: string
+  finished_at: string | null
   duration_ms: number | null
   /**
    * Provider-reported request metadata. A null category is unsettled or unreported;
@@ -255,6 +261,7 @@ export interface RequestActivity {
   cache_write_tokens: number | null
   reasoning_tokens: number | null
   total_tokens: number | null
+  reserved_units: string | null
   metered_units: string | null
   credit_charge: MoneyAmount | null
   /** True while the numbers above are interim estimates. */

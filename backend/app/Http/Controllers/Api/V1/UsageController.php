@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\ApiKey;
 use App\Models\ApiRequestLog;
 use App\Models\UsageRecord;
 use Carbon\CarbonImmutable;
@@ -19,20 +20,20 @@ class UsageController extends Controller
             'model' => ['sometimes', 'string', 'max:100'],
             'key_id' => ['sometimes', 'string', 'max:64'],
         ]);
-        $query = ApiRequestLog::query()->where('user_id', $request->user()->id)->with(['apiKey', 'usage'])->latest('started_at');
-        if (isset($data['model'])) {
-            $query->where('public_model', $data['model']);
-        }
-        if (isset($data['key_id'])) {
-            $query->where('api_key_id', $data['key_id']);
-        }
 
-        return response()->json(['data' => $query->limit($data['limit'] ?? 25)->get()->map(function (ApiRequestLog $log): array {
-            $usage = $log->usage;
-            $estimated = $usage === null && $log->estimated_units !== null;
+        $query = ApiRequestLog::query()
+            ->where('user_id', $request->user()->id)
+            ->with(['apiKey', 'usage', 'reservation.providerConnectionRevision.provider'])
+            ->latest('started_at');
+        if (isset($data['model'])) $query->where('public_model', $data['model']);
+        if (isset($data['key_id'])) $query->where('api_key_id', $data['key_id']);
 
-            return ['id' => $log->id, 'public_model' => $log->public_model, 'api_key_id' => $log->api_key_id, 'api_key_label' => $log->apiKey?->label ?? 'Deleted key', 'api_key_prefix' => $log->apiKey?->prefix ?? '', 'state' => strtolower($log->state), 'endpoint' => $log->endpoint, 'started_at' => $log->started_at->toAtomString(), 'duration_ms' => $log->duration_ms, 'input_tokens' => $usage?->input_tokens, 'output_tokens' => $usage?->output_tokens, 'cache_read_tokens' => $usage?->cache_read_tokens, 'cache_write_tokens' => $usage?->cache_write_tokens, 'reasoning_tokens' => $usage?->reasoning_tokens, 'total_tokens' => $usage?->total_tokens, 'metered_units' => $usage ? (string) $usage->metered_units : ($estimated ? (string) $log->estimated_units : null), 'credit_charge' => $usage?->credit_charge_minor === null ? null : ['minor' => (string) $usage->credit_charge_minor, 'currency' => $usage->currency, 'exponent' => $usage->currency_exponent], 'estimated' => $estimated, 'error_code' => $log->error_code];
-        })->values()]);
+        $rows = $query->limit($data['limit'] ?? 25)->get()->map(fn (ApiRequestLog $log): array => $this->activityResource($log))->values();
+
+        return response()->json(['data' => $rows, 'meta' => [
+            'server_time' => now()->toAtomString(),
+            'active_requests' => $rows->whereIn('state', ['reserved', 'connecting', 'streaming', 'reconciling'])->count(),
+        ]]);
     }
 
     /**
@@ -89,11 +90,11 @@ class UsageController extends Controller
 
         foreach ($records as $record) {
             $at = $bucket === 'hour' ? $record->settled_at->startOfHour() : $record->settled_at->startOfDay();
-            $key = $at->toAtomString();
-            $buckets[$key]['requests']++;
-            $buckets[$key]['input_tokens'] += (int) $record->input_tokens;
-            $buckets[$key]['output_tokens'] += (int) $record->output_tokens;
-            $buckets[$key]['metered_units'] += (int) $record->metered_units;
+            $bucketKey = $at->toAtomString();
+            $buckets[$bucketKey]['requests']++;
+            $buckets[$bucketKey]['input_tokens'] += (int) $record->input_tokens;
+            $buckets[$bucketKey]['output_tokens'] += (int) $record->output_tokens;
+            $buckets[$bucketKey]['metered_units'] += (int) $record->metered_units;
 
             $model = $byModel[$record->public_model] ?? ['public_model' => $record->public_model, 'requests' => 0, 'metered_units' => 0, 'credit_charge_minor' => 0];
             $model['requests']++;
@@ -140,6 +141,48 @@ class UsageController extends Controller
     /**
      * Transform an API key for key summary response.
      */
+    private function activityResource(ApiRequestLog $log): array
+    {
+        $usage = $log->usage;
+        $reservation = $log->reservation;
+        $snapshot = is_array($reservation?->billing_snapshot) ? $reservation->billing_snapshot : [];
+        $revision = $reservation?->providerConnectionRevision;
+        $provider = $revision?->provider;
+        $estimated = $usage === null && $log->estimated_units !== null;
+
+        return [
+            'id' => $log->id,
+            'public_model' => $log->public_model,
+            'internal_model' => $snapshot['internal_model_id'] ?? null,
+            'provider' => $provider?->name,
+            'provider_slug' => $provider?->slug,
+            'route_version' => $snapshot['route_version'] ?? $revision?->route_version,
+            'api_key_id' => $log->api_key_id,
+            'api_key_label' => $log->apiKey?->label ?? 'Deleted key',
+            'api_key_prefix' => $log->apiKey?->prefix ?? '',
+            'state' => strtolower($log->state),
+            'endpoint' => $log->endpoint,
+            'started_at' => $log->started_at->toAtomString(),
+            'finished_at' => $log->finished_at?->toAtomString(),
+            'duration_ms' => $log->duration_ms,
+            'input_tokens' => $usage?->input_tokens,
+            'output_tokens' => $usage?->output_tokens,
+            'cache_read_tokens' => $usage?->cache_read_tokens,
+            'cache_write_tokens' => $usage?->cache_write_tokens,
+            'reasoning_tokens' => $usage?->reasoning_tokens,
+            'total_tokens' => $usage?->total_tokens,
+            'reserved_units' => $estimated ? (string) $log->estimated_units : null,
+            'metered_units' => $usage ? (string) $usage->metered_units : null,
+            'credit_charge' => $usage?->credit_charge_minor === null ? null : [
+                'minor' => (string) $usage->credit_charge_minor,
+                'currency' => $usage->currency,
+                'exponent' => $usage->currency_exponent,
+            ],
+            'estimated' => $estimated,
+            'error_code' => $log->error_code,
+        ];
+    }
+
     protected function keySummaryResource(ApiKey $key): array
     {
         return [

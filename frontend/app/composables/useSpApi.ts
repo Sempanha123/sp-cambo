@@ -27,6 +27,7 @@ import type {
   AdminProviderModel,
   AdminProviderAlias,
   AdminSystemHealth,
+  AdminTelegramStoreOverview,
   ModelAliasPricingInput,
   PackageProfitability,
   ProviderActiveConnectionUpdateInput,
@@ -361,6 +362,9 @@ export function useSpApi() {
     admin: {
       overview: () => request<AdminOverview>('/admin/overview'),
       systemHealth: () => request<AdminSystemHealth>('/admin/system-health'),
+      telegramStore: () => request<AdminTelegramStoreOverview>('/admin/telegram-store'),
+      sendTelegramAnnouncement: (input: { title: string, body: string, package_id?: string | null }) =>
+        request<{ id: string, status: string, message: string }>('/admin/telegram-store/announcements', { method: 'POST', body: { ...input } }),
 
       /** Every package, including ones hidden from the public catalogue. */
       packages: () => request<AdminPackage[]>('/admin/packages', { collection: true }),
@@ -439,8 +443,8 @@ export function useSpApi() {
       updateProvider: (id: string, input: { name: string, slug: string, enabled: boolean }) =>
         request<AdminProvider>(`/admin/providers/${apiSegment(id)}`, { method: 'PUT', body: { ...input } }),
       /** Delete a provider */
-      deleteProvider: (id: string) =>
-        request<{ success: boolean }>(`/admin/providers/${apiSegment(id)}`, { method: 'DELETE' }),
+      deleteProvider: (id: string, cascade = false) =>
+        request<{ success: boolean, cascade?: boolean, deleted_aliases?: number }>(`/admin/providers/${apiSegment(id)}${cascade ? '?cascade=1' : ''}`, { method: 'DELETE' }),
       /** List all connection revisions for a provider */
       providerConnectionRevisions: (providerId: string) =>
         request<ProviderConnectionRevision[]>(`/admin/providers/${apiSegment(providerId)}/connection-revisions`, { collection: true }),
@@ -469,9 +473,12 @@ export function useSpApi() {
       /** Discover model ids advertised by the provider's active READY connection. */
       discoverProviderModels: (providerId: string) =>
         request<DiscoveredProviderModel[]>(`/admin/providers/${apiSegment(providerId)}/models/discover`, { method: 'POST', collection: true }),
-      /** Import selected discovered model ids as private provider models. */
-      importProviderModels: (providerId: string, modelIds: string[]) =>
-        request<ProviderModelImportResult>(`/admin/providers/${apiSegment(providerId)}/models/import`, { method: 'POST', body: { model_ids: modelIds } }),
+      /** Import selected discovered model ids and optionally create hidden public aliases. */
+      importProviderModels: (providerId: string, modelIds: string[], createPublicAliases = false) =>
+        request<ProviderModelImportResult>(`/admin/providers/${apiSegment(providerId)}/models/import`, {
+          method: 'POST',
+          body: { model_ids: modelIds, create_public_aliases: createPublicAliases }
+        }),
       /** Update a private model for a provider */
       updateProviderModel: (providerId: string, modelId: string, input: ProviderModelInput) =>
         request<AdminProviderModel>(`/admin/providers/${apiSegment(providerId)}/models/${apiSegment(modelId)}`, { method: 'PUT', body: { ...input } }),
@@ -490,6 +497,9 @@ export function useSpApi() {
       /** Delete a public alias */
       deleteProviderAlias: (providerId: string, aliasId: string) =>
         request<{ success: boolean }>(`/admin/providers/${apiSegment(providerId)}/aliases/${apiSegment(aliasId)}`, { method: 'DELETE' }),
+      /** Publish a provider alias for sale after explicit commercial-resale confirmation. */
+      publishProviderAlias: (providerId: string, aliasId: string, input: { confirm_commercial_resale: boolean }) =>
+        request<AdminProviderAlias>(`/admin/providers/${apiSegment(providerId)}/aliases/${apiSegment(aliasId)}/publish`, { method: 'POST', body: input }),
       /** Map a public alias to a private model */
       mapAliasToModel: (providerId: string, aliasId: string, modelId: string) =>
         request<{ success: boolean }>(`/admin/providers/${apiSegment(providerId)}/aliases/${apiSegment(aliasId)}/map-model`, { method: 'POST', body: { model_id: modelId } })

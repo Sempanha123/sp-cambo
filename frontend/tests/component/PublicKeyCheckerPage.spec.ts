@@ -27,13 +27,27 @@ const activeResponse = (): PublicApiKeyStatus => ({
   total_spend: { minor: '125000', currency: 'USD', exponent: 6 },
   total_spend_by_currency: [{ minor: '125000', currency: 'USD', exponent: 6 }],
   last_used: '2026-08-24T10:30:00Z',
+  active_requests: 0,
+  server_time: '2026-08-24T10:30:01Z',
   recent_requests: [{
+    request_id: 'request-1',
     time: '2026-08-24T10:30:00Z',
+    finished_at: '2026-08-24T10:30:00.420Z',
+    endpoint: '/v1/messages',
     model: 'claude-coding',
+    internal_model: 'provider/claude-coding',
+    provider: 'Provider A',
+    provider_slug: 'provider-a',
+    route_version: 1,
+    state: 'settled',
     status: 'success',
+    duration_ms: 420,
     input_tokens: '100',
     output_tokens: '20',
-    charge: { minor: '125000', currency: 'USD', exponent: 6 }
+    total_tokens: '120',
+    reserved_units: null,
+    charge: { minor: '125000', currency: 'USD', exponent: 6 },
+    error_code: null
   }]
 })
 

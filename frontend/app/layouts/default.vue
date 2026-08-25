@@ -128,10 +128,7 @@ const year = new Date().getFullYear()
               <p class="max-w-xs text-sm text-muted">
                 Prepaid, metered access to managed AI models for CLI, SDK and API workloads.
               </p>
-              <p
-                class="font-medium text-xs text-dimmed"
-                style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
-              >
+              <p class="font-medium text-xs text-dimmed" style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;">
                 បច្ចេកវិទ្យា AI សម្រាប់កម្ពុជា
               </p>
             </div>

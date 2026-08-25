@@ -21,6 +21,10 @@ export class HttpControlPlane implements ControlPlane {
     return this.call<PreflightData>("/internal/gateway/preflight", input);
   }
 
+  async state(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
+    await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/state`, { state });
+  }
+
   async settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void> {
     await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/settle`, usage);
   }

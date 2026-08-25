@@ -152,6 +152,11 @@ export function useSiteNavigation() {
         icon: 'i-lucide-gift',
         to: '/admin/redeem-codes',
         active: route.path.startsWith('/admin/redeem-codes')
+      }, {
+        label: 'Telegram Store',
+        icon: 'i-lucide-send',
+        to: '/admin/telegram',
+        active: route.path.startsWith('/admin/telegram')
       })
     }
 

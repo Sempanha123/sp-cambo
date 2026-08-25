@@ -22,6 +22,8 @@ const keyStatus = ref<PublicApiKeyStatus | null>(null)
 const sessionSecret = ref('')
 const autoRefresh = ref(false)
 const lastRefreshedAt = ref<Date | null>(null)
+const liveClock = ref(Date.now())
+let clockTimer: ReturnType<typeof setInterval> | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const performCheck = async (secret: string, clearCurrent = true) => {
@@ -67,11 +69,12 @@ watch([autoRefresh, sessionSecret], ([enabled, secret]) => {
   if (!import.meta.client) return
   stopTimer()
   if (enabled && secret) {
-    refreshTimer = setInterval(() => { void refreshNow() }, 10_000)
+    refreshTimer = setInterval(() => { void refreshNow() }, 8_000)
   }
 }, { immediate: true })
 
-onBeforeUnmount(stopTimer)
+onMounted(() => { clockTimer = setInterval(() => { liveClock.value = Date.now() }, 1000) })
+onBeforeUnmount(() => { stopTimer(); if (clockTimer) clearInterval(clockTimer) })
 
 const clear = () => {
   keyForm.value.apiKey = ''
@@ -102,6 +105,15 @@ const formatMoneySet = (single: MoneyAmount | null | undefined, grouped: MoneyAm
   if (grouped?.length) return grouped.map(amount => formatMoney(amount)).join(' + ')
   return '—'
 }
+const runningStates = ['reserved', 'connecting', 'streaming', 'reconciling']
+const requestDuration = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
+  if (request.duration_ms !== null) return request.duration_ms < 1000 ? `${request.duration_ms} ms` : `${(request.duration_ms / 1000).toFixed(2)} s`
+  if (!runningStates.includes(request.state)) return '—'
+  const elapsed = Math.max(0, liveClock.value - new Date(request.time).getTime())
+  return `${(elapsed / 1000).toFixed(1)} s live`
+}
+const requestColor = (status: 'success' | 'error' | 'pending') => status === 'success' ? 'success' : status === 'error' ? 'error' : 'warning'
+
 const statusColor = (status?: string) => {
   switch (status?.toLowerCase()) {
     case 'active': return 'success'
@@ -194,7 +206,7 @@ const statusColor = (status?: string) => {
 
             <div v-if="sessionSecret && keyStatus && !keyStatus.error" class="mt-5 flex flex-col gap-3 rounded-lg border border-default bg-elevated/35 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <USwitch v-model="autoRefresh" label="Live usage refresh every 10 seconds" />
+                <USwitch v-model="autoRefresh" label="Live usage refresh every 8 seconds" />
                 <p class="mt-1 text-xs text-muted">Key is held only in page memory. Last refreshed {{ lastRefreshedAt?.toLocaleTimeString() || '—' }}.</p>
               </div>
               <UButton color="neutral" variant="subtle" icon="i-lucide-refresh-cw" :loading="checking" @click="refreshNow">Refresh now</UButton>
@@ -250,11 +262,12 @@ const statusColor = (status?: string) => {
               </UBadge>
             </div>
 
-            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
               <SpMetric label="Time remaining" icon="i-lucide-clock" :value="formatTimeRemaining(keyStatus.expires_at)" />
               <SpMetric label="Quota remaining" icon="i-lucide-hourglass" :value="formatUnits(keyStatus.quota_remaining)" />
               <SpMetric label="Credit remaining" icon="i-lucide-wallet" :value="formatMoneySet(keyStatus.credit_remaining, keyStatus.credit_balances)" />
               <SpMetric label="Credit charged" icon="i-lucide-chart-line" :value="formatMoneySet(keyStatus.total_spend, keyStatus.total_spend_by_currency)" />
+              <SpMetric label="Live requests" icon="i-lucide-radio" :value="String(keyStatus.active_requests ?? 0)" />
             </div>
           </section>
 
@@ -320,7 +333,7 @@ const statusColor = (status?: string) => {
             <template #header>
               <div>
                 <h3 class="font-semibold text-highlighted">Recent requests</h3>
-                <p class="mt-1 text-sm text-muted">Customer-facing public models and metering only.</p>
+                <p class="mt-1 text-sm text-muted">Live route state, provider/model metadata, exact settled tokens and duration. Prompt/output content is never shown.</p>
               </div>
             </template>
 
@@ -329,25 +342,25 @@ const statusColor = (status?: string) => {
                 <thead>
                   <tr class="border-b border-default text-left text-xs text-muted">
                     <th class="px-3 pb-3 font-medium">Time</th>
-                    <th class="px-3 pb-3 font-medium">Model</th>
                     <th class="px-3 pb-3 font-medium">Status</th>
-                    <th class="px-3 pb-3 text-right font-medium">Input</th>
-                    <th class="px-3 pb-3 text-right font-medium">Output</th>
+                    <th class="px-3 pb-3 font-medium">Route</th>
+                    <th class="px-3 pb-3 font-medium">Model</th>
+                    <th class="px-3 pb-3 text-right font-medium">In</th>
+                    <th class="px-3 pb-3 text-right font-medium">Out</th>
+                    <th class="px-3 pb-3 text-right font-medium">Duration</th>
                     <th class="px-3 pb-3 text-right font-medium">Charge</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(request, index) in keyStatus.recent_requests" :key="`${request.time}-${index}`" class="border-b border-default/60 last:border-0">
+                  <tr v-for="request in keyStatus.recent_requests" :key="request.request_id" class="border-b border-default/60 last:border-0">
                     <td class="px-3 py-3 text-muted">{{ formatDate(request.time) }}</td>
-                    <td class="px-3 py-3 font-mono text-default">{{ request.model }}</td>
-                    <td class="px-3 py-3">
-                      <UBadge :color="request.status === 'success' ? 'success' : request.status === 'error' ? 'error' : 'warning'" variant="subtle" size="sm">
-                        {{ request.status }}
-                      </UBadge>
-                    </td>
-                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatUnits(request.input_tokens) }}</td>
-                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ formatUnits(request.output_tokens) }}</td>
-                    <td class="sp-numeric px-3 py-3 text-right font-medium text-highlighted">{{ formatMoney(request.charge) }}</td>
+                    <td class="px-3 py-3"><UBadge :color="requestColor(request.status)" variant="subtle" size="sm"><span v-if="request.status === 'pending'" class="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-current" />{{ request.state }}</UBadge></td>
+                    <td class="px-3 py-3"><p class="text-default">{{ request.provider || 'Resolving…' }}</p><p v-if="request.route_version" class="text-xs text-dimmed">route v{{ request.route_version }}</p></td>
+                    <td class="px-3 py-3"><p class="font-mono text-default">{{ request.model }}</p><p class="max-w-56 truncate font-mono text-xs text-dimmed">{{ request.internal_model || request.endpoint }}</p></td>
+                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ request.input_tokens === null ? '—' : formatUnits(request.input_tokens) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ request.output_tokens === null ? '—' : formatUnits(request.output_tokens) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right text-default">{{ requestDuration(request) }}</td>
+                    <td class="sp-numeric px-3 py-3 text-right font-medium text-highlighted">{{ request.charge ? formatMoney(request.charge) : request.reserved_units ? `${formatUnits(request.reserved_units)} reserved` : '—' }}</td>
                   </tr>
                 </tbody>
               </table>

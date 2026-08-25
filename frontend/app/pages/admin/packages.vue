@@ -235,11 +235,20 @@ const open = (seed: PackageFormState, options: { id: string | null, heading: str
   formOpen.value = true
 }
 
-const openCreate = () => open(emptyPackageForm(), {
-  id: null,
-  heading: 'New package',
-  submitLabel: 'Create package'
-})
+const openCreate = async () => {
+  // Public aliases can be created from the Provider page while this Nuxt resource is
+  // still cached. Refresh before opening so newly discovered/imported models appear.
+  await aliases.refresh()
+  open(emptyPackageForm(), {
+    id: null,
+    heading: 'New package',
+    submitLabel: 'Create package'
+  })
+}
+
+const refreshCatalogueData = async () => {
+  await Promise.all([packages.refresh(), aliases.refresh()])
+}
 
 const openEdit = (item: AdminPackage) => open(packageFormFrom(item), {
   id: item.id,
@@ -306,8 +315,8 @@ const submit = async (input: AdminPackageInput) => {
         color="neutral"
         variant="subtle"
         icon="i-lucide-refresh-cw"
-        :loading="packages.loading.value"
-        @click="packages.refresh()"
+        :loading="packages.loading.value || aliases.loading.value"
+        @click="refreshCatalogueData"
       >
         Refresh
       </UButton>

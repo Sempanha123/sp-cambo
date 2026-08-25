@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Admin\ProviderController;
 use App\Http\Controllers\Api\V1\Admin\ProviderModelController;
 use App\Http\Controllers\Api\V1\Admin\RedeemCodeController as AdminRedeemCodeController;
 use App\Http\Controllers\Api\V1\Admin\SystemHealthController as AdminSystemHealthController;
+use App\Http\Controllers\Api\V1\Admin\TelegramStoreController;
 use App\Http\Controllers\Api\V1\ApiKeyController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\GoogleAuthController;
@@ -61,6 +62,7 @@ Route::prefix('v1')->group(function (): void {
     Route::middleware(['gateway.auth', 'throttle:600,1'])->prefix('internal/gateway')->group(function (): void {
         Route::post('inspect', [GatewayBillingController::class, 'inspect']);
         Route::post('preflight', [GatewayBillingController::class, 'preflight']);
+        Route::post('reservations/{reservation}/state', [GatewayBillingController::class, 'state']);
         Route::post('reservations/{reservation}/settle', [GatewayBillingController::class, 'settle']);
         Route::post('reservations/{reservation}/release', [GatewayBillingController::class, 'release']);
         Route::post('reservations/{reservation}/reconcile', [GatewayBillingController::class, 'reconcile']);
@@ -91,6 +93,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('providers/{provider}/aliases', [ProviderAliasController::class, 'store']);
         Route::put('providers/{provider}/aliases/{alias}', [ProviderAliasController::class, 'update']);
         Route::delete('providers/{provider}/aliases/{alias}', [ProviderAliasController::class, 'destroy']);
+        Route::post('providers/{provider}/aliases/{alias}/publish', [ProviderAliasController::class, 'publish']);
         Route::post('providers/{provider}/aliases/{alias}/map-model', [ProviderAliasController::class, 'mapModel']);
         Route::get('packages', [AdminPackageController::class, 'index']);
         Route::post('packages', [AdminPackageController::class, 'store']);
@@ -112,6 +115,8 @@ Route::prefix('v1')->group(function (): void {
         Route::get('redeem-codes', [AdminRedeemCodeController::class, 'index']);
         Route::post('redeem-codes', [AdminRedeemCodeController::class, 'store'])->middleware('throttle:20,1');
         Route::put('redeem-codes/{redeemCode}', [AdminRedeemCodeController::class, 'update']);
+        Route::get('telegram-store', [TelegramStoreController::class, 'show']);
+        Route::post('telegram-store/announcements', [TelegramStoreController::class, 'broadcast'])->middleware('throttle:10,1');
     });
 
     Route::middleware(['auth:sanctum', 'account.active', 'permission:admin.view'])->prefix('admin')->group(function (): void {

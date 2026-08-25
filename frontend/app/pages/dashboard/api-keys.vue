@@ -567,30 +567,14 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                     <table class="w-full text-xs">
                       <thead>
                         <tr class="border-b text-left text-muted">
-                          <th class="pb-2">
-                            Time
-                          </th>
-                          <th class="pb-2">
-                            Public Model
-                          </th>
-                          <th class="pb-2">
-                            Status
-                          </th>
-                          <th class="pb-2 text-right">
-                            Input
-                          </th>
-                          <th class="pb-2 text-right">
-                            Output
-                          </th>
-                          <th class="pb-2 text-right">
-                            Total
-                          </th>
-                          <th class="pb-2 text-right">
-                            Customer Charge
-                          </th>
-                          <th class="pb-2 text-right">
-                            Latency
-                          </th>
+                          <th class="pb-2">Time</th>
+                          <th class="pb-2">Public Model</th>
+                          <th class="pb-2">Status</th>
+                          <th class="pb-2 text-right">Input</th>
+                          <th class="pb-2 text-right">Output</th>
+                          <th class="pb-2 text-right">Total</th>
+                          <th class="pb-2 text-right">Customer Charge</th>
+                          <th class="pb-2 text-right">Latency</th>
                         </tr>
                       </thead>
                       <tbody>

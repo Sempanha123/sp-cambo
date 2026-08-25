@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\AiModel;
+use App\Models\ModelAlias;
 use App\Models\Provider;
 use App\Services\AuditService;
 use App\Services\ProviderEndpointService;
@@ -13,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -43,15 +45,23 @@ class ProviderModelController extends Controller
     {
         $providerModel = Provider::query()->with('activeConnectionRevision')->findOrFail($provider);
         $models = $this->discoverUpstreamModels($providerModel);
-        $registered = $providerModel->models()->pluck('id', 'internal_model_id');
+        $registered = $providerModel->models()->withCount('aliases')->get()->keyBy('internal_model_id');
 
         return response()->json([
-            'data' => collect($models)->map(fn (string $modelId): array => [
-                'internal_model_id' => $modelId,
-                'display_name' => $this->displayNameFrom($modelId),
-                'registered_model_id' => isset($registered[$modelId]) ? (string) $registered[$modelId] : null,
-                'already_registered' => isset($registered[$modelId]),
-            ])->values(),
+            'data' => collect($models)->map(function (string $modelId) use ($registered): array {
+                /** @var AiModel|null $model */
+                $model = $registered->get($modelId);
+
+                return [
+                    'internal_model_id' => $modelId,
+                    'display_name' => $this->displayNameFrom($modelId),
+                    'registered_model_id' => $model ? (string) $model->id : null,
+                    'already_registered' => $model !== null,
+                    'alias_count' => $model?->aliases_count ?? 0,
+                    'has_public_alias' => ($model?->aliases_count ?? 0) > 0,
+                    'suggested_public_alias' => $this->suggestedPublicAlias($modelId),
+                ];
+            })->values(),
         ]);
     }
 
@@ -65,7 +75,9 @@ class ProviderModelController extends Controller
         $data = $request->validate([
             'model_ids' => ['required', 'array', 'min:1', 'max:250'],
             'model_ids.*' => ['required', 'string', 'max:191', 'distinct'],
+            'create_public_aliases' => ['sometimes', 'boolean'],
         ]);
+        $createPublicAliases = (bool) ($data['create_public_aliases'] ?? false);
 
         $discovered = $this->discoverUpstreamModels($providerModel);
         $allowed = array_fill_keys($discovered, true);
@@ -80,39 +92,85 @@ class ProviderModelController extends Controller
 
         $created = [];
         $existing = [];
+        $aliasesCreated = [];
+        $aliasesExisting = [];
 
-        DB::transaction(function () use ($request, $providerModel, $requested, $audit, &$created, &$existing): void {
+        DB::transaction(function () use ($request, $providerModel, $requested, $createPublicAliases, $audit, &$created, &$existing, &$aliasesCreated, &$aliasesExisting): void {
             foreach ($requested as $modelId) {
                 $model = $providerModel->models()->where('internal_model_id', $modelId)->first();
                 if ($model) {
                     $existing[] = $modelId;
+                } else {
+                    $displayName = $this->displayNameFrom($modelId);
+                    $model = $providerModel->models()->create([
+                        'internal_model_id' => $modelId,
+                        'display_name' => $displayName,
+                        'family' => $this->familyFrom($modelId),
+                        'family_label' => $displayName,
+                        'capabilities' => [
+                            'streaming' => true,
+                            'tools' => false,
+                            'vision' => false,
+                            'reasoning' => false,
+                            'context_tokens' => 200000,
+                            'max_output_tokens' => 64000,
+                        ],
+                        'limits' => [
+                            'requests_per_minute' => null,
+                            'tokens_per_minute' => null,
+                            'concurrency' => null,
+                        ],
+                        'commercial_resale_verified_at' => null,
+                        'enabled' => true,
+                    ]);
+
+                    $created[] = $modelId;
+                }
+
+                if (! $createPublicAliases) {
                     continue;
                 }
 
-                $displayName = $this->displayNameFrom($modelId);
-                $model = $providerModel->models()->create([
-                    'internal_model_id' => $modelId,
-                    'display_name' => $displayName,
-                    'family' => $this->familyFrom($modelId),
-                    'family_label' => $displayName,
+                $existingAlias = $model->aliases()->orderBy('id')->first();
+                if ($existingAlias) {
+                    $aliasesExisting[] = $existingAlias->public_alias;
+                    continue;
+                }
+
+                $publicAlias = $this->uniquePublicAlias($providerModel, $modelId);
+                $modelCapabilities = is_array($model->capabilities) ? $model->capabilities : [];
+                $modelLimits = is_array($model->limits) ? $model->limits : [];
+                $alias = ModelAlias::query()->create([
+                    'ai_model_id' => $model->id,
+                    'public_alias' => $publicAlias,
+                    'display_name' => $model->display_name ?: $this->displayNameFrom($modelId),
+                    'description' => null,
                     'capabilities' => [
-                        'streaming' => true,
-                        'tools' => false,
-                        'vision' => false,
-                        'reasoning' => false,
-                        'context_tokens' => 200000,
-                        'max_output_tokens' => 64000,
+                        'streaming' => (bool) ($modelCapabilities['streaming'] ?? true),
+                        'tools' => (bool) ($modelCapabilities['tools'] ?? false),
+                        'vision' => (bool) ($modelCapabilities['vision'] ?? false),
+                        'reasoning' => (bool) ($modelCapabilities['reasoning'] ?? false),
+                        // Protocol support is intentionally not guessed from a model id.
+                        // Review/edit the public alias before publishing it for sale.
+                        'messages_api' => false,
+                        'responses_api' => false,
+                        'chat_completions_api' => false,
+                        'context_tokens' => (int) ($modelCapabilities['context_tokens'] ?? 200000),
+                        'max_output_tokens' => (int) ($modelCapabilities['max_output_tokens'] ?? 64000),
                     ],
                     'limits' => [
-                        'requests_per_minute' => null,
-                        'tokens_per_minute' => null,
-                        'concurrency' => null,
+                        'requests_per_minute' => $modelLimits['requests_per_minute'] ?? null,
+                        'tokens_per_minute' => $modelLimits['tokens_per_minute'] ?? null,
+                        'concurrency' => $modelLimits['concurrency'] ?? null,
                     ],
-                    'commercial_resale_verified_at' => null,
+                    'status' => 'active',
+                    // The alias exists immediately so Packages can select it, but remains
+                    // hidden until the admin explicitly reviews and publishes it.
                     'enabled' => true,
+                    'customer_visible' => false,
                 ]);
 
-                $created[] = $modelId;
+                $aliasesCreated[] = $alias->public_alias;
             }
 
             $audit->record(
@@ -120,8 +178,14 @@ class ProviderModelController extends Controller
                 'provider_models.imported',
                 'provider',
                 $providerModel->id,
-                'Imported private models discovered from the active provider connection.',
-                ['created' => $created, 'already_registered' => $existing]
+                'Imported provider models discovered from the active connection.',
+                [
+                    'created' => $created,
+                    'already_registered' => $existing,
+                    'create_public_aliases' => $createPublicAliases,
+                    'public_aliases_created' => $aliasesCreated,
+                    'public_aliases_already_existing' => $aliasesExisting,
+                ]
             );
         });
 
@@ -131,6 +195,8 @@ class ProviderModelController extends Controller
             'data' => [
                 'created' => $created,
                 'already_registered' => $existing,
+                'public_aliases_created' => $aliasesCreated,
+                'public_aliases_already_existing' => $aliasesExisting,
                 'models' => $models->map(fn (AiModel $model): array => $this->resource($model))->values(),
             ],
         ]);
@@ -309,6 +375,53 @@ class ProviderModelController extends Controller
         natcasesort($ids);
 
         return array_values($ids);
+    }
+
+    private function suggestedPublicAlias(string $modelId): string
+    {
+        $parts = preg_split('#[\\\\/]#', trim($modelId));
+        $leaf = is_array($parts) && $parts !== [] ? (string) end($parts) : $modelId;
+        $base = strtolower(Str::ascii($leaf));
+        $base = preg_replace('/[^a-z0-9._-]+/', '-', $base) ?? '';
+        $base = trim($base, '.-_');
+
+        if ($base === '') {
+            $base = 'model';
+        }
+
+        return substr($base, 0, 100);
+    }
+
+    private function uniquePublicAlias(Provider $provider, string $modelId): string
+    {
+        $base = $this->suggestedPublicAlias($modelId);
+        $candidate = $base;
+
+        if (! ModelAlias::query()->where('public_alias', $candidate)->exists()) {
+            return $candidate;
+        }
+
+        $providerSuffix = strtolower(Str::ascii($provider->slug));
+        $providerSuffix = preg_replace('/[^a-z0-9._-]+/', '-', $providerSuffix) ?? 'provider';
+        $providerSuffix = trim($providerSuffix, '.-_') ?: 'provider';
+        $maxBaseLength = max(1, 100 - strlen($providerSuffix) - 1);
+        $candidate = substr($base, 0, $maxBaseLength).'-'.$providerSuffix;
+
+        if (! ModelAlias::query()->where('public_alias', $candidate)->exists()) {
+            return $candidate;
+        }
+
+        for ($suffix = 2; $suffix <= 9999; $suffix++) {
+            $tail = '-'.$suffix;
+            $candidate = substr($base, 0, max(1, 100 - strlen($tail))).$tail;
+            if (! ModelAlias::query()->where('public_alias', $candidate)->exists()) {
+                return $candidate;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'model_ids' => ['Could not create a unique public alias for '.$modelId.'. Create the public alias manually.'],
+        ]);
     }
 
     private function rules(Provider $provider, ?AiModel $model = null): array

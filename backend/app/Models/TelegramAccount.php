@@ -15,7 +15,12 @@ class TelegramAccount extends Model
 
     protected function casts(): array
     {
-        return ['linked_at' => 'immutable_datetime', 'revoked_at' => 'immutable_datetime'];
+        return [
+            'announcements_enabled' => 'boolean',
+            'linked_at' => 'immutable_datetime',
+            'revoked_at' => 'immutable_datetime',
+            'last_seen_at' => 'immutable_datetime',
+        ];
     }
 
     public function tenant(): BelongsTo { return $this->belongsTo(Tenant::class); }

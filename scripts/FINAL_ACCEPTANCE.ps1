@@ -16,9 +16,9 @@ function Section([string]$Name) { Write-Host "`n=== $Name ===" -ForegroundColor 
 function Run-Step([string]$Name, [scriptblock]$Action) {
     Write-Host "--> $Name" -ForegroundColor Yellow
     try {
-        $global:LASTEXITCODE = 0
+        $global:LASTEXITCODE = $null
         & $Action
-        if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
+        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
         Write-Host "PASS: $Name" -ForegroundColor Green
     }
     catch {

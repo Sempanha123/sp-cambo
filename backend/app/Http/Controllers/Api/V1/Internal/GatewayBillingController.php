@@ -137,6 +137,25 @@ class GatewayBillingController extends Controller
         ]]);
     }
 
+    public function state(Request $request, Reservation $reservation): JsonResponse
+    {
+        $input = $request->validate(['state' => ['required', 'in:CONNECTING,STREAMING']]);
+        $target = (string) $input['state'];
+        $rank = ['RESERVED' => 0, 'CONNECTING' => 1, 'STREAMING' => 2];
+
+        $log = ApiRequestLog::query()->where('reservation_id', $reservation->id)->firstOrFail();
+        if (array_key_exists($log->state, $rank) && $rank[$target] > $rank[$log->state]) {
+            $log->forceFill(['state' => $target])->save();
+            CustomerStateChanged::dispatch((int) $reservation->user_id, 'api_request.state_changed', [
+                'reservation_id' => $reservation->id,
+                'public_model' => $reservation->public_model_alias,
+                'state' => strtolower($target),
+            ]);
+        }
+
+        return response()->json(['data' => ['reservation_id' => $reservation->id, 'state' => strtolower($log->fresh()->state)]]);
+    }
+
     public function settle(Request $request, Reservation $reservation, InferenceBillingService $billing): JsonResponse
     {
         $input = $request->validate($this->usageRules());
@@ -178,7 +197,7 @@ class GatewayBillingController extends Controller
     public function release(Reservation $reservation, ReservationService $reservations): JsonResponse
     {
         $released = $reservations->release($reservation);
-        ApiRequestLog::query()->where('reservation_id', $released->id)->where('state', 'RESERVED')->update(['state' => 'RELEASED', 'estimated_units' => null, 'finished_at' => now()]);
+        ApiRequestLog::query()->where('reservation_id', $released->id)->whereIn('state', ['RESERVED', 'CONNECTING', 'STREAMING'])->update(['state' => 'RELEASED', 'estimated_units' => null, 'finished_at' => now()]);
         CustomerStateChanged::dispatch((int) $released->user_id, 'api_request.failed', ['reservation_id' => $released->id, 'public_model' => $released->public_model_alias, 'state' => 'released']);
 
         return response()->json(['data' => ['reservation_id' => $released->id, 'status' => $released->status, 'settled_units' => '0']]);
@@ -188,7 +207,7 @@ class GatewayBillingController extends Controller
     {
         $input = $request->validate(['reason' => ['required', 'in:upstream_timeout,upstream_disconnect,client_disconnect,usage_unavailable,settlement_failed']]);
         $pending = $reservations->markForReconciliation($reservation, $input['reason']);
-        ApiRequestLog::query()->where('reservation_id', $pending->id)->where('state', 'RESERVED')->update(['state' => 'RECONCILING', 'error_code' => 'billing_settlement_pending']);
+        ApiRequestLog::query()->where('reservation_id', $pending->id)->whereIn('state', ['RESERVED', 'CONNECTING', 'STREAMING'])->update(['state' => 'RECONCILING', 'error_code' => 'billing_settlement_pending']);
         CustomerStateChanged::dispatch((int) $pending->user_id, 'api_request.failed', ['reservation_id' => $pending->id, 'public_model' => $pending->public_model_alias, 'state' => 'reconciling', 'error_code' => 'billing_settlement_pending']);
 
         return response()->json(['data' => ['reservation_id' => $pending->id, 'status' => $pending->status]], 202);

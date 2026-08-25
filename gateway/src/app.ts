@@ -36,6 +36,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
   });
 
   async function inference(path: InferencePath, request: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+    const requestStartedAt = Date.now();
     const key = customerKey(request);
     await dependencies.rateStore.admit(admissionIdentity(key), 120);
     const raw = typeof request.body === "string" ? request.body : JSON.stringify(request.body ?? {});
@@ -56,12 +57,17 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         request_fingerprint: prepared.fingerprint, endpoint: path,
       });
       reservationId = preflight.reservation_id;
+      void markStateBestEffort(reservationId, "CONNECTING");
       const controller = new AbortController();
       const onDisconnect = (): void => controller.abort("client_disconnect");
       request.raw.once("aborted", onDisconnect);
       reply.raw.once("close", onDisconnect);
+      const routeTimeoutMs = preflight.upstream_timeout_ms || config.upstreamTimeoutMs;
+      // The route may request a shorter timeout, while the gateway setting is the
+      // operator-controlled safety ceiling. Never let a route silently extend past it.
       const upstreamTimeoutMs = Math.min(
-        Math.max(preflight.upstream_timeout_ms || config.upstreamTimeoutMs, 1000),
+        Math.max(routeTimeoutMs, 1000),
+        Math.max(config.upstreamTimeoutMs, 1000),
         600_000,
       );
       const timeout = setTimeout(() => controller.abort("upstream_timeout"), upstreamTimeoutMs);
@@ -98,12 +104,13 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         }
         return proxyError(reply, upstream, path);
       }
-      if (prepared.streaming && upstream.body) return await stream(reply, upstream, reservationId, path, preflight.correlation_id);
-      return await json(reply, upstream, reservationId, path);
+      void markStateBestEffort(reservationId, "STREAMING");
+      if (prepared.streaming && upstream.body) return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt);
+      return await json(reply, upstream, reservationId, path, requestStartedAt);
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath): Promise<unknown> {
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number): Promise<unknown> {
     const text = await upstream.text();
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch {
@@ -118,7 +125,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     copyResponseHeaders(reply, upstream);
     reply.status(upstream.status).send(parsed);
     try {
-      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: 0 });
+      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - requestStartedAt });
     } catch {
       await reconcileBestEffort(reservationId, "settlement_failed");
     }
@@ -126,13 +133,13 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number): Promise<void> {
     reply.hijack();
     reply.raw.statusCode = upstream.status;
     reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
     reply.raw.setHeader("cache-control", "no-store");
     reply.raw.setHeader("x-request-id", requestId);
-    const started = Date.now(); let usage: Usage | null = null; let buffer = ""; let bytesSent = false;
+    let usage: Usage | null = null; let buffer = ""; let bytesSent = false;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     try {
       while (true) {
@@ -161,10 +168,15 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       return;
     }
     try {
-      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - started });
+      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - requestStartedAt });
     } catch {
       await reconcileBestEffort(reservationId, "settlement_failed");
     }
+  }
+
+  async function markStateBestEffort(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
+    if (!dependencies.controlPlane.state) return;
+    try { await dependencies.controlPlane.state(reservationId, state); } catch { /* Observability must never block inference. */ }
   }
 
   async function reconcileBestEffort(reservationId: string, reason: string): Promise<void> {

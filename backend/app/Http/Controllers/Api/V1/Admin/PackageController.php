@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Package;
 use App\Services\AuditService;
 use App\Services\PackageProfitabilityService;
+use App\Services\TelegramAnnouncementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +21,7 @@ class PackageController extends Controller
         return response()->json(['data' => $packages->map(fn (Package $package) => $this->resource($package, $profitability))]);
     }
 
-    public function store(Request $request, PackageProfitabilityService $profitability, AuditService $audit): JsonResponse
+    public function store(Request $request, PackageProfitabilityService $profitability, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
     {
         $data = $this->validated($request);
         $data['limits'] ??= [];
@@ -37,13 +38,22 @@ class PackageController extends Controller
             return $package;
         });
 
-        return response()->json(['data' => $this->resource($package->fresh('modelAliases'), $profitability)], 201);
+        $fresh = $package->fresh('modelAliases');
+        if ($this->isTelegramSellable($fresh)) {
+            $announcements->packagePublished($fresh, 'NEW_PACKAGE');
+        }
+
+        return response()->json(['data' => $this->resource($fresh, $profitability)], 201);
     }
 
-    public function update(Request $request, Package $package, PackageProfitabilityService $profitability, AuditService $audit): JsonResponse
+    public function update(Request $request, Package $package, PackageProfitabilityService $profitability, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
     {
         $data = $this->validated($request, $package);
         $data['limits'] ??= [];
+        $beforeAnnouncement = [
+            ...$package->only(['enabled', 'customer_visible', 'auto_creates_api_key', 'price_minor', 'advertised_units', 'duration_seconds', 'name', 'subtitle']),
+            'allowed_model_alias_ids' => $package->modelAliases()->pluck('model_aliases.id')->map(fn ($id): int => (int) $id)->sort()->values()->all(),
+        ];
         DB::transaction(function () use ($request, $data, $package, $profitability, $audit): void {
             $before = $package->only(['slug', 'enabled', 'customer_visible', 'price_minor', 'minimum_margin_bps']);
             $aliases = $data['allowed_model_alias_ids'];
@@ -56,7 +66,23 @@ class PackageController extends Controller
             $audit->record($request->user(), 'package.updated', 'package', $package->id, $package->profitability_override_reason, ['before' => $before, 'after' => $package->only(array_keys($before))]);
         });
 
-        return response()->json(['data' => $this->resource($package->fresh('modelAliases'), $profitability)]);
+        $fresh = $package->fresh('modelAliases');
+        $afterAnnouncement = [
+            ...$fresh->only(['enabled', 'customer_visible', 'auto_creates_api_key', 'price_minor', 'advertised_units', 'duration_seconds', 'name', 'subtitle']),
+            'allowed_model_alias_ids' => $fresh->modelAliases->pluck('id')->map(fn ($id): int => (int) $id)->sort()->values()->all(),
+        ];
+        $wasSellable = (bool) ($beforeAnnouncement['enabled'] && $beforeAnnouncement['customer_visible'] && $beforeAnnouncement['auto_creates_api_key']);
+        if ($this->isTelegramSellable($fresh) && (! $wasSellable || $beforeAnnouncement !== $afterAnnouncement)) {
+            $announcements->packagePublished($fresh, $wasSellable ? 'PACKAGE_UPDATE' : 'NEW_PACKAGE');
+        }
+
+        return response()->json(['data' => $this->resource($fresh, $profitability)]);
+    }
+
+    private function isTelegramSellable(Package $package): bool
+    {
+        return (bool) ($package->enabled && $package->customer_visible && $package->auto_creates_api_key)
+            && $package->modelAliases->isNotEmpty();
     }
 
     public function profitability(Package $package, PackageProfitabilityService $profitability): JsonResponse

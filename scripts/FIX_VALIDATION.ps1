@@ -33,4 +33,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Frontend tests failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }
 
-Write-Host "Focused backend + frontend validation repair passed." -ForegroundColor Green
+Push-Location (Join-Path $Root 'gateway')
+try {
+    if (-not $SkipInstall) { pnpm install --frozen-lockfile }
+    pnpm run typecheck
+    if ($LASTEXITCODE -ne 0) { throw "Gateway typecheck failed with exit code $LASTEXITCODE" }
+    pnpm exec vitest run tests/app.test.ts
+    if ($LASTEXITCODE -ne 0) { throw "Gateway app test failed with exit code $LASTEXITCODE" }
+} finally { Pop-Location }
+
+Write-Host "Focused backend + frontend + gateway validation repair passed." -ForegroundColor Green

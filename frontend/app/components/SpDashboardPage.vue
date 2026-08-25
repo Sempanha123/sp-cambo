@@ -37,10 +37,7 @@ withDefaults(defineProps<{
         >
           <div class="relative z-10 flex items-start gap-3">
             <div class="mt-1 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary transition-all duration-500 group-hover:scale-110 group-hover:bg-primary/30 group-hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]">
-              <UIcon
-                :name="icon || 'i-lucide-sparkles'"
-                class="size-4"
-              />
+              <UIcon :name="icon || 'i-lucide-sparkles'" class="size-4" />
             </div>
             <div class="min-w-0">
               <div class="sp-khmer-rule mb-2 !h-px !w-12 transition-all duration-700 group-hover:w-20" />

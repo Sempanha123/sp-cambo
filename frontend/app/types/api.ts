@@ -153,13 +153,27 @@ export interface PublicApiKeyStatus {
   total_spend?: MoneyAmount | null
   total_spend_by_currency?: MoneyAmount[]
   last_used?: string | null
+  active_requests?: number
+  server_time?: string
   recent_requests?: Array<{
+    request_id: string
     time: string
+    finished_at: string | null
+    endpoint: string
     model: string
+    internal_model: string | null
+    provider: string | null
+    provider_slug: string | null
+    route_version: number | null
+    state: 'reserved' | 'connecting' | 'streaming' | 'reconciling' | 'settled' | 'failed' | 'released' | string
     status: 'success' | 'error' | 'pending'
-    input_tokens: string
-    output_tokens: string
+    duration_ms: number | null
+    input_tokens: string | null
+    output_tokens: string | null
+    total_tokens: string | null
+    reserved_units: string | null
     charge: MoneyAmount | null
+    error_code: string | null
   }>
   error?: string
 }

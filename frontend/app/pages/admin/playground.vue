@@ -78,40 +78,18 @@ const save = async () => {
     <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
       <UCard class="sp-premium-card">
         <div class="space-y-5">
-          <USwitch
-            v-model="form.enabled"
-            label="Enable customer Playground"
-          />
+          <USwitch v-model="form.enabled" label="Enable customer Playground" />
 
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Daily free tokens"
-              help="Granted once per customer per day. After this is exhausted, redeem or purchased balance can continue the chat."
-            >
-              <UInputNumber
-                v-model="form.daily_token_quota"
-                :min="0"
-                :max="1000000000"
-                class="w-full"
-              />
+            <UFormField label="Daily free tokens" help="Granted once per customer per day. After this is exhausted, redeem or purchased balance can continue the chat.">
+              <UInputNumber v-model="form.daily_token_quota" :min="0" :max="1000000000" class="w-full" />
             </UFormField>
-            <UFormField
-              label="Maximum output tokens"
-              help="Hard cap for one hosted chat response."
-            >
-              <UInputNumber
-                v-model="form.max_output_tokens"
-                :min="1"
-                :max="65536"
-                class="w-full"
-              />
+            <UFormField label="Maximum output tokens" help="Hard cap for one hosted chat response.">
+              <UInputNumber v-model="form.max_output_tokens" :min="1" :max="65536" class="w-full" />
             </UFormField>
           </div>
 
-          <UFormField
-            label="Free Playground models"
-            help="Choose published customer aliases that can spend the daily free allowance."
-          >
+          <UFormField label="Free Playground models" help="Choose published customer aliases that can spend the daily free allowance.">
             <USelectMenu
               v-model="form.allowed_model_aliases"
               :items="publishedAliases"
@@ -123,10 +101,7 @@ const save = async () => {
           </UFormField>
 
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Default chat model"
-              help="The customer Playground opens with this public alias."
-            >
+            <UFormField label="Default chat model" help="The customer Playground opens with this public alias.">
               <USelectMenu
                 v-model="form.default_model_alias"
                 :items="freeAliasOptions"
@@ -136,15 +111,9 @@ const save = async () => {
               />
             </UFormField>
 
-            <UFormField
-              label="Customer model switching"
-              help="Turn this off to lock the Playground to the default alias."
-            >
+            <UFormField label="Customer model switching" help="Turn this off to lock the Playground to the default alias.">
               <div class="pt-2">
-                <USwitch
-                  v-model="form.allow_model_switching"
-                  :label="form.allow_model_switching ? 'Customers can switch' : 'Locked to default model'"
-                />
+                <USwitch v-model="form.allow_model_switching" :label="form.allow_model_switching ? 'Customers can switch' : 'Locked to default model'" />
               </div>
             </UFormField>
           </div>
@@ -153,20 +122,11 @@ const save = async () => {
             label="Playground gateway base URL"
             help="Optional server-side override, for example http://127.0.0.1:3010. Leave blank to use SP_CAMBO_GATEWAY_BASE_URL. Point this at an SP Cambo/OmniRoute-compatible gateway, not directly at an upstream provider, or billing and quota enforcement would be bypassed."
           >
-            <UInput
-              v-model="form.gateway_base_url"
-              class="w-full"
-              placeholder="Use global gateway URL"
-            />
+            <UInput v-model="form.gateway_base_url" class="w-full" placeholder="Use global gateway URL" />
           </UFormField>
 
           <div class="flex justify-end">
-            <UButton
-              :loading="saving"
-              @click="save"
-            >
-              Save Playground settings
-            </UButton>
+            <UButton :loading="saving" @click="save">Save Playground settings</UButton>
           </div>
         </div>
       </UCard>

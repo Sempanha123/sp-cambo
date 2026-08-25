@@ -93,6 +93,20 @@ const submitCreate = async () => {
 // Delete provider confirmation
 const deleteTarget = ref<AdminProvider | null>(null)
 const deleting = ref(false)
+const deleteCascade = ref(true)
+const deleteError = ref<string | null>(null)
+
+const openDelete = (provider: AdminProvider) => {
+  deleteTarget.value = provider
+  deleteCascade.value = true
+  deleteError.value = null
+}
+
+const closeDelete = () => {
+  if (deleting.value) return
+  deleteTarget.value = null
+  deleteError.value = null
+}
 
 const confirmDelete = async () => {
   const provider = deleteTarget.value
@@ -104,25 +118,30 @@ const confirmDelete = async () => {
   deleting.value = true
 
   try {
-    await api.admin.deleteProvider(provider.id)
+    const result = await api.admin.deleteProvider(provider.id, deleteCascade.value)
     await providers.refresh()
+    deleteTarget.value = null
+    deleteError.value = null
 
     toast.add({
       title: 'Provider deleted',
-      description: `${provider.name} has been deleted successfully.`,
+      description: result.cascade
+        ? `${provider.name} and its unused provider configuration were deleted successfully.`
+        : `${provider.name} has been deleted successfully.`,
       color: 'success',
       icon: 'i-lucide-trash-2'
     })
   } catch (cause) {
+    const error = toSpApiError(cause)
+    deleteError.value = error.message
     toast.add({
       title: 'Could not delete provider',
-      description: toSpApiError(cause).message,
+      description: error.message,
       color: 'error',
       icon: 'i-lucide-circle-x'
     })
   } finally {
     deleting.value = false
-    deleteTarget.value = null
   }
 }
 
@@ -347,7 +366,7 @@ useSeoMeta({
                         variant="subtle"
                         size="sm"
                         icon="i-lucide-trash-2"
-                        @click="deleteTarget = provider"
+                        @click="openDelete(provider)"
                       >
                         Delete
                       </UButton>
@@ -379,7 +398,7 @@ useSeoMeta({
                     variant="subtle"
                     size="sm"
                     icon="i-lucide-trash-2"
-                    @click="deleteTarget = provider"
+                    @click="openDelete(provider)"
                   >
                     Delete
                   </UButton>
@@ -562,7 +581,7 @@ useSeoMeta({
       :open="deleteTarget !== null"
       title="Delete this provider?"
       description="This action cannot be undone."
-      @update:open="deleteTarget = null"
+      @update:open="(open) => { if (!open) closeDelete() }"
     >
       <template #body>
         <div class="space-y-4">
@@ -571,12 +590,30 @@ useSeoMeta({
             This action cannot be undone.
           </p>
 
+          <UAlert
+            v-if="deleteError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :description="deleteError"
+          />
+
+          <div class="rounded-lg border border-warning/30 bg-warning/5 p-3">
+            <UFormField
+              label="Delete dependent provider configuration"
+              help="Also removes this provider's public aliases, pricing, private models and revisions, and detaches the aliases from packages/API keys. Packages left with no models are disabled. Historical request reservations still block deletion."
+            >
+              <USwitch v-model="deleteCascade" />
+            </UFormField>
+          </div>
+
           <div class="flex justify-end gap-2">
             <UButton
               color="neutral"
               variant="ghost"
               :disabled="deleting"
-              @click="deleteTarget = null"
+              @click="closeDelete"
             >
               Cancel
             </UButton>

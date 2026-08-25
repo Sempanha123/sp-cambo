@@ -166,10 +166,7 @@ const refreshAll = () => {
         description="Codes are validated and consumed by the control plane. A successful redemption creates a normal entitlement lot with its own model scope and expiry."
       />
       <div class="rounded-xl border border-default bg-elevated/30 p-4 sm:p-5">
-        <form
-          class="flex flex-col gap-3 sm:flex-row"
-          @submit.prevent="submitRedeemCode"
-        >
+        <form class="flex flex-col gap-3 sm:flex-row" @submit.prevent="submitRedeemCode">
           <UInput
             v-model="redeemCode"
             class="flex-1"
@@ -178,32 +175,12 @@ const refreshAll = () => {
             placeholder="SPC-FREE-…"
             icon="i-lucide-ticket"
           />
-          <UButton
-            type="submit"
-            :loading="redeeming"
-            :disabled="!redeemCode.trim() || redeeming"
-          >
+          <UButton type="submit" :loading="redeeming" :disabled="!redeemCode.trim() || redeeming">
             Redeem code
           </UButton>
         </form>
-        <UAlert
-          v-if="redeemError"
-          class="mt-3"
-          color="error"
-          variant="subtle"
-          icon="i-lucide-circle-alert"
-          title="Code not redeemed"
-          :description="redeemError"
-        />
-        <UAlert
-          v-if="redeemSuccess"
-          class="mt-3"
-          color="success"
-          variant="subtle"
-          icon="i-lucide-circle-check"
-          title="Entitlement added"
-          :description="redeemSuccess"
-        />
+        <UAlert v-if="redeemError" class="mt-3" color="error" variant="subtle" icon="i-lucide-circle-alert" title="Code not redeemed" :description="redeemError" />
+        <UAlert v-if="redeemSuccess" class="mt-3" color="success" variant="subtle" icon="i-lucide-circle-check" title="Entitlement added" :description="redeemSuccess" />
       </div>
     </section>
 

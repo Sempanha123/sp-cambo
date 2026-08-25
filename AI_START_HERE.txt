@@ -1,0 +1,22 @@
+SP CAMBO — TWO TERMINAL AI WORKFLOW
+
+TERMINAL 1 (AI1):
+1. cd "C:\Users\Rg Gear\Desktop\SP Cambo"
+2. Start your CLI AI.
+3. Paste everything from START_AI1_PROMPT.txt
+
+TERMINAL 2 (AI2):
+1. cd "C:\Users\Rg Gear\Desktop\SP Cambo"
+2. Start your second CLI AI.
+3. Paste everything from START_AI2_PROMPT.txt
+
+AI1 = EDIT / IMPLEMENT / FIX
+AI2 = AUDIT / TEST / VERIFY
+
+They communicate through:
+- docs/ai/AI1_STATUS.md
+- docs/ai/AI2_AUDIT.md
+- docs/ai/PARALLEL_BOARD.md
+
+Full requirements:
+SP_CAMBO_PRODUCTION_FINISH_AI1_AI2.md

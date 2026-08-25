@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\TelegramAccount;
 use App\Services\TelegramBotClient;
 use App\Services\TelegramCommerceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use RuntimeException;
 use Throwable;
 
 class TelegramWebhookController extends Controller
@@ -32,31 +34,26 @@ class TelegramWebhookController extends Controller
         $firstName = trim((string) data_get($from, 'first_name', ''));
         $lastName = trim((string) data_get($from, 'last_name', ''));
         $displayName = trim($firstName.' '.$lastName);
+        $callbackId = is_array($callback) ? (string) data_get($callback, 'id', '') : '';
 
         if ($chatId === '' || $telegramUserId === '') return response()->json(['ok' => true]);
         if ($chatType !== 'private') {
-            try { $bot->sendMessage($chatId, 'SP Cambo Store purchases are available only in a private chat with this bot.'); } catch (Throwable) {}
+            try { $bot->sendMessage($chatId, 'SP Cambo Store is available in a private chat with this bot.'); } catch (Throwable) {}
             return response()->json(['ok' => true]);
         }
 
-        $callbackId = is_array($callback) ? (string) data_get($callback, 'id', '') : '';
-
         try {
-            // Backwards compatibility only: an old explicit /link command must run
-            // before automatic storefront provisioning, otherwise the new Telegram-
-            // only workspace would occupy the identity first. It is not advertised.
+            // Legacy website linking remains accepted, but normal shopping never requires it.
             if (! is_array($callback)) {
                 $legacyText = trim((string) data_get($message, 'text', ''));
-                [$legacyCommand, $legacyArgument] = array_pad(preg_split('/\s+/', $legacyText, 2) ?: [], 2, '');
-                $legacyCommand = mb_strtolower(preg_replace('/@[^\s]+$/', '', $legacyCommand) ?? $legacyCommand);
-                if ($legacyCommand === '/link' && trim($legacyArgument) !== '') {
-                    $telegram->link(trim($legacyArgument), $telegramUserId, $chatId, is_string($username) ? $username : null);
-                    $bot->sendMessage($chatId, 'Website account linked. Send /shop to open the SP Cambo Store.');
+                [$legacyCommand, $legacyArgument] = $this->command($legacyText);
+                if ($legacyCommand === '/link' && $legacyArgument !== '') {
+                    $telegram->link($legacyArgument, $telegramUserId, $chatId, is_string($username) ? $username : null);
+                    $bot->sendMessage($chatId, 'Website account linked. Use the Store button to continue.');
                     return response()->json(['ok' => true]);
                 }
             }
 
-            // Every private Telegram customer can shop directly. No website-link code is required.
             $account = $telegram->ensureStorefrontAccount(
                 $telegramUserId,
                 $chatId,
@@ -65,62 +62,154 @@ class TelegramWebhookController extends Controller
             );
 
             if (is_array($callback)) {
-                $data = trim((string) data_get($callback, 'data', ''));
-
-                if ($data === 'store') {
-                    $telegram->sendStorefront($account);
-                    if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, 'Store opened');
-                    return response()->json(['ok' => true]);
-                }
-
-                if (str_starts_with($data, 'buy:')) {
-                    $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
-                    if ($packageId === false) throw new \RuntimeException('That product button is invalid.');
-                    $telegram->beginPurchaseByPackageId($account, (int) $packageId, $updateId);
-                    if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, 'Order created');
-                    return response()->json(['ok' => true]);
-                }
-
-                if (str_starts_with($data, 'check:')) {
-                    $purchase = $telegram->checkPurchase($account, substr($data, 6));
-                    if (! $purchase) {
-                        $bot->sendMessage($chatId, 'That purchase was not found. Open the store and try again.');
-                    } elseif ($purchase->delivered_at === null) {
-                        $bot->sendMessage($chatId, 'Payment is not verified yet. The server will keep checking automatically.');
-                    }
-                    if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, $purchase?->delivered_at ? 'Delivered' : 'Checked');
-                    return response()->json(['ok' => true]);
-                }
-
-                if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, 'This button is no longer available.');
+                $this->handleCallback($telegram, $bot, $account, trim((string) data_get($callback, 'data', '')), $callbackId, $updateId);
                 return response()->json(['ok' => true]);
             }
 
             $text = trim((string) data_get($message, 'text', ''));
             if ($text === '') return response()->json(['ok' => true]);
-            [$command, $argument] = array_pad(preg_split('/\s+/', $text, 2) ?: [], 2, '');
-            $command = mb_strtolower(preg_replace('/@[^\s]+$/', '', $command) ?? $command);
+            [$command, $argument] = $this->command($text);
+            $normalized = mb_strtolower($text);
 
-            if (in_array($command, ['/start', '/shop', '/plans'], true)) {
+            if ($command === '/start') {
+                $telegram->sendHome($account);
+            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង'])) {
                 $telegram->sendStorefront($account);
-            } elseif ($command === '/buy' && trim($argument) !== '') {
-                // Legacy command remains useful for power users; inline Buy buttons are primary.
-                $telegram->beginPurchase($account, trim($argument), $updateId);
+            } elseif ($command === '/buy' && $argument !== '') {
+                $telegram->beginPurchase($account, $argument, $updateId);
             } elseif ($command === '/check') {
                 $purchase = $telegram->checkLatest($account);
-                if (! $purchase) $bot->sendMessage($chatId, 'No Telegram purchase was found. Tap /shop to choose a product.');
-                elseif ($purchase->delivered_at === null) $bot->sendMessage($chatId, 'Payment is not verified yet. The server will keep checking automatically.');
+                if (! $purchase) $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
+                elseif ($purchase->delivered_at === null) $bot->sendMessage($chatId, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+            } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 សមតុល្យ'])) {
+                $telegram->sendBalance($account);
+            } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 ការបញ្ជាទិញ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
+                $telegram->sendOrders($account);
+            } elseif ($command === '/models' || $this->matches($normalized, ['🧠 models', '🧠 ម៉ូដែល'])) {
+                $telegram->sendModels($account);
+            } elseif ($command === '/language' || $this->matches($normalized, ['🌐 language', '🌐 ភាសា'])) {
+                $telegram->sendLanguage($account);
+            } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
+                $telegram->sendUpdatesStatus($account);
             } else {
-                $bot->sendMessage($chatId, "SP Cambo Store\n\nTap /shop to browse products, buy with Bakong KHQR, and receive your API key automatically after payment verification.");
+                $telegram->sendHome($account);
             }
         } catch (Throwable $e) {
             report($e);
             if ($callbackId !== '') {
                 try { $bot->answerCallbackQuery($callbackId, 'Could not complete that action.'); } catch (Throwable) {}
             }
-            try { $bot->sendMessage($chatId, 'SP Cambo could not complete that action. Please open /shop and try again.'); } catch (Throwable) {}
+            try { $bot->sendMessage($chatId, 'SP Cambo could not complete that action. Please use the Store menu and try again.'); } catch (Throwable) {}
         }
 
         return response()->json(['ok' => true]);
+    }
+
+    private function handleCallback(
+        TelegramCommerceService $telegram,
+        TelegramBotClient $bot,
+        TelegramAccount $account,
+        string $data,
+        string $callbackId,
+        string $updateId,
+    ): void {
+        $ack = static function (TelegramBotClient $bot, string $callbackId, ?string $text = null): void {
+            if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, $text);
+        };
+
+        if ($data === 'noop') {
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'home') {
+            $telegram->sendHome($account);
+            $ack($bot, $callbackId, 'Home');
+            return;
+        }
+        if ($data === 'store' || str_starts_with($data, 'store:')) {
+            $page = $data === 'store' ? 1 : max(1, (int) substr($data, 6));
+            $telegram->sendStorefront($account, $page);
+            $ack($bot, $callbackId, 'Store opened');
+            return;
+        }
+        if (str_starts_with($data, 'pkg:')) {
+            $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
+            if ($packageId === false) throw new RuntimeException('That package button is invalid.');
+            $telegram->sendProduct($account, (int) $packageId);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if (str_starts_with($data, 'buy:')) {
+            $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
+            if ($packageId === false) throw new RuntimeException('That purchase button is invalid.');
+            $telegram->beginPurchaseByPackageId($account, (int) $packageId, $updateId);
+            $ack($bot, $callbackId, 'Order created');
+            return;
+        }
+        if (str_starts_with($data, 'check:')) {
+            $purchase = $telegram->checkPurchase($account, substr($data, 6));
+            if (! $purchase) {
+                $bot->sendMessage($account->chat_id, 'That purchase was not found. Open Store and try again.');
+            } elseif ($purchase->delivered_at === null) {
+                $bot->sendMessage($account->chat_id, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+            }
+            $ack($bot, $callbackId, $purchase?->delivered_at ? 'Delivered' : 'Checked');
+            return;
+        }
+        if ($data === 'balance') {
+            $telegram->sendBalance($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'orders') {
+            $telegram->sendOrders($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'models') {
+            $telegram->sendModels($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'language') {
+            $telegram->sendLanguage($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if (str_starts_with($data, 'lang:')) {
+            $locale = substr($data, 5);
+            $account = $telegram->setLocale($account, $locale);
+            $ack($bot, $callbackId, $locale === 'km' ? 'បានប្ដូរភាសា' : 'Language updated');
+            $telegram->sendHome($account);
+            return;
+        }
+        if ($data === 'updates') {
+            $telegram->sendUpdatesStatus($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if (str_starts_with($data, 'updates:')) {
+            $enabled = substr($data, 8) === 'on';
+            $account = $telegram->setAnnouncements($account, $enabled);
+            $ack($bot, $callbackId, $enabled ? 'Updates enabled' : 'Updates muted');
+            $telegram->sendUpdatesStatus($account);
+            return;
+        }
+
+        $ack($bot, $callbackId, 'This button is no longer available.');
+    }
+
+    /** @return array{0:string,1:string} */
+    private function command(string $text): array
+    {
+        [$command, $argument] = array_pad(preg_split('/\s+/', trim($text), 2) ?: [], 2, '');
+        $command = mb_strtolower(preg_replace('/@[^\s]+$/', '', $command) ?? $command);
+        return [$command, trim($argument)];
+    }
+
+    /** @param array<int,string> $values */
+    private function matches(string $value, array $values): bool
+    {
+        return in_array($value, $values, true);
     }
 }

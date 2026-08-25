@@ -8,6 +8,7 @@ use App\Services\EntitlementService;
 use App\Services\PaymentService;
 use App\Services\ReservationService;
 use App\Services\TelegramCommerceService;
+use App\Services\TelegramAnnouncementService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -101,6 +102,13 @@ Artisan::command('telegram:reconcile-purchases {--batch=4}', function (): int {
     return $result['failed'] === 0 ? 0 : 1;
 })->purpose('Verify Telegram-originated payments and deliver fulfilled API access');
 
+Artisan::command('telegram:broadcast-announcements {--batch=50}', function (): int {
+    $result = app(TelegramAnnouncementService::class)->dispatchPending((int) $this->option('batch'));
+    $this->info("Processed {$result['announcements']} announcement(s); attempted {$result['attempted']}, sent {$result['sent']}, failed {$result['failed']}.");
+
+    return $result['failed'] === 0 ? 0 : 1;
+})->purpose('Deliver queued new-model, new-package, package-update and manual Telegram storefront announcements');
+
 Artisan::command('system:heartbeat', function (): int {
     SystemHeartbeat::query()->updateOrCreate(['component' => 'scheduler'], ['recorded_at' => now()]);
 
@@ -121,6 +129,10 @@ Schedule::command('payments:reconcile-pending --batch=1')
 
 
 Schedule::command('telegram:reconcile-purchases --batch=4')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+Schedule::command('telegram:broadcast-announcements --batch=50')
     ->everyMinute()
     ->withoutOverlapping();
 

@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\ApiKey;
+use App\Models\EntitlementLot;
 use App\Models\FulfillmentClaim;
+use App\Models\ModelAlias;
 use App\Models\Order;
 use App\Models\Package;
 use App\Models\Role;
@@ -18,6 +20,8 @@ use Throwable;
 
 class TelegramCommerceService
 {
+    private const STORE_PAGE_SIZE = 6;
+
     public function __construct(
         private readonly OrderService $orders,
         private readonly PaymentService $payments,
@@ -48,11 +52,13 @@ class TelegramCommerceService
                 if ($existing->telegram_user_id !== $telegramUserId || $existing->chat_id !== $chatId) {
                     throw new RuntimeException('This Telegram identity is already attached to another active SP Cambo chat.');
                 }
-                $existing->forceFill(['username' => $username])->save();
+                $existing->forceFill([
+                    'username' => $username,
+                    'last_seen_at' => now(),
+                ])->save();
                 return $existing->fresh('user');
             }
 
-            // Reclaim unique identifiers from historical revoked rows only.
             TelegramAccount::query()
                 ->whereNotNull('revoked_at')
                 ->where(fn ($q) => $q->where('telegram_user_id', $telegramUserId)->orWhere('chat_id', $chatId))
@@ -83,58 +89,233 @@ class TelegramCommerceService
                     'telegram_user_id' => $telegramUserId,
                     'chat_id' => $chatId,
                     'username' => $username,
+                    'locale' => 'en',
+                    'announcements_enabled' => true,
                     'linked_at' => now(),
+                    'last_seen_at' => now(),
                     'revoked_at' => null,
                 ]
             )->load('user');
         });
     }
 
-    /** @return array{text:string,reply_markup:array<string,mixed>} */
-    public function storefront(): array
+    public function sendHome(TelegramAccount $account): void
     {
-        $packages = Package::query()
+        $balance = $this->balanceSnapshot($account);
+        $km = $this->isKhmer($account);
+        $name = trim((string) ($account->user?->name ?: $account->username ?: 'SP Cambo customer'));
+        $text = $km
+            ? "👋 សួស្តី {$name}\n\n🧠 SP Cambo AI Store\nទិញ token/credit, ទទួល API key ដោយស្វ័យប្រវត្តិ និងពិនិត្យការប្រើប្រាស់បានភ្លាមៗ។\n\n💰 Token: {$balance['tokens']}\n💳 Credit: {$balance['credit']}"
+            : "👋 Welcome {$name}\n\n🧠 SP Cambo AI Store\nBuy token/credit packages, receive an API key automatically, and track usage in real time.\n\n💰 Tokens: {$balance['tokens']}\n💳 Credit: {$balance['credit']}";
+
+        $this->bot->sendMessage($account->chat_id, $text, $this->mainKeyboard($account));
+    }
+
+    /** @return array{text:string,reply_markup:array<string,mixed>} */
+    public function storefront(TelegramAccount $account, int $page = 1): array
+    {
+        $query = Package::query()
             ->published()
             ->where('auto_creates_api_key', true)
             ->orderByDesc('featured')
             ->orderBy('sort_order')
-            ->limit(20)
-            ->get();
+            ->orderBy('id');
+        $total = (clone $query)->count();
+        $pages = max(1, (int) ceil($total / self::STORE_PAGE_SIZE));
+        $page = max(1, min($page, $pages));
+        $packages = $query->forPage($page, self::STORE_PAGE_SIZE)->get();
+        $km = $this->isKhmer($account);
 
         if ($packages->isEmpty()) {
             return [
-                'text' => "SP Cambo Store\n\nNo API-access products are available right now. An admin must publish at least one sell-ready package.",
-                'reply_markup' => ['inline_keyboard' => []],
+                'text' => $km
+                    ? "🛍 SP Cambo Store\n\nមិនទាន់មានកញ្ចប់ API ដែលអាចទិញបានទេ។"
+                    : "🛍 SP Cambo Store\n\nNo API-access packages are available right now.",
+                'reply_markup' => ['inline_keyboard' => [[['text' => $km ? '🏠 ទំព័រដើម' : '🏠 Home', 'callback_data' => 'home']]]],
             ];
         }
 
         $lines = [
-            'SP Cambo Store',
+            $km ? '🛍 SP Cambo Store' : '🛍 SP Cambo Store',
             '',
-            'Choose a product below. Payment is verified server-side and your API key is delivered automatically in this private chat.',
+            $km
+                ? 'ជ្រើសកញ្ចប់ខាងក្រោម។ ការទូទាត់ត្រូវបានផ្ទៀងផ្ទាត់ដោយ server ហើយ API key នឹងផ្ញើមក chat នេះដោយស្វ័យប្រវត្តិ។'
+                : 'Choose a package below. Payment is verified server-side and your API key is delivered automatically in this chat.',
             '',
         ];
         $keyboard = [];
 
         foreach ($packages as $package) {
             $price = $this->packagePrice($package);
-            $lines[] = "• {$package->name} — {$price} — {$package->advertised_units} {$package->unit_label}";
+            $lines[] = "• {$package->name} · {$price} · ".number_format((int) $package->advertised_units).' '.$package->unit_label;
             $keyboard[] = [[
-                'text' => "Buy {$package->name} · {$price}",
-                'callback_data' => 'buy:'.$package->id,
+                'text' => '📦 '.$package->name.' · '.$price,
+                'callback_data' => 'pkg:'.$package->id,
             ]];
         }
 
-        $lines[] = '';
-        $lines[] = 'After delivery, paste the key into the public Key Checker to see remaining balance and recent usage without signing in.';
+        if ($pages > 1) {
+            $nav = [];
+            if ($page > 1) $nav[] = ['text' => '⬅️', 'callback_data' => 'store:'.($page - 1)];
+            $nav[] = ['text' => "{$page}/{$pages}", 'callback_data' => 'noop'];
+            if ($page < $pages) $nav[] = ['text' => '➡️', 'callback_data' => 'store:'.($page + 1)];
+            $keyboard[] = $nav;
+        }
+
+        $keyboard[] = [
+            ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models', 'callback_data' => 'models'],
+            ['text' => $km ? '💰 សមតុល្យ' : '💰 Balance', 'callback_data' => 'balance'],
+        ];
 
         return ['text' => implode("\n", $lines), 'reply_markup' => ['inline_keyboard' => $keyboard]];
     }
 
-    public function sendStorefront(TelegramAccount $account): void
+    public function sendStorefront(TelegramAccount $account, int $page = 1): void
     {
-        $store = $this->storefront();
+        $store = $this->storefront($account, $page);
         $this->bot->sendMessage($account->chat_id, $store['text'], $store['reply_markup']);
+    }
+
+    public function sendProduct(TelegramAccount $account, int $packageId): void
+    {
+        $package = Package::query()->published()->where('auto_creates_api_key', true)->with('modelAliases')->find($packageId);
+        if (! $package) throw new RuntimeException('That package is no longer available.');
+        $km = $this->isKhmer($account);
+        $models = $package->modelAliases->pluck('public_alias')->implode(', ');
+        $text = implode("\n", array_filter([
+            '📦 '.$package->name,
+            $package->subtitle,
+            '',
+            '💵 '.($km ? 'តម្លៃ' : 'Price').': '.$this->packagePrice($package),
+            '🪙 '.($km ? 'ចំនួន' : 'Allowance').': '.number_format((int) $package->advertised_units).' '.$package->unit_label,
+            '⏱ '.($km ? 'សុពលភាព' : 'Validity').': '.$this->durationLabel((int) $package->duration_seconds),
+            $models !== '' ? '🧠 '.($km ? 'ម៉ូដែល' : 'Models').': '.$models : null,
+            '',
+            $km ? 'បន្ទាប់ពី Bakong KHQR បានបង់ជោគជ័យ API key នឹងបង្កើត និងផ្ញើមកដោយស្វ័យប្រវត្តិ។' : 'After Bakong KHQR payment is verified, your API key is created and delivered automatically.',
+        ]));
+
+        $this->bot->sendMessage($account->chat_id, $text, [
+            'inline_keyboard' => [
+                [['text' => $km ? '🛒 ទិញឥឡូវ' : '🛒 Buy now', 'callback_data' => 'buy:'.$package->id]],
+                [['text' => $km ? '⬅️ ត្រឡប់ទៅហាង' : '⬅️ Back to store', 'callback_data' => 'store:1']],
+            ],
+        ]);
+    }
+
+    public function sendBalance(TelegramAccount $account): void
+    {
+        $balance = $this->balanceSnapshot($account);
+        $km = $this->isKhmer($account);
+        $checker = rtrim((string) config('app.frontend_url'), '/').'/public/key-checker';
+        $this->bot->sendMessage($account->chat_id, implode("\n", [
+            $km ? '💰 សមតុល្យ SP Cambo' : '💰 SP Cambo balance',
+            '',
+            ($km ? 'Token ដែលអាចប្រើបាន: ' : 'Spendable tokens: ').$balance['tokens'],
+            ($km ? 'Credit ដែលអាចប្រើបាន: ' : 'Spendable credit: ').$balance['credit'],
+            ($km ? 'កញ្ចប់សកម្ម: ' : 'Active lots: ').$balance['active_lots'],
+            '',
+            $km ? 'សម្រាប់ usage ជាក់លាក់តាម API key សូមប្រើ Key Checker។' : 'For exact per-key usage, open the public Key Checker.',
+        ]), [
+            'inline_keyboard' => [
+                [['text' => $km ? '🔎 ពិនិត្យ API key' : '🔎 Open Key Checker', 'url' => $checker]],
+                [['text' => $km ? '🛍 ទិញបន្ថែម' : '🛍 Buy more', 'callback_data' => 'store:1']],
+            ],
+        ]);
+    }
+
+    public function sendOrders(TelegramAccount $account): void
+    {
+        $km = $this->isKhmer($account);
+        $purchases = TelegramPurchase::query()
+            ->where('telegram_account_id', $account->id)
+            ->with('order.items')
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        if ($purchases->isEmpty()) {
+            $this->bot->sendMessage($account->chat_id, $km ? '🧾 មិនទាន់មានការបញ្ជាទិញទេ។' : '🧾 No Telegram orders yet.', [
+                'inline_keyboard' => [[['text' => $km ? '🛍 បើកហាង' : '🛍 Open store', 'callback_data' => 'store:1']]],
+            ]);
+            return;
+        }
+
+        $lines = [$km ? '🧾 ការបញ្ជាទិញថ្មីៗ' : '🧾 Recent Telegram orders', ''];
+        foreach ($purchases as $purchase) {
+            $order = $purchase->order;
+            $name = $order?->items?->first()?->package_name ?? 'Package';
+            $lines[] = "• {$order?->reference} · {$name} · {$purchase->status}";
+        }
+        $lines[] = '';
+        $lines[] = $km ? 'ប្រើប៊ូតុងខាងក្រោមដើម្បីផ្ទៀងផ្ទាត់ការទូទាត់ចុងក្រោយ។' : 'Use the button below to re-check your latest pending payment.';
+
+        $this->bot->sendMessage($account->chat_id, implode("\n", $lines), [
+            'inline_keyboard' => [
+                [['text' => $km ? '🔄 ពិនិត្យការទូទាត់' : '🔄 Check latest payment', 'callback_data' => 'check:latest']],
+                [['text' => $km ? '🛍 បើកហាង' : '🛍 Open store', 'callback_data' => 'store:1']],
+            ],
+        ]);
+    }
+
+    public function sendModels(TelegramAccount $account): void
+    {
+        $km = $this->isKhmer($account);
+        $models = ModelAlias::query()->published()->with('model.provider')->orderBy('display_name')->limit(30)->get();
+        if ($models->isEmpty()) {
+            $this->bot->sendMessage($account->chat_id, $km ? '🧠 មិនទាន់មានម៉ូដែលដែលអាចប្រើបានទេ។' : '🧠 No customer models are available yet.');
+            return;
+        }
+
+        $lines = [$km ? '🧠 ម៉ូដែលដែលអាចប្រើបាន' : '🧠 Available models', ''];
+        foreach ($models as $model) {
+            $provider = $model->model?->provider?->name;
+            $lines[] = '• '.$model->display_name.' ('.$model->public_alias.')'.($provider ? ' · '.$provider : '');
+        }
+        $lines[] = '';
+        $lines[] = $km ? 'កញ្ចប់នៅក្នុង Store កំណត់ម៉ូដែលណាដែល API key អាចប្រើបាន។' : 'Each Store package defines which of these models its API key may use.';
+        $this->bot->sendMessage($account->chat_id, implode("\n", $lines), [
+            'inline_keyboard' => [[['text' => $km ? '🛍 មើលកញ្ចប់' : '🛍 View packages', 'callback_data' => 'store:1']]],
+        ]);
+    }
+
+    public function sendLanguage(TelegramAccount $account): void
+    {
+        $this->bot->sendMessage($account->chat_id, '🌐 ជ្រើសរើសភាសា / Select language:', [
+            'inline_keyboard' => [[
+                ['text' => '🇰🇭 ខ្មែរ', 'callback_data' => 'lang:km'],
+                ['text' => '🇺🇸 English', 'callback_data' => 'lang:en'],
+            ]],
+        ]);
+    }
+
+    public function setLocale(TelegramAccount $account, string $locale): TelegramAccount
+    {
+        $locale = in_array($locale, ['en', 'km'], true) ? $locale : 'en';
+        $account->forceFill(['locale' => $locale, 'last_seen_at' => now()])->save();
+        return $account->fresh('user');
+    }
+
+    public function setAnnouncements(TelegramAccount $account, bool $enabled): TelegramAccount
+    {
+        $account->forceFill(['announcements_enabled' => $enabled, 'last_seen_at' => now()])->save();
+        return $account->fresh('user');
+    }
+
+    public function sendUpdatesStatus(TelegramAccount $account): void
+    {
+        $km = $this->isKhmer($account);
+        $enabled = (bool) $account->announcements_enabled;
+        $text = $km
+            ? '🔔 ព័ត៌មានថ្មី: '.($enabled ? 'បើក' : 'បិទ')."\n\nSP Cambo អាចផ្ញើព័ត៌មានអំពីម៉ូដែលថ្មី កញ្ចប់ថ្មី និងការកែប្រែកញ្ចប់។"
+            : '🔔 Store updates: '.($enabled ? 'ON' : 'OFF')."\n\nSP Cambo can notify you about newly published models, new packages and important package updates.";
+        $this->bot->sendMessage($account->chat_id, $text, [
+            'inline_keyboard' => [[
+                [
+                    'text' => $enabled ? ($km ? '🔕 បិទ' : '🔕 Turn off') : ($km ? '🔔 បើក' : '🔔 Turn on'),
+                    'callback_data' => 'updates:'.($enabled ? 'off' : 'on'),
+                ],
+            ]],
+        ]);
     }
 
     public function beginPurchaseByPackageId(TelegramAccount $account, int $packageId, string $updateId): TelegramPurchase
@@ -169,21 +350,29 @@ class TelegramCommerceService
 
         if ($order->status !== 'FULFILLED') {
             $attempt = $this->payments->createAttempt($order);
-            $scale = 10 ** (int) $attempt->currency_exponent;
-            $amount = number_format(((int) $attempt->amount_minor) / $scale, (int) $attempt->currency_exponent);
+            $amount = $this->money((int) $attempt->amount_minor, (string) $attempt->currency, (int) $attempt->currency_exponent);
+            $km = $this->isKhmer($account);
             $this->bot->sendMessage($account->chat_id, implode("\n", [
-                "Order {$order->reference}",
-                "Product: {$package->name}",
-                "Amount: {$amount} {$attempt->currency}",
+                $km ? '💳 Bakong KHQR Payment' : '💳 Bakong KHQR payment',
                 '',
-                'Pay with Bakong KHQR using this payload:',
+                ($km ? 'លេខបញ្ជាទិញ: ' : 'Order: ').$order->reference,
+                ($km ? 'កញ្ចប់: ' : 'Package: ').$package->name,
+                ($km ? 'ចំនួនទឹកប្រាក់: ' : 'Amount: ').$amount,
+                ($km ? 'ផុតកំណត់: ' : 'Expires: ').$attempt->expires_at->toDateTimeString(),
+                '',
+                $km ? 'KHQR payload (ចុច Copy ខាងក្រោម):' : 'KHQR payload (tap Copy below):',
                 (string) $attempt->qr_payload,
                 '',
-                'Payment is checked automatically. You can also tap the button below to check now.',
+                $km ? 'Server នឹងពិនិត្យការទូទាត់ដោយស្វ័យប្រវត្តិរៀងរាល់នាទី។' : 'The server checks payment automatically every minute. You can also check now.',
             ]), [
-                'inline_keyboard' => [[
-                    ['text' => "I've paid — check now", 'callback_data' => 'check:'.$purchase->id],
-                ]],
+                'inline_keyboard' => [
+                    [[
+                        'text' => $km ? '📋 ចម្លង KHQR' : '📋 Copy KHQR',
+                        'copy_text' => ['text' => (string) $attempt->qr_payload],
+                    ]],
+                    [['text' => $km ? '✅ ខ្ញុំបានបង់ · ពិនិត្យឥឡូវ' : "✅ I've paid · Check now", 'callback_data' => 'check:'.$purchase->id]],
+                    [['text' => $km ? '⬅️ ត្រឡប់ទៅហាង' : '⬅️ Back to store', 'callback_data' => 'store:1']],
+                ],
             ]);
         } else {
             $this->deliver($purchase);
@@ -194,6 +383,7 @@ class TelegramCommerceService
 
     public function checkPurchase(TelegramAccount $account, string $purchaseId): ?TelegramPurchase
     {
+        if ($purchaseId === 'latest') return $this->checkLatest($account);
         $purchase = TelegramPurchase::query()
             ->where('telegram_account_id', $account->id)
             ->whereKey($purchaseId)
@@ -228,6 +418,7 @@ class TelegramCommerceService
         return $purchase->fresh();
     }
 
+    /** @return array{checked:int,failed:int} */
     public function reconcilePending(int $batch = 4): array
     {
         $ids = TelegramPurchase::query()
@@ -258,7 +449,7 @@ class TelegramCommerceService
 
     private function deliver(TelegramPurchase $purchase): void
     {
-        $account = $purchase->account()->firstOrFail();
+        $account = $purchase->account()->with('user')->firstOrFail();
         $order = $purchase->order()->with('items')->firstOrFail();
         $claim = FulfillmentClaim::query()
             ->where('order_id', $order->id)
@@ -286,37 +477,41 @@ class TelegramCommerceService
         $openai = $anthropic.'/v1';
         $checker = rtrim((string) config('app.frontend_url'), '/').'/public/key-checker';
         $defaultModel = $aliases[0] ?? 'MODEL_ALIAS';
+        $km = $this->isKhmer($account);
 
         try {
             $this->bot->sendMessage($account->chat_id, implode("\n", [
-                '✅ Payment verified. Your SP Cambo access is active.',
+                $km ? '✅ ការទូទាត់ជោគជ័យ · API access រួចរាល់' : '✅ Payment verified · API access is ready',
                 '',
-                "API key (shown once): {$secret}",
-                "Models: ".implode(', ', $aliases),
-                "Claude Code base URL: {$anthropic}",
-                "OpenAI/Codex base URL: {$openai}",
+                ($km ? '🔑 API key (បង្ហាញតែម្តង): ' : '🔑 API key (shown once): ').$secret,
+                ($km ? '🧠 ម៉ូដែល: ' : '🧠 Models: ').implode(', ', $aliases),
                 '',
-                'Claude Code · Windows PowerShell',
+                $km ? 'រក្សា key នេះឥឡូវនេះ។ SP Cambo មិនអាចបង្ហាញ plaintext secret ម្តងទៀតបានទេ។' : 'Save this key now. SP Cambo cannot reveal the plaintext secret again.',
+            ]), [
+                'inline_keyboard' => [
+                    [['text' => $km ? '🔎 ពិនិត្យ usage / balance' : '🔎 Check usage / balance', 'url' => $checker]],
+                    [['text' => $km ? '🛍 ទិញកញ្ចប់ផ្សេង' : '🛍 Buy another package', 'callback_data' => 'store:1']],
+                ],
+            ]);
+
+            $this->bot->sendMessage($account->chat_id, implode("\n", [
+                '🧩 Claude Code setup',
+                '',
+                'Windows PowerShell',
                 '$env:ANTHROPIC_BASE_URL="'.$anthropic.'"',
                 '$env:ANTHROPIC_AUTH_TOKEN="'.$secret.'"',
                 '$env:ANTHROPIC_MODEL="'.$defaultModel.'"',
                 'claude',
                 '',
-                'Claude Code · macOS/Linux',
+                'macOS / Linux',
                 'export ANTHROPIC_BASE_URL="'.$anthropic.'"',
                 'export ANTHROPIC_AUTH_TOKEN="'.$secret.'"',
                 'export ANTHROPIC_MODEL="'.$defaultModel.'"',
                 'claude',
                 '',
-                "Usage checker (no login): {$checker}",
-                'Paste this API key there to see remaining balance and recent metered requests. The checker never needs your website password.',
-            ]), [
-                'inline_keyboard' => [
-                    [['text' => 'Buy another product', 'callback_data' => 'store']],
-                ],
-            ]);
+                'OpenAI / Codex base: '.$openai,
+            ]));
         } catch (Throwable $e) {
-            // A one-time secret that was not delivered must not become unrecoverable.
             DB::transaction(function () use ($claim, $key): void {
                 ApiKey::query()->whereKey($key->id)->update(['status' => 'REVOKED', 'revoked_at' => now()]);
                 FulfillmentClaim::query()->whereKey($claim->id)->update(['status' => 'PENDING', 'claimed_at' => null, 'api_key_id' => null]);
@@ -381,7 +576,10 @@ class TelegramCommerceService
                     'telegram_user_id' => $telegramUserId,
                     'chat_id' => $chatId,
                     'username' => $username,
+                    'locale' => 'en',
+                    'announcements_enabled' => true,
                     'linked_at' => now(),
+                    'last_seen_at' => now(),
                     'revoked_at' => null,
                 ]
             );
@@ -395,9 +593,13 @@ class TelegramCommerceService
         return TelegramAccount::query()->with('user')->where('chat_id', $chatId)->whereNull('revoked_at')->first();
     }
 
-    public function planText(): string
+    public function planText(?TelegramAccount $account = null): string
     {
-        return $this->storefront()['text'];
+        if ($account) return $this->storefront($account)['text'];
+        $packages = Package::query()->published()->where('auto_creates_api_key', true)->limit(20)->get();
+        return $packages->isEmpty()
+            ? 'SP Cambo Store — no packages are available right now.'
+            : "SP Cambo Store\n\n".$packages->map(fn (Package $package): string => '• '.$package->name.' — '.$this->packagePrice($package))->implode("\n");
     }
 
     public function unlink(User $user): void
@@ -406,6 +608,58 @@ class TelegramCommerceService
             $account = TelegramAccount::query()->where('user_id', $user->id)->whereNull('revoked_at')->lockForUpdate()->first();
             if ($account) $this->releaseIdentity($account);
         });
+    }
+
+    /** @return array{tokens:string,credit:string,active_lots:int} */
+    private function balanceSnapshot(TelegramAccount $account): array
+    {
+        $lots = EntitlementLot::query()
+            ->where('user_id', $account->user_id)
+            ->where('status', 'ACTIVE')
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->get();
+        $spendable = static fn (EntitlementLot $lot): int => max(0, (int) $lot->remaining_units - (int) $lot->reserved_units);
+        $tokens = $lots->where('billing_mode', 'TOKEN_QUOTA')->sum($spendable);
+        $credits = $lots->where('billing_mode', 'CREDIT_BALANCE');
+        $creditText = $credits->isEmpty()
+            ? '$0.00'
+            : $credits->groupBy(fn (EntitlementLot $lot): string => ($lot->currency ?? 'USD').':'.(int) ($lot->currency_exponent ?? 6))
+                ->map(function ($group) use ($spendable): string {
+                    /** @var EntitlementLot $first */
+                    $first = $group->first();
+                    return $this->money((int) $group->sum($spendable), $first->currency ?? 'USD', (int) ($first->currency_exponent ?? 6));
+                })->implode(' + ');
+
+        return [
+            'tokens' => number_format((int) $tokens),
+            'credit' => $creditText,
+            'active_lots' => $lots->count(),
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function mainKeyboard(TelegramAccount $account): array
+    {
+        $km = $this->isKhmer($account);
+        return [
+            'keyboard' => [
+                [
+                    ['text' => $km ? '🛍 ហាង' : '🛍 Store'],
+                    ['text' => $km ? '💰 សមតុល្យ' : '💰 Balance'],
+                ],
+                [
+                    ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models'],
+                    ['text' => $km ? '🧾 ការបញ្ជាទិញ' : '🧾 Orders'],
+                ],
+                [
+                    ['text' => $km ? '🔔 ព័ត៌មានថ្មី' : '🔔 Updates'],
+                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language'],
+                ],
+            ],
+            'resize_keyboard' => true,
+            'is_persistent' => true,
+            'input_field_placeholder' => $km ? 'ជ្រើសមុខងារខាងក្រោម…' : 'Choose an action below…',
+        ];
     }
 
     private function releaseIdentity(TelegramAccount $account): void
@@ -420,9 +674,25 @@ class TelegramCommerceService
 
     private function packagePrice(Package $package): string
     {
-        $scale = 10 ** (int) $package->currency_exponent;
-        $amount = number_format(((int) $package->price_minor) / $scale, (int) $package->currency_exponent);
-        return "{$amount} {$package->currency}";
+        return $this->money((int) $package->price_minor, (string) $package->currency, (int) $package->currency_exponent);
+    }
+
+    private function money(int $minor, string $currency, int $exponent): string
+    {
+        $scale = 10 ** $exponent;
+        return number_format($minor / $scale, $exponent).' '.strtoupper($currency);
+    }
+
+    private function durationLabel(int $seconds): string
+    {
+        if ($seconds % 86400 === 0) return (int) ($seconds / 86400).' day(s)';
+        if ($seconds % 3600 === 0) return (int) ($seconds / 3600).' hour(s)';
+        return number_format($seconds).' seconds';
+    }
+
+    private function isKhmer(TelegramAccount $account): bool
+    {
+        return $account->locale === 'km';
     }
 
     private function linkDigest(string $secret): string

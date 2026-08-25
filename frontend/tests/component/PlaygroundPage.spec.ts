@@ -29,16 +29,17 @@ const model = (overrides: Partial<PublicModel> & { public_alias: string }): Publ
 })
 
 const plane = { models: [] as PublicModel[] }
-const { listModels, getPlaygroundQuota, runPlayground, redeemCode } = vi.hoisted(() => ({
+const { listModels, getPlaygroundQuota, runPlayground, redeemCode, activity } = vi.hoisted(() => ({
   listModels: vi.fn(),
   getPlaygroundQuota: vi.fn(),
   runPlayground: vi.fn(),
-  redeemCode: vi.fn()
+  redeemCode: vi.fn(),
+  activity: vi.fn()
 }))
 
 mockNuxtImport('useSpApi', () => () => ({
   catalog: { models: listModels },
-  account: { playgroundQuota: getPlaygroundQuota, runPlayground, redeemCode }
+  account: { playgroundQuota: getPlaygroundQuota, runPlayground, redeemCode, activity }
 }))
 
 enableAutoUnmount(afterEach)
@@ -70,6 +71,7 @@ beforeEach(() => {
     quota: quota({ remaining: 4000 })
   })
   redeemCode.mockReset()
+  activity.mockReset().mockResolvedValue([])
   clearNuxtData()
   clearNuxtState()
 })
@@ -113,7 +115,7 @@ describe('customer chat Playground', () => {
     const page = await mountPlayground()
     expect(page.text()).toContain('Continue chatting')
     expect(page.text()).toContain('Buy tokens / credit')
-    expect(page.text()).toContain('Redeem code')
+    expect(page.find('input[placeholder="Redeem code"]').exists()).toBe(true)
   })
 
   it('locks the model selector when admin disables customer model switching', async () => {

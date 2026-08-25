@@ -49,6 +49,11 @@ const summary = await useSpResource(
 const modelFilter = ref<string | undefined>(undefined)
 const keyFilter = ref<string | undefined>(undefined)
 const activityLimit = ref(25)
+const liveRefresh = ref(true)
+const liveClock = ref(Date.now())
+let activityTimer: ReturnType<typeof setInterval> | undefined
+let clockTimer: ReturnType<typeof setInterval> | undefined
+let summaryTimer: ReturnType<typeof setInterval> | undefined
 
 /**
  * The key list is both the selector's safe display metadata and the client-side
@@ -147,6 +152,15 @@ const hasUsage = computed(() => buckets.value.some(bucket => !isUnitsDepleted(bu
 
 /** -------------------------------------------------------------- activity */
 
+const liveStates: RequestActivity['state'][] = ['reserved', 'connecting', 'streaming', 'reconciling']
+const liveRequests = computed(() => (activity.data.value ?? []).filter(item => liveStates.includes(item.state)))
+const displayDuration = (item: RequestActivity) => {
+  if (item.duration_ms !== null) return formatLatency(item.duration_ms)
+  if (!liveStates.includes(item.state)) return '—'
+  const elapsedMs = Math.max(0, liveClock.value - new Date(item.started_at).getTime())
+  return `${(elapsedMs / 1000).toFixed(1)} s live`
+}
+
 const stateTone = (item: RequestActivity) => {
   if (item.error_code) {
     return 'text-error'
@@ -160,6 +174,17 @@ const refreshAll = () => {
   keys.refresh()
   activity.refresh()
 }
+
+onMounted(() => {
+  activityTimer = setInterval(() => { if (liveRefresh.value) void activity.refresh() }, 3000)
+  summaryTimer = setInterval(() => { if (liveRefresh.value) void summary.refresh() }, 12000)
+  clockTimer = setInterval(() => { liveClock.value = Date.now() }, 1000)
+})
+onBeforeUnmount(() => {
+  if (activityTimer) clearInterval(activityTimer)
+  if (summaryTimer) clearInterval(summaryTimer)
+  if (clockTimer) clearInterval(clockTimer)
+})
 </script>
 
 <template>
@@ -169,6 +194,10 @@ const refreshAll = () => {
     description="Request metadata, token counts and charges as recorded by SP Cambo. Prompt and completion text is never stored, so it cannot be shown here."
   >
     <template #actions>
+      <UBadge v-if="liveRequests.length" color="warning" variant="subtle">
+        <span class="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-current" />{{ liveRequests.length }} running
+      </UBadge>
+      <USwitch v-model="liveRefresh" label="Live" />
       <USelectMenu
         v-model="rangeValue"
         :items="ranges"
@@ -448,6 +477,10 @@ const refreshAll = () => {
                 <span class="font-mono text-dimmed">{{ item.api_key_prefix }}…</span>
                 · {{ formatDateTime(item.started_at) }}
               </p>
+              <p class="truncate text-xs text-dimmed">
+                Route: {{ item.provider || 'resolving' }}<template v-if="item.route_version"> · v{{ item.route_version }}</template>
+                · upstream <span class="font-mono">{{ item.internal_model || '—' }}</span>
+              </p>
             </div>
 
             <div class="grid shrink-0 gap-x-6 gap-y-3 sm:grid-cols-[minmax(12rem,1fr)_auto]">
@@ -474,7 +507,7 @@ const refreshAll = () => {
                     class="sp-numeric"
                     :class="stateTone(item)"
                   >
-                    {{ formatUnits(item.metered_units) }}
+                    {{ item.metered_units !== null ? formatUnits(item.metered_units) : item.reserved_units !== null ? `${formatUnits(item.reserved_units)} reserved` : '—' }}
                   </dd>
                 </div>
                 <div>
@@ -490,7 +523,7 @@ const refreshAll = () => {
                     Duration
                   </dt>
                   <dd class="sp-numeric text-default">
-                    {{ formatLatency(item.duration_ms) }}
+                    {{ displayDuration(item) }}
                   </dd>
                 </div>
               </dl>

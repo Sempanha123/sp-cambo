@@ -63,6 +63,7 @@ Write-Host "==========================================" -ForegroundColor DarkCya
 Write-Host "       SP CAMBO EASY LOCAL START          " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor DarkCyan
 Write-Host "Project: $ProjectRoot"
+Write-Host "Mode: native Windows services (Docker is NOT required)." -ForegroundColor DarkGray
 Write-Host ""
 
 Start-ServiceWindow "Frontend" "START_FRONTEND.ps1" "http://127.0.0.1:3000/" 1

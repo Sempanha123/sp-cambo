@@ -23,6 +23,11 @@ class ApiRequestLog extends Model
         return $this->belongsTo(ApiKey::class);
     }
 
+    public function reservation(): BelongsTo
+    {
+        return $this->belongsTo(Reservation::class);
+    }
+
     public function usage(): HasOne
     {
         return $this->hasOne(UsageRecord::class, 'reservation_id', 'reservation_id');

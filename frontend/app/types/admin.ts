@@ -498,11 +498,16 @@ export interface DiscoveredProviderModel {
   display_name: string
   registered_model_id: string | null
   already_registered: boolean
+  alias_count: number
+  has_public_alias: boolean
+  suggested_public_alias: string
 }
 
 export interface ProviderModelImportResult {
   created: string[]
   already_registered: string[]
+  public_aliases_created: string[]
+  public_aliases_already_existing: string[]
   models: AdminProviderModel[]
 }
 
@@ -609,4 +614,27 @@ export interface AdminRedeemCodeUpdateInput {
   starts_at: string | null
   ends_at: string | null
   enabled: boolean
+}
+
+export interface AdminTelegramAnnouncement {
+  id: string
+  kind: string
+  title: string
+  body: string
+  status: 'QUEUED' | 'SENDING' | 'COMPLETED' | string
+  recipient_count: number
+  sent_count: number
+  failed_count: number
+  package: { id: string, name: string, slug: string } | null
+  model: { id: number, public_alias: string, display_name: string } | null
+  created_at: string | null
+  finished_at: string | null
+}
+
+export interface AdminTelegramStoreOverview {
+  configured: boolean
+  active_accounts: number
+  announcement_subscribers: number
+  queued_announcements: number
+  recent_announcements: AdminTelegramAnnouncement[]
 }

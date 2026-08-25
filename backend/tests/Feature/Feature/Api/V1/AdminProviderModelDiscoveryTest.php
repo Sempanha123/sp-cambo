@@ -3,6 +3,7 @@
 namespace Tests\Feature\Feature\Api\V1;
 
 use App\Models\AiModel;
+use App\Models\ModelAlias;
 use App\Models\Permission;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
@@ -127,6 +128,89 @@ class AdminProviderModelDiscoveryTest extends TestCase
 
         $this->assertNull($model->commercial_resale_verified_at);
         $this->assertTrue($model->enabled);
+    }
+
+    public function test_import_can_create_hidden_public_aliases_that_are_available_to_packages(): void
+    {
+        $admin = $this->admin();
+        [$provider] = $this->providerWithRevision();
+        Http::fake([
+            'https://catalog.example/v1/models' => Http::response([
+                'data' => [
+                    ['id' => 'agentrouter/gpt-5.6-sol'],
+                    ['id' => 'agentrouter/deepseek-v4-flash'],
+                ],
+            ]),
+        ]);
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/models/import", [
+                'model_ids' => ['agentrouter/gpt-5.6-sol', 'agentrouter/deepseek-v4-flash'],
+                'create_public_aliases' => true,
+            ])
+            ->assertOk()
+            ->assertJsonCount(2, 'data.public_aliases_created');
+
+        $aliases = ModelAlias::query()->orderBy('public_alias')->get();
+        $this->assertCount(2, $aliases);
+        $this->assertEqualsCanonicalizing(['gpt-5.6-sol', 'deepseek-v4-flash'], $aliases->pluck('public_alias')->all());
+        $this->assertTrue($aliases->every(fn (ModelAlias $alias): bool => $alias->enabled && ! $alias->customer_visible));
+
+        // Packages consume /admin/model-aliases rather than raw ai_models, so creating
+        // the alias bridge is what makes discovered models selectable in that form.
+        $this->actingAs($admin)
+            ->getJson('/api/v1/admin/model-aliases')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+    }
+
+    public function test_import_can_add_a_missing_alias_to_an_already_registered_private_model(): void
+    {
+        $admin = $this->admin();
+        [$provider] = $this->providerWithRevision();
+        $provider->models()->create([
+            'internal_model_id' => 'agentrouter/gpt-5.6-sol',
+            'display_name' => 'gpt-5.6-sol',
+            'family' => 'gpt-5.6-sol',
+            'family_label' => 'gpt-5.6-sol',
+            'capabilities' => [
+                'streaming' => true,
+                'tools' => false,
+                'vision' => false,
+                'reasoning' => false,
+                'context_tokens' => 200000,
+                'max_output_tokens' => 64000,
+            ],
+            'limits' => [],
+            'enabled' => true,
+        ]);
+
+        Http::fake([
+            'https://catalog.example/v1/models' => Http::response([
+                'data' => [['id' => 'agentrouter/gpt-5.6-sol']],
+            ]),
+        ]);
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/models/discover")
+            ->assertOk()
+            ->assertJsonPath('data.0.already_registered', true)
+            ->assertJsonPath('data.0.has_public_alias', false)
+            ->assertJsonPath('data.0.suggested_public_alias', 'gpt-5.6-sol');
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/models/import", [
+                'model_ids' => ['agentrouter/gpt-5.6-sol'],
+                'create_public_aliases' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.already_registered.0', 'agentrouter/gpt-5.6-sol')
+            ->assertJsonPath('data.public_aliases_created.0', 'gpt-5.6-sol');
+
+        $this->assertDatabaseHas('model_aliases', [
+            'public_alias' => 'gpt-5.6-sol',
+            'customer_visible' => false,
+        ]);
     }
 
     private function admin(): User

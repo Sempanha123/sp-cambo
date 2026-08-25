@@ -134,12 +134,16 @@ class ApiKeyController extends Controller
         $recentRequests = ApiRequestLog::query()
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
-            ->with('usage')
+            ->with(['usage', 'reservation.providerConnectionRevision.provider'])
             ->latest('started_at')
-            ->limit(10)
+            ->limit(20)
             ->get()
             ->map(function (ApiRequestLog $log): array {
                 $usage = $log->usage;
+                $reservation = $log->reservation;
+                $snapshot = is_array($reservation?->billing_snapshot) ? $reservation->billing_snapshot : [];
+                $revision = $reservation?->providerConnectionRevision;
+                $provider = $revision?->provider;
                 $charge = $usage?->credit_charge_minor === null ? null : [
                     'minor' => (string) $usage->credit_charge_minor,
                     'currency' => (string) ($usage->currency ?? 'USD'),
@@ -147,19 +151,32 @@ class ApiKeyController extends Controller
                 ];
 
                 return [
+                    'request_id' => $log->id,
                     'time' => $log->started_at->toAtomString(),
+                    'finished_at' => $log->finished_at?->toAtomString(),
+                    'endpoint' => $log->endpoint,
                     'model' => $log->public_model,
+                    'internal_model' => $snapshot['internal_model_id'] ?? null,
+                    'provider' => $provider?->name,
+                    'provider_slug' => $provider?->slug,
+                    'route_version' => $snapshot['route_version'] ?? $revision?->route_version,
+                    'state' => strtolower($log->state),
                     'status' => match ($log->state) {
                         'SETTLED' => 'success',
                         'FAILED', 'RELEASED' => 'error',
                         default => 'pending',
                     },
-                    'input_tokens' => (string) ($usage?->input_tokens ?? 0),
-                    'output_tokens' => (string) ($usage?->output_tokens ?? 0),
+                    'duration_ms' => $log->duration_ms,
+                    'input_tokens' => $usage === null ? null : (string) $usage->input_tokens,
+                    'output_tokens' => $usage === null ? null : (string) $usage->output_tokens,
+                    'total_tokens' => $usage === null ? null : (string) $usage->total_tokens,
+                    'reserved_units' => $usage === null && $log->estimated_units !== null ? (string) $log->estimated_units : null,
                     'charge' => $charge,
+                    'error_code' => $log->error_code,
                 ];
             })
             ->values();
+        $activeRequests = $recentRequests->whereIn('state', ['reserved', 'connecting', 'streaming', 'reconciling'])->count();
 
         $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
         $packages = $eligibleLots->pluck('package_name')->filter()->unique()->values();
@@ -187,6 +204,8 @@ class ApiKeyController extends Controller
             'credit_remaining' => count($creditBalances) === 1 ? $creditBalances[0] : null,
             'credit_balances' => $creditBalances,
             'recent_requests' => $recentRequests,
+            'active_requests' => $activeRequests,
+            'server_time' => now()->toAtomString(),
         ]]);
     }
 

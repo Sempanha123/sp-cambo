@@ -249,6 +249,14 @@ const confirmDeleteRevision = async () => {
 }
 
 // Set active connection
+const readyRevisionWithoutActive = computed(() => {
+  if (provider.data.value?.active_connection_revision_id) return null
+
+  return [...(revisions.data.value ?? [])]
+    .filter(revision => revision.lifecycle_status === 'READY' && revision.last_probe_status === 'SUCCESS')
+    .sort((left, right) => right.route_version - left.route_version)[0] ?? null
+})
+
 const setActiveOpen = ref(false)
 const settingActive = ref(false)
 const activeRevisionId = ref<string | null>(null)
@@ -276,6 +284,12 @@ const openSetActive = (revision: ProviderConnectionRevision) => {
   activeRevisionId.value = revision.id
   setActiveError.value = null
   setActiveOpen.value = true
+}
+
+const openBestReadyRevision = () => {
+  if (readyRevisionWithoutActive.value) {
+    openSetActive(readyRevisionWithoutActive.value)
+  }
 }
 
 const submitSetActive = async () => {
@@ -923,6 +937,7 @@ const models = await useSpResource(
   { server: false }
 )
 
+
 const modelOptions = computed(() => (models.data.value ?? []).map(model => ({
   label: `${model.display_name} — ${model.internal_model_id}`,
   value: model.id
@@ -1061,21 +1076,91 @@ const confirmDeleteAlias = async () => {
   }
 }
 
+const publishAliasTarget = ref<AdminProviderAlias | null>(null)
+const publishingAlias = ref(false)
+const publishAliasError = ref<string | null>(null)
+const confirmResale = ref(false)
+
+const openPublishAlias = (alias: AdminProviderAlias) => {
+  publishAliasTarget.value = alias
+  publishAliasError.value = null
+  confirmResale.value = false
+}
+
+const closePublishAlias = () => {
+  if (publishingAlias.value) return
+  publishAliasTarget.value = null
+  publishAliasError.value = null
+  confirmResale.value = false
+}
+
+const confirmPublishAlias = async () => {
+  const alias = publishAliasTarget.value
+  if (!alias || !confirmResale.value) return
+
+  publishingAlias.value = true
+  publishAliasError.value = null
+  try {
+    const published = await api.admin.publishProviderAlias(providerId.value, alias.id, {
+      confirm_commercial_resale: true
+    })
+    publishAliasTarget.value = null
+    confirmResale.value = false
+    await Promise.all([provider.refresh(), revisions.refresh(), models.refresh(), aliases.refresh()])
+    toast.add({
+      title: 'Model is ready for sale',
+      description: `${published.public_alias} is enabled, customer-visible and routed through an active READY connection.`,
+      color: 'success',
+      icon: 'i-lucide-badge-check'
+    })
+  } catch (cause) {
+    publishAliasError.value = toSpApiError(cause).message
+  } finally {
+    publishingAlias.value = false
+  }
+}
+
 const discoverOpen = ref(false)
 const discoveringModels = ref(false)
 const importingModels = ref(false)
 const discoveredModels = ref<DiscoveredProviderModel[]>([])
 const selectedDiscoveredModelIds = ref<string[]>([])
+const createPublicAliasesOnImport = ref(true)
 const discoverError = ref<string | null>(null)
+
+const discoverSelectableModels = computed(() => discoveredModels.value.filter(model =>
+  !model.already_registered || (createPublicAliasesOnImport.value && !model.has_public_alias)
+))
+
+const isDiscoveredModelSelectable = (model: DiscoveredProviderModel) =>
+  !model.already_registered || (createPublicAliasesOnImport.value && !model.has_public_alias)
+
+const selectAllDiscoveredModels = () => {
+  selectedDiscoveredModelIds.value = discoverSelectableModels.value.map(model => model.internal_model_id)
+}
+
+const unselectAllDiscoveredModels = () => {
+  selectedDiscoveredModelIds.value = []
+}
+
+watch(createPublicAliasesOnImport, (createAliases) => {
+  if (createAliases) {
+    return
+  }
+
+  const newModelIds = new Set(discoveredModels.value
+    .filter(model => !model.already_registered)
+    .map(model => model.internal_model_id))
+  selectedDiscoveredModelIds.value = selectedDiscoveredModelIds.value.filter(id => newModelIds.has(id))
+})
 
 const discoverProviderModels = async () => {
   discoveringModels.value = true
   discoverError.value = null
   try {
     discoveredModels.value = await api.admin.discoverProviderModels(providerId.value)
-    selectedDiscoveredModelIds.value = discoveredModels.value
-      .filter(model => !model.already_registered)
-      .map(model => model.internal_model_id)
+    createPublicAliasesOnImport.value = true
+    selectAllDiscoveredModels()
     discoverOpen.value = true
   } catch (cause) {
     discoverError.value = toSpApiError(cause).message
@@ -1098,12 +1183,19 @@ const importDiscoveredModels = async () => {
   importingModels.value = true
   discoverError.value = null
   try {
-    const result = await api.admin.importProviderModels(providerId.value, selectedDiscoveredModelIds.value)
-    await models.refresh()
+    const result = await api.admin.importProviderModels(
+      providerId.value,
+      selectedDiscoveredModelIds.value,
+      createPublicAliasesOnImport.value
+    )
+    await Promise.all([models.refresh(), aliases.refresh()])
     discoverOpen.value = false
+    const aliasSummary = createPublicAliasesOnImport.value
+      ? ` ${result.public_aliases_created.length} public alias${result.public_aliases_created.length === 1 ? '' : 'es'} created so the models appear in Packages.`
+      : ''
     toast.add({
       title: 'Provider models imported',
-      description: `${result.created.length} new model${result.created.length === 1 ? '' : 's'} added. Review capabilities and resale verification before publishing aliases.`,
+      description: `${result.created.length} new private model${result.created.length === 1 ? '' : 's'} added.${aliasSummary} Review capabilities, API protocols and resale verification before publishing for sale.`,
       color: 'success',
       icon: 'i-lucide-download'
     })
@@ -1392,8 +1484,21 @@ useSeoMeta({
           variant="subtle"
           icon="i-lucide-triangle-alert"
           title="No active provider connection"
-          description="The provider can be probed, but customer requests cannot route through it until a READY revision is set active. Use Set active on a READY revision below."
-        />
+          description="Customer requests cannot route until a successfully probed READY revision is active. Existing READY rows created before the auto-activation fix can be repaired here."
+        >
+          <template #actions>
+            <UButton
+              v-if="readyRevisionWithoutActive"
+              color="warning"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-circle-check-big"
+              @click="openBestReadyRevision"
+            >
+              Activate READY revision
+            </UButton>
+          </template>
+        </UAlert>
 
         <!-- Connection revisions -->
         <section class="space-y-4">
@@ -1641,11 +1746,7 @@ useSeoMeta({
                       >
                         {{ model.commercial_resale_verified ? 'Resale verified' : 'Resale not verified' }}
                       </UBadge>
-                      <UBadge
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
+                      <UBadge color="neutral" variant="subtle" size="sm">
                         {{ model.alias_count }} public alias{{ model.alias_count === 1 ? '' : 'es' }}
                       </UBadge>
                     </div>
@@ -1763,58 +1864,34 @@ useSeoMeta({
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div class="min-w-0 space-y-2">
                     <div class="flex flex-wrap items-center gap-2">
-                      <p class="font-medium text-highlighted">
-                        {{ alias.display_name }}
-                      </p>
+                      <p class="font-medium text-highlighted">{{ alias.display_name }}</p>
                       <code class="rounded bg-muted/40 px-2 py-0.5 font-mono text-xs">{{ alias.public_alias }}</code>
-                      <UBadge
-                        :color="alias.enabled ? 'success' : 'neutral'"
-                        variant="subtle"
-                        size="sm"
-                      >
+                      <UBadge :color="alias.enabled ? 'success' : 'neutral'" variant="subtle" size="sm">
                         {{ alias.enabled ? 'Enabled' : 'Disabled' }}
                       </UBadge>
-                      <UBadge
-                        :color="alias.customer_visible ? 'success' : 'warning'"
-                        variant="subtle"
-                        size="sm"
-                      >
+                      <UBadge :color="alias.customer_visible ? 'success' : 'warning'" variant="subtle" size="sm">
                         {{ alias.customer_visible ? 'Customer visible' : 'Hidden' }}
                       </UBadge>
-                      <UBadge
-                        :color="alias.publication_ready ? 'success' : 'warning'"
-                        variant="subtle"
-                        size="sm"
-                      >
+                      <UBadge :color="alias.publication_ready ? 'success' : 'warning'" variant="subtle" size="sm">
                         {{ alias.publication_ready ? 'Route ready' : 'Publication blocked' }}
                       </UBadge>
                     </div>
 
                     <dl class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
                       <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Routes to
-                        </dt>
+                        <dt class="text-dimmed">Routes to</dt>
                         <dd>{{ mappedModel(alias)?.display_name ?? 'Missing model' }}</dd>
                       </div>
                       <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Internal ID
-                        </dt>
-                        <dd class="font-mono">
-                          {{ mappedModel(alias)?.internal_model_id ?? '—' }}
-                        </dd>
+                        <dt class="text-dimmed">Internal ID</dt>
+                        <dd class="font-mono">{{ mappedModel(alias)?.internal_model_id ?? '—' }}</dd>
                       </div>
                       <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Context
-                        </dt>
+                        <dt class="text-dimmed">Context</dt>
                         <dd>{{ formatCount(alias.capabilities.context_tokens) }}</dd>
                       </div>
                       <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Max output
-                        </dt>
+                        <dt class="text-dimmed">Max output</dt>
                         <dd>{{ formatCount(alias.capabilities.max_output_tokens) }}</dd>
                       </div>
                     </dl>
@@ -1829,83 +1906,33 @@ useSeoMeta({
                     />
 
                     <div class="flex flex-wrap gap-1.5">
-                      <UBadge
-                        v-if="alias.capabilities.messages_api"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Anthropic Messages
-                      </UBadge>
-                      <UBadge
-                        v-if="alias.capabilities.chat_completions_api"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Chat Completions
-                      </UBadge>
-                      <UBadge
-                        v-if="alias.capabilities.responses_api"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Responses
-                      </UBadge>
-                      <UBadge
-                        v-if="alias.capabilities.streaming"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Streaming
-                      </UBadge>
-                      <UBadge
-                        v-if="alias.capabilities.tools"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Tools
-                      </UBadge>
-                      <UBadge
-                        v-if="alias.capabilities.reasoning"
-                        color="neutral"
-                        variant="subtle"
-                        size="sm"
-                      >
-                        Reasoning
-                      </UBadge>
+                      <UBadge v-if="alias.capabilities.messages_api" color="neutral" variant="subtle" size="sm">Anthropic Messages</UBadge>
+                      <UBadge v-if="alias.capabilities.chat_completions_api" color="neutral" variant="subtle" size="sm">Chat Completions</UBadge>
+                      <UBadge v-if="alias.capabilities.responses_api" color="neutral" variant="subtle" size="sm">Responses</UBadge>
+                      <UBadge v-if="alias.capabilities.streaming" color="neutral" variant="subtle" size="sm">Streaming</UBadge>
+                      <UBadge v-if="alias.capabilities.tools" color="neutral" variant="subtle" size="sm">Tools</UBadge>
+                      <UBadge v-if="alias.capabilities.reasoning" color="neutral" variant="subtle" size="sm">Reasoning</UBadge>
                     </div>
                   </div>
 
                   <div class="flex flex-wrap gap-2">
                     <UButton
-                      to="/admin/model-aliases"
-                      color="neutral"
+                      v-if="!alias.publication_ready"
+                      color="primary"
                       variant="subtle"
                       size="sm"
-                      icon="i-lucide-dollar-sign"
+                      icon="i-lucide-store"
+                      @click="openPublishAlias(alias)"
                     >
+                      Publish for sale
+                    </UButton>
+                    <UButton to="/admin/model-aliases" color="neutral" variant="subtle" size="sm" icon="i-lucide-dollar-sign">
                       Pricing
                     </UButton>
-                    <UButton
-                      color="neutral"
-                      variant="ghost"
-                      size="sm"
-                      icon="i-lucide-pencil"
-                      @click="openEditAlias(alias)"
-                    >
+                    <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-pencil" @click="openEditAlias(alias)">
                       Edit
                     </UButton>
-                    <UButton
-                      color="error"
-                      variant="ghost"
-                      size="sm"
-                      icon="i-lucide-trash-2"
-                      @click="deleteAliasTarget = alias"
-                    >
+                    <UButton color="error" variant="ghost" size="sm" icon="i-lucide-trash-2" @click="deleteAliasTarget = alias">
                       Delete
                     </UButton>
                   </div>
@@ -2067,11 +2094,7 @@ useSeoMeta({
             :description="editRevisionError"
           />
 
-          <UFormField
-            label="Route version"
-            name="route_version"
-            required
-          >
+          <UFormField label="Route version" name="route_version" required>
             <UInput
               v-model="editRevisionForm.route_version"
               type="number"
@@ -2080,11 +2103,7 @@ useSeoMeta({
             />
           </UFormField>
 
-          <UFormField
-            label="Origin URL"
-            name="origin"
-            required
-          >
+          <UFormField label="Origin URL" name="origin" required>
             <UInput
               v-model="editRevisionForm.origin"
               placeholder="https://api.omniroute.example"
@@ -2092,11 +2111,7 @@ useSeoMeta({
             />
           </UFormField>
 
-          <UFormField
-            label="Connection type"
-            name="connection_type"
-            required
-          >
+          <UFormField label="Connection type" name="connection_type" required>
             <USelectMenu
               v-model="editRevisionForm.connection_type"
               :items="['omniroute', 'openai_compatible']"
@@ -2119,11 +2134,7 @@ useSeoMeta({
             />
           </UFormField>
 
-          <UFormField
-            label="Timeout (ms)"
-            name="timeout_ms"
-            required
-          >
+          <UFormField label="Timeout (ms)" name="timeout_ms" required>
             <UInput
               v-model="editRevisionForm.timeout_ms"
               type="number"
@@ -2133,10 +2144,7 @@ useSeoMeta({
             />
           </UFormField>
 
-          <UFormField
-            label="Policy version"
-            name="policy_version"
-          >
+          <UFormField label="Policy version" name="policy_version">
             <UInput
               v-model="editRevisionForm.policy_version"
               type="number"
@@ -2154,10 +2162,7 @@ useSeoMeta({
             >
               Cancel
             </UButton>
-            <UButton
-              type="submit"
-              :loading="editingRevision"
-            >
+            <UButton type="submit" :loading="editingRevision">
               Save changes
             </UButton>
           </div>
@@ -2170,7 +2175,7 @@ useSeoMeta({
       :open="deleteRevisionTarget !== null"
       title="Delete connection revision?"
       description="Only non-active revisions without request history can be deleted."
-      @update:open="open => { if (!open && !deletingRevision) deleteRevisionTarget = null }"
+      @update:open="(open) => { if (!open && !deletingRevision) deleteRevisionTarget = null }"
     >
       <template #body>
         <div class="space-y-4">
@@ -2260,6 +2265,7 @@ useSeoMeta({
               class="w-full"
             />
           </UFormField>
+
 
           <UFormField
             label="Commercial resale verified"
@@ -2448,6 +2454,7 @@ useSeoMeta({
               class="w-full"
             />
           </UFormField>
+
 
           <UFormField
             label="Commercial resale verified"
@@ -2645,54 +2652,106 @@ useSeoMeta({
             The provider returned no model IDs.
           </div>
 
-          <div
-            v-else
-            class="max-h-96 space-y-2 overflow-y-auto pr-1"
-          >
-            <label
-              v-for="model in discoveredModels"
-              :key="model.internal_model_id"
-              class="flex items-start gap-3 rounded-lg border border-default p-3"
-              :class="model.already_registered ? 'opacity-70' : ''"
-            >
-              <UCheckbox
-                :model-value="model.already_registered || selectedDiscoveredModelIds.includes(model.internal_model_id)"
-                :disabled="model.already_registered"
-                class="mt-0.5"
-                @update:model-value="toggleDiscoveredModel(model.internal_model_id, $event === true)"
-              />
-              <span class="min-w-0 flex-1">
-                <span class="flex flex-wrap items-center gap-2">
-                  <strong class="text-sm text-highlighted">{{ model.display_name }}</strong>
-                  <UBadge
-                    v-if="model.already_registered"
-                    color="success"
-                    variant="subtle"
-                    size="sm"
-                  >Already imported</UBadge>
-                </span>
-                <code class="mt-1 block break-all font-mono text-xs text-dimmed">{{ model.internal_model_id }}</code>
+          <template v-else>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="subtle"
+                  icon="i-lucide-list-checks"
+                  :disabled="discoverSelectableModels.length === 0"
+                  @click="selectAllDiscoveredModels"
+                >
+                  Select all ({{ discoverSelectableModels.length }})
+                </UButton>
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-square"
+                  :disabled="selectedDiscoveredModelIds.length === 0"
+                  @click="unselectAllDiscoveredModels"
+                >
+                  Unselect all
+                </UButton>
+              </div>
+              <span class="text-xs text-muted">
+                {{ selectedDiscoveredModelIds.length }} selected
               </span>
-            </label>
-          </div>
+            </div>
+
+            <div class="rounded-lg border border-default bg-elevated/30 p-3">
+              <UCheckbox
+                v-model="createPublicAliasesOnImport"
+                label="Create missing public aliases so these models appear in Packages"
+                description="Recommended. Aliases are created hidden from customers; review protocols, pricing and resale permission, then use Publish for sale when ready."
+              />
+            </div>
+
+            <div class="max-h-96 space-y-2 overflow-y-auto pr-1">
+              <label
+                v-for="model in discoveredModels"
+                :key="model.internal_model_id"
+                class="flex items-start gap-3 rounded-lg border border-default p-3"
+                :class="!isDiscoveredModelSelectable(model) ? 'opacity-70' : ''"
+              >
+                <UCheckbox
+                  :model-value="selectedDiscoveredModelIds.includes(model.internal_model_id)"
+                  :disabled="!isDiscoveredModelSelectable(model)"
+                  class="mt-0.5"
+                  @update:model-value="toggleDiscoveredModel(model.internal_model_id, $event === true)"
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="flex flex-wrap items-center gap-2">
+                    <strong class="text-sm text-highlighted">{{ model.display_name }}</strong>
+                    <UBadge
+                      v-if="model.already_registered"
+                      color="success"
+                      variant="subtle"
+                      size="sm"
+                    >
+                      Already imported
+                    </UBadge>
+                    <UBadge
+                      v-if="model.has_public_alias"
+                      color="info"
+                      variant="subtle"
+                      size="sm"
+                    >
+                      Public alias exists
+                    </UBadge>
+                    <UBadge
+                      v-else-if="model.already_registered"
+                      color="warning"
+                      variant="subtle"
+                      size="sm"
+                    >
+                      Private only · missing alias
+                    </UBadge>
+                  </span>
+                  <code class="mt-1 block break-all font-mono text-xs text-dimmed">{{ model.internal_model_id }}</code>
+                  <span
+                    v-if="!model.has_public_alias && createPublicAliasesOnImport"
+                    class="mt-1 block text-xs text-muted"
+                  >
+                    Package alias: <code class="font-mono">{{ model.suggested_public_alias }}</code>
+                  </span>
+                </span>
+              </label>
+            </div>
+          </template>
 
           <UAlert
             color="info"
             variant="subtle"
             icon="i-lucide-info"
-            title="Imported models start private"
-            description="After import, review capabilities and commercial resale verification, then create a public alias. Importing a provider model never publishes it to customers automatically."
+            title="Why discovered models did not appear in Packages"
+            description="Packages grant public model aliases, not raw private upstream model IDs. Enable the public-alias option above to create the missing bridge automatically. The alias appears in Packages immediately but stays hidden from customers until you review and publish it."
           />
 
           <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              :disabled="importingModels"
-              @click="discoverOpen = false"
-            >
-              Close
-            </UButton>
+            <UButton color="neutral" variant="ghost" :disabled="importingModels" @click="discoverOpen = false">Close</UButton>
             <UButton
               icon="i-lucide-download"
               :loading="importingModels"
@@ -2721,222 +2780,61 @@ useSeoMeta({
           class="space-y-5"
           @submit="submitCreateAlias"
         >
-          <UAlert
-            v-if="createAliasError"
-            color="error"
-            variant="subtle"
-            icon="i-lucide-circle-alert"
-            :description="createAliasError"
-          />
+          <UAlert v-if="createAliasError" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="createAliasError" />
 
-          <UFormField
-            label="Private model"
-            name="model_id"
-            required
-            help="Requests to this public alias are routed to the selected private upstream model."
-          >
-            <USelectMenu
-              v-model="createAliasForm.model_id"
-              :items="modelOptions"
-              value-key="value"
-              class="w-full"
-              placeholder="Select private model"
-            />
+          <UFormField label="Private model" name="model_id" required help="Requests to this public alias are routed to the selected private upstream model.">
+            <USelectMenu v-model="createAliasForm.model_id" :items="modelOptions" value-key="value" class="w-full" placeholder="Select private model" />
           </UFormField>
 
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Public alias"
-              name="public_alias"
-              required
-              help="What customers put in ANTHROPIC_MODEL or the OpenAI model field."
-            >
-              <UInput
-                v-model="createAliasForm.public_alias"
-                placeholder="claude-opus-5"
-                class="w-full"
-              />
+            <UFormField label="Public alias" name="public_alias" required help="What customers put in ANTHROPIC_MODEL or the OpenAI model field.">
+              <UInput v-model="createAliasForm.public_alias" placeholder="claude-opus-5" class="w-full" />
             </UFormField>
-            <UFormField
-              label="Display name"
-              name="display_name"
-              required
-            >
-              <UInput
-                v-model="createAliasForm.display_name"
-                placeholder="Claude Opus 5"
-                class="w-full"
-              />
+            <UFormField label="Display name" name="display_name" required>
+              <UInput v-model="createAliasForm.display_name" placeholder="Claude Opus 5" class="w-full" />
             </UFormField>
           </div>
 
           <div class="space-y-3">
-            <SpSectionHeading
-              title="API protocols"
-              description="Enable only the request formats SP Cambo should accept for this public model."
-              :level="3"
-            />
+            <SpSectionHeading title="API protocols" description="Enable only the request formats SP Cambo should accept for this public model." :level="3" />
             <div class="grid gap-3 sm:grid-cols-3">
-              <UFormField
-                label="Anthropic Messages"
-                name="capabilities.messages_api"
-              >
-                <USwitch v-model="createAliasForm.capabilities.messages_api" />
-              </UFormField>
-              <UFormField
-                label="Chat Completions"
-                name="capabilities.chat_completions_api"
-              >
-                <USwitch v-model="createAliasForm.capabilities.chat_completions_api" />
-              </UFormField>
-              <UFormField
-                label="Responses API"
-                name="capabilities.responses_api"
-              >
-                <USwitch v-model="createAliasForm.capabilities.responses_api" />
-              </UFormField>
+              <UFormField label="Anthropic Messages" name="capabilities.messages_api"><USwitch v-model="createAliasForm.capabilities.messages_api" /></UFormField>
+              <UFormField label="Chat Completions" name="capabilities.chat_completions_api"><USwitch v-model="createAliasForm.capabilities.chat_completions_api" /></UFormField>
+              <UFormField label="Responses API" name="capabilities.responses_api"><USwitch v-model="createAliasForm.capabilities.responses_api" /></UFormField>
             </div>
           </div>
 
           <div class="space-y-3">
-            <SpSectionHeading
-              title="Capabilities"
-              description="These capabilities are enforced by the control plane before a request is sent upstream."
-              :level="3"
-            />
+            <SpSectionHeading title="Capabilities" description="These capabilities are enforced by the control plane before a request is sent upstream." :level="3" />
             <div class="grid gap-3 sm:grid-cols-4">
-              <UFormField
-                label="Streaming"
-                name="capabilities.streaming"
-              >
-                <USwitch v-model="createAliasForm.capabilities.streaming" />
-              </UFormField>
-              <UFormField
-                label="Tools"
-                name="capabilities.tools"
-              >
-                <USwitch v-model="createAliasForm.capabilities.tools" />
-              </UFormField>
-              <UFormField
-                label="Vision"
-                name="capabilities.vision"
-              >
-                <USwitch v-model="createAliasForm.capabilities.vision" />
-              </UFormField>
-              <UFormField
-                label="Reasoning"
-                name="capabilities.reasoning"
-              >
-                <USwitch v-model="createAliasForm.capabilities.reasoning" />
-              </UFormField>
+              <UFormField label="Streaming" name="capabilities.streaming"><USwitch v-model="createAliasForm.capabilities.streaming" /></UFormField>
+              <UFormField label="Tools" name="capabilities.tools"><USwitch v-model="createAliasForm.capabilities.tools" /></UFormField>
+              <UFormField label="Vision" name="capabilities.vision"><USwitch v-model="createAliasForm.capabilities.vision" /></UFormField>
+              <UFormField label="Reasoning" name="capabilities.reasoning"><USwitch v-model="createAliasForm.capabilities.reasoning" /></UFormField>
             </div>
             <div class="grid gap-4 sm:grid-cols-2">
-              <UFormField
-                label="Context tokens"
-                name="capabilities.context_tokens"
-                required
-              >
-                <UInput
-                  v-model="createAliasForm.capabilities.context_tokens"
-                  type="number"
-                  min="1"
-                  class="w-full"
-                />
-              </UFormField>
-              <UFormField
-                label="Max output tokens"
-                name="capabilities.max_output_tokens"
-                required
-              >
-                <UInput
-                  v-model="createAliasForm.capabilities.max_output_tokens"
-                  type="number"
-                  min="1"
-                  class="w-full"
-                />
-              </UFormField>
+              <UFormField label="Context tokens" name="capabilities.context_tokens" required><UInput v-model="createAliasForm.capabilities.context_tokens" type="number" min="1" class="w-full" /></UFormField>
+              <UFormField label="Max output tokens" name="capabilities.max_output_tokens" required><UInput v-model="createAliasForm.capabilities.max_output_tokens" type="number" min="1" class="w-full" /></UFormField>
             </div>
           </div>
 
           <div class="space-y-3">
-            <SpSectionHeading
-              title="Public limits"
-              description="Optional ceilings applied to this alias. Leave blank for no alias-specific limit."
-              :level="3"
-            />
+            <SpSectionHeading title="Public limits" description="Optional ceilings applied to this alias. Leave blank for no alias-specific limit." :level="3" />
             <div class="grid gap-4 sm:grid-cols-3">
-              <UFormField
-                label="Requests/min"
-                name="limits.requests_per_minute"
-              >
-                <UInput
-                  v-model="createAliasForm.limits.requests_per_minute"
-                  type="number"
-                  min="1"
-                  placeholder="No limit"
-                  class="w-full"
-                />
-              </UFormField>
-              <UFormField
-                label="Tokens/min"
-                name="limits.tokens_per_minute"
-              >
-                <UInput
-                  v-model="createAliasForm.limits.tokens_per_minute"
-                  type="number"
-                  min="1"
-                  placeholder="No limit"
-                  class="w-full"
-                />
-              </UFormField>
-              <UFormField
-                label="Concurrency"
-                name="limits.concurrency"
-              >
-                <UInput
-                  v-model="createAliasForm.limits.concurrency"
-                  type="number"
-                  min="1"
-                  placeholder="No limit"
-                  class="w-full"
-                />
-              </UFormField>
+              <UFormField label="Requests/min" name="limits.requests_per_minute"><UInput v-model="createAliasForm.limits.requests_per_minute" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
+              <UFormField label="Tokens/min" name="limits.tokens_per_minute"><UInput v-model="createAliasForm.limits.tokens_per_minute" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
+              <UFormField label="Concurrency" name="limits.concurrency"><UInput v-model="createAliasForm.limits.concurrency" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
             </div>
           </div>
 
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Enabled"
-              name="enabled"
-              help="Disabled aliases are rejected by the gateway."
-            >
-              <USwitch v-model="createAliasForm.enabled" />
-            </UFormField>
-            <UFormField
-              label="Customer visible"
-              name="customer_visible"
-              help="Keep hidden until resale verification and pricing are ready."
-            >
-              <USwitch v-model="createAliasForm.customer_visible" />
-            </UFormField>
+            <UFormField label="Enabled" name="enabled" help="Disabled aliases are rejected by the gateway."><USwitch v-model="createAliasForm.enabled" /></UFormField>
+            <UFormField label="Customer visible" name="customer_visible" help="Keep hidden until resale verification and pricing are ready."><USwitch v-model="createAliasForm.customer_visible" /></UFormField>
           </div>
 
           <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              :disabled="creatingAlias"
-              @click="createAliasOpen = false"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              type="submit"
-              icon="i-lucide-route"
-              :loading="creatingAlias"
-            >
-              Create public model
-            </UButton>
+            <UButton color="neutral" variant="ghost" :disabled="creatingAlias" @click="createAliasOpen = false">Cancel</UButton>
+            <UButton type="submit" icon="i-lucide-route" :loading="creatingAlias">Create public model</UButton>
           </div>
         </UForm>
       </template>
@@ -2957,159 +2855,91 @@ useSeoMeta({
           class="space-y-5"
           @submit="submitEditAlias"
         >
-          <UAlert
-            v-if="editAliasError"
-            color="error"
-            variant="subtle"
-            icon="i-lucide-circle-alert"
-            :description="editAliasError"
-          />
-          <UFormField
-            label="Private model"
-            name="model_id"
-            required
-          >
-            <USelectMenu
-              v-model="editAliasForm.model_id"
-              :items="modelOptions"
-              value-key="value"
-              class="w-full"
-            />
+          <UAlert v-if="editAliasError" color="error" variant="subtle" icon="i-lucide-circle-alert" :description="editAliasError" />
+          <UFormField label="Private model" name="model_id" required>
+            <USelectMenu v-model="editAliasForm.model_id" :items="modelOptions" value-key="value" class="w-full" />
           </UFormField>
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Public alias"
-              name="public_alias"
-              required
-            >
-              <UInput
-                v-model="editAliasForm.public_alias"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField
-              label="Display name"
-              name="display_name"
-              required
-            >
-              <UInput
-                v-model="editAliasForm.display_name"
-                class="w-full"
-              />
-            </UFormField>
+            <UFormField label="Public alias" name="public_alias" required><UInput v-model="editAliasForm.public_alias" class="w-full" /></UFormField>
+            <UFormField label="Display name" name="display_name" required><UInput v-model="editAliasForm.display_name" class="w-full" /></UFormField>
           </div>
           <div class="grid gap-3 sm:grid-cols-3">
-            <UFormField
-              label="Anthropic Messages"
-              name="capabilities.messages_api"
-            >
-              <USwitch v-model="editAliasForm.capabilities.messages_api" />
-            </UFormField>
-            <UFormField
-              label="Chat Completions"
-              name="capabilities.chat_completions_api"
-            >
-              <USwitch v-model="editAliasForm.capabilities.chat_completions_api" />
-            </UFormField>
-            <UFormField
-              label="Responses API"
-              name="capabilities.responses_api"
-            >
-              <USwitch v-model="editAliasForm.capabilities.responses_api" />
-            </UFormField>
+            <UFormField label="Anthropic Messages" name="capabilities.messages_api"><USwitch v-model="editAliasForm.capabilities.messages_api" /></UFormField>
+            <UFormField label="Chat Completions" name="capabilities.chat_completions_api"><USwitch v-model="editAliasForm.capabilities.chat_completions_api" /></UFormField>
+            <UFormField label="Responses API" name="capabilities.responses_api"><USwitch v-model="editAliasForm.capabilities.responses_api" /></UFormField>
           </div>
           <div class="grid gap-3 sm:grid-cols-4">
-            <UFormField label="Streaming">
-              <USwitch v-model="editAliasForm.capabilities.streaming" />
-            </UFormField>
-            <UFormField label="Tools">
-              <USwitch v-model="editAliasForm.capabilities.tools" />
-            </UFormField>
-            <UFormField label="Vision">
-              <USwitch v-model="editAliasForm.capabilities.vision" />
-            </UFormField>
-            <UFormField label="Reasoning">
-              <USwitch v-model="editAliasForm.capabilities.reasoning" />
-            </UFormField>
+            <UFormField label="Streaming"><USwitch v-model="editAliasForm.capabilities.streaming" /></UFormField>
+            <UFormField label="Tools"><USwitch v-model="editAliasForm.capabilities.tools" /></UFormField>
+            <UFormField label="Vision"><USwitch v-model="editAliasForm.capabilities.vision" /></UFormField>
+            <UFormField label="Reasoning"><USwitch v-model="editAliasForm.capabilities.reasoning" /></UFormField>
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField
-              label="Context tokens"
-              name="capabilities.context_tokens"
-            >
-              <UInput
-                v-model="editAliasForm.capabilities.context_tokens"
-                type="number"
-                min="1"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField
-              label="Max output tokens"
-              name="capabilities.max_output_tokens"
-            >
-              <UInput
-                v-model="editAliasForm.capabilities.max_output_tokens"
-                type="number"
-                min="1"
-                class="w-full"
-              />
-            </UFormField>
+            <UFormField label="Context tokens" name="capabilities.context_tokens"><UInput v-model="editAliasForm.capabilities.context_tokens" type="number" min="1" class="w-full" /></UFormField>
+            <UFormField label="Max output tokens" name="capabilities.max_output_tokens"><UInput v-model="editAliasForm.capabilities.max_output_tokens" type="number" min="1" class="w-full" /></UFormField>
           </div>
           <div class="grid gap-4 sm:grid-cols-3">
-            <UFormField label="Requests/min">
-              <UInput
-                v-model="editAliasForm.limits.requests_per_minute"
-                type="number"
-                min="1"
-                placeholder="No limit"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Tokens/min">
-              <UInput
-                v-model="editAliasForm.limits.tokens_per_minute"
-                type="number"
-                min="1"
-                placeholder="No limit"
-                class="w-full"
-              />
-            </UFormField>
-            <UFormField label="Concurrency">
-              <UInput
-                v-model="editAliasForm.limits.concurrency"
-                type="number"
-                min="1"
-                placeholder="No limit"
-                class="w-full"
-              />
-            </UFormField>
+            <UFormField label="Requests/min"><UInput v-model="editAliasForm.limits.requests_per_minute" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
+            <UFormField label="Tokens/min"><UInput v-model="editAliasForm.limits.tokens_per_minute" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
+            <UFormField label="Concurrency"><UInput v-model="editAliasForm.limits.concurrency" type="number" min="1" placeholder="No limit" class="w-full" /></UFormField>
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField label="Enabled">
-              <USwitch v-model="editAliasForm.enabled" />
-            </UFormField>
-            <UFormField label="Customer visible">
-              <USwitch v-model="editAliasForm.customer_visible" />
-            </UFormField>
+            <UFormField label="Enabled"><USwitch v-model="editAliasForm.enabled" /></UFormField>
+            <UFormField label="Customer visible"><USwitch v-model="editAliasForm.customer_visible" /></UFormField>
           </div>
           <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              :disabled="editingAlias"
-              @click="editAliasOpen = false"
-            >
+            <UButton color="neutral" variant="ghost" :disabled="editingAlias" @click="editAliasOpen = false">Cancel</UButton>
+            <UButton type="submit" :loading="editingAlias">Save public model</UButton>
+          </div>
+        </UForm>
+      </template>
+    </UModal>
+
+    <!-- Publish public model for sale -->
+    <UModal
+      :open="publishAliasTarget !== null"
+      title="Publish this model for sale?"
+      description="SP Cambo will repair the active READY route when possible, enable the model and make this alias customer-visible."
+      @update:open="(open) => { if (!open) closePublishAlias() }"
+    >
+      <template #body>
+        <div class="space-y-4">
+          <UAlert
+            v-if="publishAliasError"
+            role="alert"
+            icon="i-lucide-circle-alert"
+            color="error"
+            variant="subtle"
+            :description="publishAliasError"
+          />
+
+          <UAlert
+            color="warning"
+            variant="subtle"
+            icon="i-lucide-scale"
+            title="Commercial resale confirmation required"
+            description="Only continue if your upstream/provider agreement permits you to commercially resell access to this model. SP Cambo cannot verify those contract terms automatically."
+          />
+
+          <UCheckbox
+            v-model="confirmResale"
+            label="I confirm my upstream terms allow commercial resale of this model."
+          />
+
+          <div class="flex justify-end gap-2">
+            <UButton color="neutral" variant="ghost" :disabled="publishingAlias" @click="closePublishAlias">
               Cancel
             </UButton>
             <UButton
-              type="submit"
-              :loading="editingAlias"
+              icon="i-lucide-store"
+              :loading="publishingAlias"
+              :disabled="!confirmResale"
+              @click="confirmPublishAlias"
             >
-              Save public model
+              Publish for sale
             </UButton>
           </div>
-        </UForm>
+        </div>
       </template>
     </UModal>
 
@@ -3118,7 +2948,7 @@ useSeoMeta({
       :open="deleteAliasTarget !== null"
       title="Delete public model?"
       description="Aliases already assigned to packages or API keys cannot be deleted; disable them instead."
-      @update:open="open => { if (!open && !deletingAlias) deleteAliasTarget = null }"
+      @update:open="(open) => { if (!open && !deletingAlias) deleteAliasTarget = null }"
     >
       <template #body>
         <div class="space-y-4">
@@ -3126,22 +2956,8 @@ useSeoMeta({
             Delete <strong class="text-highlighted">{{ deleteAliasTarget?.public_alias }}</strong>?
           </p>
           <div class="flex justify-end gap-2">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              :disabled="deletingAlias"
-              @click="deleteAliasTarget = null"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              color="error"
-              icon="i-lucide-trash-2"
-              :loading="deletingAlias"
-              @click="confirmDeleteAlias"
-            >
-              Delete public model
-            </UButton>
+            <UButton color="neutral" variant="ghost" :disabled="deletingAlias" @click="deleteAliasTarget = null">Cancel</UButton>
+            <UButton color="error" icon="i-lucide-trash-2" :loading="deletingAlias" @click="confirmDeleteAlias">Delete public model</UButton>
           </div>
         </div>
       </template>

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Reservation extends Model
@@ -20,6 +21,11 @@ class Reservation extends Model
             'settled_at' => 'immutable_datetime',
             'reconciliation_requested_at' => 'immutable_datetime',
         ];
+    }
+
+    public function providerConnectionRevision(): BelongsTo
+    {
+        return $this->belongsTo(ProviderConnectionRevision::class);
     }
 
     public function allocations(): HasMany

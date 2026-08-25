@@ -114,66 +114,24 @@ onMounted(async () => {
       <UCard v-else-if="!result">
         <div class="space-y-5">
           <div>
-            <p
-              v-if="claimInfo"
-              class="text-xs font-medium tracking-wide text-primary uppercase"
-            >
-              {{ claimInfo.package_name }}
-            </p>
-            <h2 class="font-semibold text-highlighted">
-              How should this purchase use API keys?
-            </h2>
-            <p class="mt-1 text-sm text-muted">
-              Reusing a key is best when Claude Code is already configured. A new key is best for a separate project or your first purchase.
-            </p>
+            <p v-if="claimInfo" class="text-xs font-medium tracking-wide text-primary uppercase">{{ claimInfo.package_name }}</p>
+            <h2 class="font-semibold text-highlighted">How should this purchase use API keys?</h2>
+            <p class="mt-1 text-sm text-muted">Reusing a key is best when Claude Code is already configured. A new key is best for a separate project or your first purchase.</p>
           </div>
 
-          <URadioGroup
-            v-model="mode"
-            :items="[
-              { label: 'Use an existing API key', value: 'EXISTING', description: 'Recommended for repeat purchases. Your current Claude Code / SDK settings stay unchanged.' },
-              { label: 'Create a new API key', value: 'NEW', description: 'The full secret is shown once on the next screen.' }
-            ]"
-          />
+          <URadioGroup v-model="mode" :items="[
+            { label: 'Use an existing API key', value: 'EXISTING', description: 'Recommended for repeat purchases. Your current Claude Code / SDK settings stay unchanged.' },
+            { label: 'Create a new API key', value: 'NEW', description: 'The full secret is shown once on the next screen.' }
+          ]" />
 
-          <UFormField
-            v-if="mode === 'EXISTING'"
-            label="Existing key"
-            help="Only active keys owned by this account are shown."
-          >
-            <USelectMenu
-              v-model="selectedKeyId"
-              :items="keyOptions"
-              value-key="value"
-              :loading="loadingKeys"
-              :disabled="activeKeys.length === 0"
-              class="w-full"
-              placeholder="Select an active key"
-            />
+          <UFormField v-if="mode === 'EXISTING'" label="Existing key" help="Only active keys owned by this account are shown.">
+            <USelectMenu v-model="selectedKeyId" :items="keyOptions" value-key="value" :loading="loadingKeys" :disabled="activeKeys.length === 0" class="w-full" placeholder="Select an active key" />
           </UFormField>
 
-          <UAlert
-            v-if="mode === 'EXISTING' && !loadingKeys && activeKeys.length === 0"
-            color="warning"
-            icon="i-lucide-key"
-            title="No active key available"
-            description="Choose Create a new API key for this purchase."
-          />
-          <UAlert
-            v-if="error"
-            color="error"
-            icon="i-lucide-circle-x"
-            title="Activation failed"
-            :description="error"
-          />
+          <UAlert v-if="mode === 'EXISTING' && !loadingKeys && activeKeys.length === 0" color="warning" icon="i-lucide-key" title="No active key available" description="Choose Create a new API key for this purchase." />
+          <UAlert v-if="error" color="error" icon="i-lucide-circle-x" title="Activation failed" :description="error" />
 
-          <UButton
-            block
-            size="lg"
-            :loading="claiming"
-            :disabled="mode === 'EXISTING' && !selectedKeyId"
-            @click="claim"
-          >
+          <UButton block size="lg" :loading="claiming" :disabled="mode === 'EXISTING' && !selectedKeyId" @click="claim">
             {{ mode === 'NEW' ? 'Create key and activate' : 'Use this key and activate' }}
           </UButton>
         </div>
@@ -189,65 +147,31 @@ onMounted(async () => {
               :description="result.delivery_mode === 'NEW' ? 'Copy the full secret now. SP Cambo will not show it again.' : `Purchased model access is now available through ${result.masked_key}.`"
             />
 
-            <div
-              v-if="revealedSecret"
-              class="space-y-2"
-            >
-              <div class="rounded-lg border border-default bg-elevated p-3 font-mono text-sm break-all">
-                {{ revealedSecret }}
-              </div>
-              <UButton
-                icon="i-lucide-copy"
-                color="neutral"
-                variant="outline"
-                @click="copySecret"
-              >
-                Copy API key
-              </UButton>
+            <div v-if="revealedSecret" class="space-y-2">
+              <div class="rounded-lg border border-default bg-elevated p-3 font-mono text-sm break-all">{{ revealedSecret }}</div>
+              <UButton icon="i-lucide-copy" color="neutral" variant="outline" @click="copySecret">Copy API key</UButton>
             </div>
-            <div
-              v-else
-              class="text-sm text-muted"
-            >
-              Key: <span class="font-mono text-default">{{ result.masked_key }}</span>
-            </div>
+            <div v-else class="text-sm text-muted">Key: <span class="font-mono text-default">{{ result.masked_key }}</span></div>
 
-            <div
-              v-if="result.models?.length"
-              class="text-sm text-muted"
-            >
-              Model: <span class="font-mono text-default">{{ result.models.join(', ') }}</span>
-            </div>
+            <div v-if="result.models?.length" class="text-sm text-muted">Model: <span class="font-mono text-default">{{ result.models.join(', ') }}</span></div>
           </div>
         </UCard>
 
         <UCard>
           <div class="space-y-4">
             <div>
-              <h2 class="font-semibold text-highlighted">
-                Ready-to-copy Claude Code setup
-              </h2>
-              <p class="mt-1 text-sm text-muted">
-                Anthropic uses the gateway root only. Do not add <code>/v1</code> to <code>ANTHROPIC_BASE_URL</code>.
-              </p>
+              <h2 class="font-semibold text-highlighted">Ready-to-copy Claude Code setup</h2>
+              <p class="mt-1 text-sm text-muted">Anthropic uses the gateway root only. Do not add <code>/v1</code> to <code>ANTHROPIC_BASE_URL</code>.</p>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="rounded-lg border border-default p-3">
-                <p class="text-xs text-dimmed">
-                  Anthropic base
-                </p>
-                <div class="mt-1 flex items-center gap-2">
-                  <code class="min-w-0 flex-1 truncate text-sm">{{ inferenceRoot }}</code><SpCopyButton :value="inferenceRoot" />
-                </div>
+                <p class="text-xs text-dimmed">Anthropic base</p>
+                <div class="mt-1 flex items-center gap-2"><code class="min-w-0 flex-1 truncate text-sm">{{ inferenceRoot }}</code><SpCopyButton :value="inferenceRoot" /></div>
               </div>
               <div class="rounded-lg border border-default p-3">
-                <p class="text-xs text-dimmed">
-                  OpenAI / Codex base
-                </p>
-                <div class="mt-1 flex items-center gap-2">
-                  <code class="min-w-0 flex-1 truncate text-sm">{{ openAiBase }}</code><SpCopyButton :value="openAiBase" />
-                </div>
+                <p class="text-xs text-dimmed">OpenAI / Codex base</p>
+                <div class="mt-1 flex items-center gap-2"><code class="min-w-0 flex-1 truncate text-sm">{{ openAiBase }}</code><SpCopyButton :value="openAiBase" /></div>
               </div>
             </div>
 
@@ -260,30 +184,12 @@ onMounted(async () => {
               description="SP Cambo does not reveal an existing key again. The templates below therefore keep a placeholder; use the same secret already configured in your CLI."
             />
 
-            <SpCodeBlock
-              filename="Windows PowerShell"
-              :code="claudeCodePowerShell"
-            />
-            <SpCodeBlock
-              filename=".claude/settings.json"
-              :code="claudeCodeSettingsJson"
-            />
+            <SpCodeBlock filename="Windows PowerShell" :code="claudeCodePowerShell" />
+            <SpCodeBlock filename=".claude/settings.json" :code="claudeCodeSettingsJson" />
 
             <div class="flex flex-wrap gap-2">
-              <UButton
-                :to="selectedModel ? `/dashboard/cli-setup?model=${encodeURIComponent(selectedModel)}` : '/dashboard/cli-setup'"
-                icon="i-lucide-terminal"
-              >
-                More CLI / SDK examples
-              </UButton>
-              <UButton
-                to="/dashboard/api-keys"
-                color="neutral"
-                variant="subtle"
-                icon="i-lucide-key-round"
-              >
-                Open API keys
-              </UButton>
+              <UButton :to="selectedModel ? `/dashboard/cli-setup?model=${encodeURIComponent(selectedModel)}` : '/dashboard/cli-setup'" icon="i-lucide-terminal">More CLI / SDK examples</UButton>
+              <UButton to="/dashboard/api-keys" color="neutral" variant="subtle" icon="i-lucide-key-round">Open API keys</UButton>
             </div>
           </div>
         </UCard>

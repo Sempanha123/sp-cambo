@@ -7,6 +7,8 @@ use App\Models\AiModel;
 use App\Models\ModelAlias;
 use App\Models\Provider;
 use App\Services\AuditService;
+use App\Services\TelegramAnnouncementService;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -98,6 +100,88 @@ class ProviderAliasController extends Controller
             'Deleted unused provider public alias.', ['alias' => $snapshot]);
 
         return response()->json(['data' => ['success' => true]]);
+    }
+
+    /**
+     * Publish an alias for sale in one explicit admin action. This repairs a
+     * legacy READY-but-not-active provider, enables the catalog objects, and
+     * records the admin's explicit commercial-resale confirmation.
+     */
+    public function publish(Request $request, string $provider, string $alias, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
+    {
+        $provider = Provider::query()->findOrFail($provider);
+        $modelAlias = $this->aliasForProvider($provider, $alias);
+        $data = $request->validate([
+            'confirm_commercial_resale' => ['required', 'accepted'],
+        ]);
+
+        $published = DB::transaction(function () use ($request, $provider, $modelAlias, $data, $audit): ModelAlias {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            $lockedAlias = ModelAlias::query()->whereKey($modelAlias->id)->lockForUpdate()->firstOrFail();
+            $model = AiModel::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->whereKey($lockedAlias->ai_model_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $active = $lockedProvider->activeConnectionRevision;
+            if (! $active || ! $active->isRouteReady()) {
+                $ready = $lockedProvider->connectionRevisions()
+                    ->where('lifecycle_status', \App\Models\ProviderConnectionRevision::STATUS_READY)
+                    ->where('last_probe_status', 'SUCCESS')
+                    ->orderByDesc('route_version')
+                    ->first();
+
+                if (! $ready) {
+                    throw new HttpResponseException(response()->json([
+                        'message' => 'Probe a connection revision successfully before publishing this model for sale.',
+                        'code' => 'provider_ready_connection_required',
+                    ], 409));
+                }
+
+                $lockedProvider->forceFill(['active_connection_revision_id' => $ready->id])->saveOrFail();
+                $active = $ready;
+            }
+
+            if (! (bool) $data['confirm_commercial_resale']) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'Commercial resale must be explicitly confirmed before publishing this model.',
+                    'code' => 'commercial_resale_confirmation_required',
+                ], 409));
+            }
+
+            $lockedProvider->update(['enabled' => true]);
+            $model->update([
+                'enabled' => true,
+                'commercial_resale_verified_at' => $model->commercial_resale_verified_at ?? now(),
+            ]);
+            $lockedAlias->update([
+                'enabled' => true,
+                'customer_visible' => true,
+                'status' => 'active',
+            ]);
+
+            $audit->record(
+                $request->user(),
+                'provider_alias.published',
+                'model_alias',
+                $lockedAlias->id,
+                'Published a provider model alias for customer sale after explicit resale confirmation.',
+                [
+                    'provider_id' => $lockedProvider->id,
+                    'model_id' => $model->id,
+                    'public_alias' => $lockedAlias->public_alias,
+                    'active_connection_revision_id' => $active->id,
+                    'commercial_resale_confirmed' => true,
+                ]
+            );
+
+            return $lockedAlias->fresh('model');
+        });
+
+        $announcements->modelPublished($published);
+
+        return response()->json(['data' => $this->resource($published, $provider->fresh())]);
     }
 
     public function mapModel(Request $request, string $provider, string $alias, AuditService $audit): JsonResponse

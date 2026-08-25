@@ -110,15 +110,8 @@ onMounted(async () => {
         </div>
       </template>
 
-      <div
-        aria-live="polite"
-        role="status"
-        class="space-y-3 py-6 text-center"
-      >
-        <UIcon
-          name="i-lucide-loader-circle"
-          class="mx-auto size-6 animate-spin text-primary"
-        />
+      <div aria-live="polite" role="status" class="space-y-3 py-6 text-center">
+        <UIcon name="i-lucide-loader-circle" class="mx-auto size-6 animate-spin text-primary" />
         <p class="text-sm text-muted">
           Please wait…
         </p>

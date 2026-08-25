@@ -97,6 +97,7 @@ export interface ControlPlane {
     request_fingerprint: string;
     endpoint: InferencePath;
   }): Promise<PreflightData>;
+  state?(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void>;
   settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void>;
   release(reservationId: string): Promise<void>;
   reconcile(reservationId: string, reason: string): Promise<void>;
