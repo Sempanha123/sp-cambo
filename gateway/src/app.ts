@@ -59,9 +59,12 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       reservationId = preflight.reservation_id;
       void markStateBestEffort(reservationId, "CONNECTING");
       const controller = new AbortController();
-      const onDisconnect = (): void => controller.abort("client_disconnect");
-      request.raw.once("aborted", onDisconnect);
-      reply.raw.once("close", onDisconnect);
+      const onRequestAborted = (): void => controller.abort("client_disconnect");
+      const onResponseClose = (): void => {
+        if (!reply.raw.writableEnded) controller.abort("client_disconnect");
+      };
+      request.raw.once("aborted", onRequestAborted);
+      reply.raw.once("close", onResponseClose);
       const routeTimeoutMs = preflight.upstream_timeout_ms || config.upstreamTimeoutMs;
       // The route may request a shorter timeout, while the gateway setting is the
       // operator-controlled safety ceiling. Never let a route silently extend past it.
@@ -71,47 +74,58 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         600_000,
       );
       const timeout = setTimeout(() => controller.abort("upstream_timeout"), upstreamTimeoutMs);
-      let upstream: Response;
       try {
-        const internalModel = preflight.internal_model;
-        const routeVersion = preflight.route_version;
-        const upstreamOrigin = preflight.upstream_origin.replace(/\/+$/, "");
-
-        upstream = await fetchImpl(`${upstreamOrigin}${path}`, {
-          method: "POST",
-          headers: {
-            ...upstreamHeaders(request, preflight.upstream_credential, preflight.correlation_id),
-            "x-route-revision": preflight.route_revision_id ?? "",
-            "x-route-version": routeVersion?.toString() ?? "",
-          },
-          body: upstreamBody(path, prepared, internalModel, preflight.max_output_tokens),
-          signal: controller.signal,
-        });
-      } catch {
-        const reason = controller.signal.reason === "client_disconnect" ? "client_disconnect" : "upstream_timeout";
-        await reconcileBestEffort(reservationId, reason);
-        throw new GatewayError(reason === "client_disconnect" ? 499 : 503, reason === "client_disconnect" ? "client_disconnected" : "upstream_unavailable", reason === "client_disconnect" ? "The client disconnected." : "The inference service is temporarily unavailable.");
+        let upstream: Response;
+        try {
+          const internalModel = preflight.internal_model;
+          const routeVersion = preflight.route_version;
+          const upstreamOrigin = preflight.upstream_origin.replace(/\/+$/, "");
+          const fetchPromise = fetchImpl(`${upstreamOrigin}${path}`, {
+            method: "POST",
+            headers: {
+              ...upstreamHeaders(request, preflight.upstream_credential, preflight.correlation_id),
+              "x-route-revision": preflight.route_revision_id ?? "",
+              "x-route-version": routeVersion?.toString() ?? "",
+            },
+            body: upstreamBody(path, prepared, internalModel, preflight.max_output_tokens),
+            signal: controller.signal,
+          });
+          upstream = await abortable(fetchPromise, controller.signal);
+        } catch {
+          const reason = abortReason(controller.signal) ?? "upstream_timeout";
+          await reconcileBestEffort(reservationId, reason);
+          throw operationFailure(reason);
+        }
+        if (!upstream.ok) {
+          if (upstream.status >= 500 || upstream.status === 408 || upstream.status === 429) {
+            await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
+          } else {
+            await dependencies.controlPlane.release(reservationId);
+          }
+          return proxyError(reply, upstream, path);
+        }
+        void markStateBestEffort(reservationId, "STREAMING");
+        if (prepared.streaming && upstream.body) {
+          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal);
+        }
+        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal);
       } finally {
         clearTimeout(timeout);
-        request.raw.off("aborted", onDisconnect);
-        reply.raw.off("close", onDisconnect);
+        request.raw.off("aborted", onRequestAborted);
+        reply.raw.off("close", onResponseClose);
       }
-      if (!upstream.ok) {
-        if (upstream.status >= 500 || upstream.status === 408 || upstream.status === 429) {
-          await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
-        } else {
-          await dependencies.controlPlane.release(reservationId);
-        }
-        return proxyError(reply, upstream, path);
-      }
-      void markStateBestEffort(reservationId, "STREAMING");
-      if (prepared.streaming && upstream.body) return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt);
-      return await json(reply, upstream, reservationId, path, requestStartedAt);
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number): Promise<unknown> {
-    const text = await upstream.text();
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal): Promise<unknown> {
+    let text: string;
+    try {
+      text = await abortable(upstream.text(), signal);
+    } catch {
+      const reason = abortReason(signal) ?? "upstream_disconnect";
+      await reconcileBestEffort(reservationId, reason);
+      throw operationFailure(reason);
+    }
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch {
       await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
@@ -130,10 +144,9 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       await reconcileBestEffort(reservationId, "settlement_failed");
     }
     return reply;
-
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal): Promise<void> {
     reply.hijack();
     reply.raw.statusCode = upstream.status;
     reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
@@ -143,7 +156,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     try {
       while (true) {
-        const { value, done } = await reader.read(); if (done) break;
+        const { value, done } = await abortable(reader.read(), signal); if (done) break;
         bytesSent = true;
         buffer += decoder.decode(value, { stream: true });
         const boundary = Math.max(buffer.lastIndexOf("\n\n"), buffer.lastIndexOf("\r\n\r\n"));
@@ -152,13 +165,15 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           usage = parseSse(buffer.slice(0, boundary + delimiterLength), usage, path);
           buffer = buffer.slice(boundary + delimiterLength);
         }
-        if (!reply.raw.write(value)) await once(reply.raw, "drain");
+        if (!reply.raw.write(value)) await abortable(once(reply.raw, "drain"), signal);
       }
       buffer += decoder.decode();
       if (buffer !== "") usage = parseSse(buffer, usage, path);
     } catch {
+      void reader.cancel(signal.reason).catch(() => undefined);
       if (!reply.raw.destroyed) reply.raw.destroy();
-      await reconcileBestEffort(reservationId, bytesSent ? "upstream_disconnect" : "upstream_timeout");
+      const reason = abortReason(signal) ?? (bytesSent ? "upstream_disconnect" : "upstream_timeout");
+      await reconcileBestEffort(reservationId, reason);
       return;
     }
 
@@ -184,6 +199,26 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
   }
 
   return app;
+}
+
+function abortReason(signal: AbortSignal): "client_disconnect" | "upstream_timeout" | undefined {
+  if (signal.reason === "client_disconnect") return "client_disconnect";
+  if (signal.reason === "upstream_timeout") return "upstream_timeout";
+  return undefined;
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+function operationFailure(reason: string): GatewayError {
+  if (reason === "client_disconnect") return new GatewayError(499, "client_disconnected", "The client disconnected.");
+  return new GatewayError(503, "upstream_unavailable", "The inference service is temporarily unavailable.");
 }
 
 function admissionIdentity(key: string): string {

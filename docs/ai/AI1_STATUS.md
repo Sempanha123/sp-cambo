@@ -3,13 +3,22 @@
 ## Current checkpoint
 - Base: SP Cambo R6.1
 - Branch: `ai1/production-finish`
-- State: PLAYGROUND ISOLATION IMPLEMENTED; NEXT BATCH IS AI2 P1-001 STREAMING TIMEOUT
+- State: PLAYGROUND ISOLATION AND P1-001 IMPLEMENTED; NEXT BATCH IS AI2 P1-002 TELEGRAM DELIVERY
 
 ## Current task
-- Highest-priority remaining OPEN item from `AI2_AUDIT.md`: **P1-001** streaming responses bypass the upstream timeout after headers arrive.
-- Previous batch (strict Playground billing isolation) is implemented and focused-verified. Status: **FIXED**, not VERIFIED.
+- Highest-priority remaining OPEN item from `AI2_AUDIT.md`: **P1-002** Telegram partial delivery revokes an API key whose plaintext secret was already sent.
+- Gateway P1-001 is implemented and focused-verified. Status: **FIXED**, not VERIFIED.
+- Strict Playground billing isolation is implemented and focused-verified. Status: **FIXED**, not VERIFIED.
 
 ## Last implementation batch
+Resolve P1-001 by keeping the operator-controlled upstream deadline and downstream disconnect listeners active through fetch, JSON/SSE body consumption, and terminal billing handling. Stalled or disconnected streams now cancel the upstream reader, close the downstream socket, and preserve the reservation through exactly one reconciliation without release or settlement.
+
+Gateway verification:
+- `./node_modules/.bin/vitest run`: 3 files, 31 tests passed
+- `./node_modules/.bin/tsc --noEmit`: pass
+- `git diff --check`: pass
+
+## Previous implementation batch
 Restore strict Playground billing isolation so hosted Playground credentials can spend only `PLAYGROUND_DAILY` lots, and ordinary customer keys can spend only non-Playground lots. Free quota can never silently spend paid, redeemed, promotional, transferred, or admin-granted balance.
 
 Defense in depth:
@@ -77,7 +86,8 @@ Environmental note:
 - `pnpm exec` re-triggers ignored-build failure; use `./node_modules/.bin/*`.
 
 ## Known remaining issue
-- **P1-001 OPEN** — streaming responses bypass the upstream timeout after headers arrive (`gateway/src/app.ts`). Next implementation batch.
+- **P1-002 OPEN** — Telegram partial delivery revokes an API key after its plaintext secret may already have reached the customer. Current implementation batch.
+- **P1-001 FIXED, not VERIFIED** — the complete gateway operation is bounded through response body consumption; awaiting independent AI2 retest.
 - Full `php artisan test` still exits 139. Do not claim full backend success; keep using split suites.
 - Telegram link-conflict wording: service throws `already has an active SP Cambo storefront account`; test still asserts substring `already linked`. Identity ownership protection must not be weakened.
 - Playground credentials migration `2026_08_24_000048` is still an unconditional `Schema::create`.
@@ -87,4 +97,5 @@ Environmental note:
 - AI2 release decision remains BLOCKED. AI1 marks FIXED only; only AI2 marks VERIFIED.
 
 ## Latest checkpoint commit
-- Pending immediately after this status write on `ai1/production-finish`.
+- `6f35acd` — Isolate Playground billing from paid and redeemed lots.
+- Gateway P1-001 checkpoint pending immediately after this status write on `ai1/production-finish`.

@@ -5,7 +5,8 @@
 | BOOT-001 | P0 | Release audit | AI2 | DOING | Audit current R6.1 checkpoint; P1-001 already filed |
 | PG-ISO-001 | P0 | Playground billing isolation | AI1 | FIXED | Backend 36/225 isolation; FE PlaygroundPage 4/4; Vitest 41/634; lint/typecheck/build pass. Awaiting AI2 VERIFIED |
 | TG-MIG-001 | P1 | Telegram migration replay safety | AI1 | FIXED | MigrationIdentifierTest 9/95. Never drops `telegram_announcement_deliveries`. Awaiting AI2 VERIFIED |
-| P1-001 | P1 | Gateway streaming timeout after headers | AI1 | DOING | Keep operator timeout through body read + disconnect; add stalled-stream and client-disconnect tests |
+| P1-001 | P1 | Gateway streaming timeout after headers | AI1 | FIXED | Gateway Vitest 31/31 + typecheck pass; stalled stream and post-header disconnect cancel upstream and reconcile once. Awaiting AI2 VERIFIED |
+| P1-002 | P1 | Telegram partial delivery revokes sent key | AI1 | DOING | Make delivery atomic or persist resumable per-message state; retain the original active key after partial send |
 | TG-LINK-001 | P2 | Telegram identity-conflict wording | AI1 | TODO | Align exception text with `already linked` without weakening ownership protection |
 | PG-MIG-001 | P1 | Playground credentials/settings replay | AI1 | TODO | `000048` create-if-missing; `000052` must not reset operator singleton |
 | BOOT-003 | P0 | Real E2E | AI1 + AI2 | TODO | Provider → Package → Payment → Key → API → Usage → Telegram |

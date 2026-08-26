@@ -252,3 +252,51 @@ it("enforces body, output, RPM, TPM, and concurrency limits before upstream", as
   control.inspectData.limits.max_output_tokens = 100; control.inspectData.limits.tokens_per_minute = 1;
   expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(429);
 });
+
+it("bounds the complete upstream operation including stalled streaming body", async () => {
+  const timeoutConfig = { ...config, upstreamTimeoutMs: 100 };
+  let streamCancelled = false;
+  const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}\n\n'));
+    },
+    cancel() { streamCancelled = true; },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } }));
+  const control = new FakeControlPlane();
+  const instance = buildApp(timeoutConfig, { controlPlane: control, rateStore: new MemoryRateStore(), fetchImpl: fetchMock as typeof fetch });
+  const response = instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: { ...body, stream: true } });
+  await expect(response).rejects.toThrow("response destroyed before completion");
+  expect(control.reconciles).toEqual(["reservation-1:upstream_timeout"]);
+  expect(control.releases).toHaveLength(0);
+  expect(control.settleCalls).toHaveLength(0);
+  expect(streamCancelled).toBe(true);
+});
+
+it("cancels streaming when client disconnects after headers", async () => {
+  let streamStarted!: () => void;
+  const started = new Promise<void>((resolve) => { streamStarted = resolve; });
+  let streamCancelled = false;
+  const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}\n\n'));
+      streamStarted();
+    },
+    cancel() { streamCancelled = true; },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } }));
+  const control = new FakeControlPlane();
+  const instance = buildApp(config, { controlPlane: control, rateStore: new MemoryRateStore(), fetchImpl: fetchMock as typeof fetch });
+  await instance.listen({ host: "127.0.0.1", port: 0 });
+  const address = instance.server.address();
+  if (address === null || typeof address === "string") throw new Error("Expected an ephemeral TCP listener.");
+
+  const request = httpRequest({ host: "127.0.0.1", port: address.port, method: "POST", path: "/v1/messages", headers: { ...auth, "content-length": Buffer.byteLength(JSON.stringify({ ...body, stream: true })) } });
+  request.on("error", () => { /* intentional socket destroy */ });
+  request.end(JSON.stringify({ ...body, stream: true }));
+  await started;
+  request.destroy();
+
+  await vi.waitFor(() => expect(control.reconciles).toEqual(["reservation-1:client_disconnect"]));
+  expect(control.releases).toHaveLength(0);
+  expect(control.settleCalls).toHaveLength(0);
+  expect(streamCancelled).toBe(true);
+});
