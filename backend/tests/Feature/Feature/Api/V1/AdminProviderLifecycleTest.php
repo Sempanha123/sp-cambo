@@ -48,6 +48,92 @@ class AdminProviderLifecycleTest extends TestCase
         $this->assertTrue($alias->refresh()->customer_visible);
     }
 
+    public function test_admin_can_edit_provider_public_alias_and_protocols_are_persisted(): void
+    {
+        $admin = $this->admin();
+        [$provider, , $model, $alias] = $this->catalog();
+
+        $this->actingAs($admin)
+            ->putJson("/api/v1/admin/providers/{$provider->id}/aliases/{$alias->id}", [
+                'model_id' => (string) $model->id,
+                'public_alias' => 'sp-test-model-edited',
+                'display_name' => 'SP Test Model Edited',
+                'capabilities' => [
+                    'messages_api' => true,
+                    'chat_completions_api' => true,
+                    'responses_api' => false,
+                    'streaming' => true,
+                    'tools' => true,
+                    'vision' => false,
+                    'reasoning' => false,
+                    'context_tokens' => 200000,
+                    'max_output_tokens' => 32000,
+                ],
+                'limits' => [
+                    'requests_per_minute' => 100,
+                    'tokens_per_minute' => 200000,
+                    'concurrency' => null,
+                ],
+                'enabled' => true,
+                'customer_visible' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.public_alias', 'sp-test-model-edited')
+            ->assertJsonPath('data.display_name', 'SP Test Model Edited')
+            ->assertJsonPath('data.capabilities.messages_api', true)
+            ->assertJsonPath('data.capabilities.chat_completions_api', true)
+            ->assertJsonPath('data.capabilities.responses_api', false)
+            ->assertJsonPath('data.capabilities.tools', true)
+            ->assertJsonPath('data.capabilities.max_output_tokens', 32000)
+            ->assertJsonPath('data.limits.concurrency', null);
+
+        $alias->refresh();
+        $this->assertSame('sp-test-model-edited', $alias->public_alias);
+        $this->assertSame('SP Test Model Edited', $alias->display_name);
+        $this->assertTrue((bool) $alias->capabilities['messages_api']);
+        $this->assertFalse((bool) $alias->capabilities['responses_api']);
+        $this->assertTrue($alias->customer_visible);
+    }
+
+    public function test_provider_alias_edit_rejects_protocol_less_public_model(): void
+    {
+        $admin = $this->admin();
+        [$provider, , $model, $alias] = $this->catalog();
+
+        $response = $this->actingAs($admin)
+            ->putJson("/api/v1/admin/providers/{$provider->id}/aliases/{$alias->id}", [
+                'model_id' => (string) $model->id,
+                'public_alias' => $alias->public_alias,
+                'display_name' => $alias->display_name,
+                'capabilities' => [
+                    'messages_api' => false,
+                    'chat_completions_api' => false,
+                    'responses_api' => false,
+                    'streaming' => true,
+                    'tools' => false,
+                    'vision' => false,
+                    'reasoning' => false,
+                    'context_tokens' => 200000,
+                    'max_output_tokens' => 64000,
+                ],
+                'limits' => [
+                    'requests_per_minute' => null,
+                    'tokens_per_minute' => null,
+                    'concurrency' => null,
+                ],
+                'enabled' => true,
+                'customer_visible' => true,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('code', 'validation_failed');
+
+        $this->assertSame(
+            ['Enable at least one customer chat protocol: Anthropic Messages, Responses API, or Chat Completions.'],
+            $response->json('errors')['capabilities.messages_api'] ?? null,
+        );
+        $this->assertTrue((bool) $alias->refresh()->capabilities['messages_api']);
+    }
+
     public function test_normal_provider_delete_stays_conservative_when_aliases_exist(): void
     {
         $admin = $this->admin();

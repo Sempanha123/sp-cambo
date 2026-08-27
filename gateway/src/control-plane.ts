@@ -17,6 +17,7 @@ export class HttpControlPlane implements ControlPlane {
     request_id: string;
     request_fingerprint: string;
     endpoint: InferencePath;
+    playground_funding_scope?: "DAILY" | "BALANCE";
   }): Promise<PreflightData> {
     return this.call<PreflightData>("/internal/gateway/preflight", input);
   }

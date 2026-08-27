@@ -76,7 +76,7 @@ const save = async () => {
     description="Configure the hosted customer chat Playground. Requests still pass through the SP Cambo gateway so model routing, reservations, token settlement, limits and billing remain enforced."
   >
     <div class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-      <UCard class="sp-premium-card">
+      <UCard class="sp-premium-card sp-app-card">
         <div class="space-y-5">
           <USwitch
             v-model="form.enabled"
@@ -176,8 +176,8 @@ const save = async () => {
           icon="i-lucide-layers-3"
           color="neutral"
           variant="subtle"
-          title="Strict funding isolation"
-          description="Hosted Playground credentials can spend only the daily free lot. Paid, redeemed, promotional, transferred and admin-granted balances remain exclusive to customer API keys, which cannot spend the daily lot."
+          title="Free-first funding with explicit fallback"
+          description="Hosted Playground requests use the isolated daily free lot first. After it is exhausted, a customer may explicitly continue with eligible redeemed, purchased-token or credit balance. Customer API keys can never spend the daily lot."
         />
         <UAlert
           icon="i-lucide-route"

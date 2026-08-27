@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ApiKeyCreated, ApiKeyStatusReport, ApiKeySummary, RequestActivity } from '~/types/commerce'
+import type { ApiKeyCreated, ApiKeyStatusReport, ApiKeySummary } from '~/types/commerce'
 import type { FormError } from '@nuxt/ui'
 
 definePageMeta({
@@ -18,43 +18,6 @@ const toast = useToast()
 
 const keys = await useSpResource('dashboard:api-keys', () => api.account.apiKeys(), { server: false })
 const models = await useSpResource('catalog:models', () => api.catalog.models(), { server: false })
-
-// Recent request activity per key. `/me/activity` is the authoritative per-request
-// contract; usage-summary buckets are aggregate time windows and must not be
-// rendered as individual requests.
-const usageActivities = ref<Record<string, RequestActivity[]>>({})
-const usageLoading = ref<Record<string, boolean>>({})
-const usagePollTimers = ref<Record<string, ReturnType<typeof setInterval>>>({})
-
-const fetchUsageActivity = async (keyId: string) => {
-  usageLoading.value[keyId] = true
-  try {
-    const data = await api.account.activity({ limit: 10, key_id: keyId })
-    usageActivities.value[keyId] = data
-  } catch (error) {
-    console.error('Failed to fetch API-key activity:', error)
-  } finally {
-    usageLoading.value[keyId] = false
-  }
-}
-
-// Start polling for usage updates (30s interval)
-const startUsagePoll = (keyId: string) => {
-  if (usagePollTimers.value[keyId]) return
-  fetchUsageActivity(keyId)
-  usagePollTimers.value[keyId] = setInterval(() => fetchUsageActivity(keyId), 30000)
-}
-
-const stopUsagePoll = (keyId: string) => {
-  if (usagePollTimers.value[keyId]) {
-    clearInterval(usagePollTimers.value[keyId])
-    // delete usagePollTimers.value[keyId]
-  }
-}
-
-onBeforeUnmount(() => {
-  Object.keys(usagePollTimers.value).forEach(stopUsagePoll)
-})
 
 const aliasOptions = computed(() =>
   (models.data.value ?? []).map(model => ({ label: model.public_alias, value: model.public_alias }))
@@ -106,14 +69,14 @@ const validateCreate = (state: CreateFormState): FormError[] => {
   return errors
 }
 
-/** ---------------------------------------------------- one-time reveal */
+/** ------------------------------------------- explicit secret reveal / re-copy */
 
 const revealOpen = ref(false)
 const revealSecret = ref<string | null>(null)
 const revealLabel = ref('')
-const revealContext = ref<'created' | 'rotated'>('created')
+const revealContext = ref<'created' | 'rotated' | 'recovered'>('created')
 
-const openReveal = (result: ApiKeyCreated, context: 'created' | 'rotated') => {
+const openReveal = (result: ApiKeyCreated, context: 'created' | 'rotated' | 'recovered') => {
   revealSecret.value = result.secret
   revealLabel.value = result.key.label
   revealContext.value = context
@@ -181,6 +144,20 @@ const runAction = async (id: string, action: string, fn: () => Promise<void>) =>
   } finally {
     pending.value = null
   }
+}
+
+const revealExisting = (key: ApiKeySummary) =>
+  runAction(key.id, 'reveal', async () => {
+    const result = await api.account.revealApiKey(key.id)
+    openReveal(result, 'recovered')
+  })
+
+const copyOrEnableRecopy = (key: ApiKeySummary) => {
+  if (key.secret_recopy_available) {
+    return revealExisting(key)
+  }
+
+  rotateTarget.value = key
 }
 
 const setStatus = (key: ApiKeySummary, status: 'ACTIVE' | 'DISABLED' | 'REVOKED') =>
@@ -374,7 +351,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
 
     <UCard
       v-if="testKey"
-      class="mt-6"
+      class="mt-6 sp-app-card"
     >
       <template #header>
         <h3 class="text-lg font-semibold">
@@ -418,7 +395,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
     <section class="space-y-4">
       <SpSectionHeading
         :title="keys.data.value ? `Your keys (${activeCount} active)` : 'Your keys'"
-        description="Secrets are shown once at creation or rotation. This list can only ever show a prefix and the last four characters."
+        description="Keys are credentials for your account entitlements. Open Key details to see models, purchased balance, expiry and activity for one key without mixing it with other keys."
       >
         <template #actions>
           <UButton
@@ -456,10 +433,8 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
           <li
             v-for="key in keys.data.value"
             :key="key.id"
-            class="rounded-lg border border-default bg-elevated/30 p-4"
+            class="sp-api-key-row rounded-lg border border-default bg-elevated/30 p-4"
             :class="key.status === 'REVOKED' ? 'opacity-60' : undefined"
-            @mouseenter="startUsagePoll(key.id)"
-            @mouseleave="stopUsagePoll(key.id)"
           >
             <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div class="min-w-0 space-y-2">
@@ -473,6 +448,9 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                 <code class="block font-mono text-xs text-muted">
                   {{ maskApiKey(key.prefix, key.last_four) }}
                 </code>
+                <p class="text-xs text-dimmed">
+                  {{ key.secret_recopy_available ? 'Secure re-copy available' : 'Legacy secret: rotate once to enable secure re-copy' }}
+                </p>
 
                 <dl class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
                   <div class="flex gap-1.5">
@@ -545,90 +523,27 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   </span>
                 </div>
 
-                <!-- Recent per-request activity. This intentionally uses /me/activity,
-                     not aggregate /me/usage/summary buckets. -->
-                <div class="mt-4 border-t border-default pt-4">
-                  <h4 class="mb-3 text-sm font-medium text-highlighted">
-                    Recent Usage
-                  </h4>
-                  <div
-                    v-if="usageLoading[key.id]"
-                    class="py-4 text-center"
-                  >
-                    <UProgress
-                      animation="carousel"
-                      :ui="{ indicator: 'hidden' }"
-                    />
-                  </div>
-                  <div
-                    v-else-if="(usageActivities[key.id]?.length ?? 0) > 0"
-                    class="overflow-x-auto"
-                  >
-                    <table class="w-full text-xs">
-                      <thead>
-                        <tr class="border-b text-left text-muted">
-                          <th class="pb-2">Time</th>
-                          <th class="pb-2">Public Model</th>
-                          <th class="pb-2">Status</th>
-                          <th class="pb-2 text-right">Input</th>
-                          <th class="pb-2 text-right">Output</th>
-                          <th class="pb-2 text-right">Total</th>
-                          <th class="pb-2 text-right">Customer Charge</th>
-                          <th class="pb-2 text-right">Latency</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr
-                          v-for="request in (usageActivities[key.id] ?? [])"
-                          :key="request.id"
-                          class="border-b border-default/60 last:border-0"
-                        >
-                          <td class="py-2 whitespace-nowrap">
-                            {{ formatDateTime(request.started_at) }}
-                          </td>
-                          <td class="py-2 font-mono">
-                            {{ request.public_model }}
-                          </td>
-                          <td class="py-2">
-                            <SpStatusBadge :status="request.state" />
-                          </td>
-                          <td class="py-2 text-right sp-numeric">
-                            {{ request.input_tokens?.toLocaleString() ?? '—' }}
-                          </td>
-                          <td class="py-2 text-right sp-numeric">
-                            {{ request.output_tokens?.toLocaleString() ?? '—' }}
-                          </td>
-                          <td class="py-2 text-right sp-numeric">
-                            {{ request.total_tokens?.toLocaleString() ?? '—' }}
-                          </td>
-                          <td class="py-2 text-right font-medium sp-numeric">
-                            {{ request.credit_charge ? formatMoney(request.credit_charge) : '—' }}
-                          </td>
-                          <td class="py-2 text-right sp-numeric">
-                            {{ request.duration_ms === null ? '—' : `${request.duration_ms.toLocaleString()} ms` }}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <div
-                    v-else
-                    class="py-4 text-center text-muted"
-                  >
-                    No recent usage for this key.
-                  </div>
-                </div>
               </div>
-
               <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <UButton
-                  :to="{ path: '/dashboard/usage', query: { key: key.id } }"
+                  :to="`/dashboard/api-keys/${key.id}`"
+                  color="primary"
+                  variant="subtle"
+                  size="sm"
+                  icon="i-lucide-key-round"
+                >
+                  Key details
+                </UButton>
+                <UButton
                   color="neutral"
                   variant="subtle"
                   size="sm"
-                  icon="i-lucide-chart-line"
+                  icon="i-lucide-copy"
+                  :loading="isPending(key.id, 'reveal')"
+                  :disabled="key.status === 'REVOKED' || isPending(key.id)"
+                  @click="copyOrEnableRecopy(key)"
                 >
-                  View activity
+                  {{ key.secret_recopy_available ? 'Copy key' : 'Enable re-copy' }}
                 </UButton>
                 <UButton
                   color="neutral"
@@ -693,6 +608,14 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
             :description="createError"
           />
 
+          <UAlert
+            icon="i-lucide-wallet-cards"
+            color="info"
+            variant="subtle"
+            title="A key does not create tokens or credit"
+            description="API keys only authenticate external apps. Your spendable balance comes from active account entitlements. Leave Model scope empty to inherit the models currently available from those entitlements."
+          />
+
           <UFormField
             label="Name"
             name="label"
@@ -712,7 +635,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
             name="allowed_model_aliases"
             :help="models.unavailable.value
               ? 'The model catalogue is not published yet, so scoping cannot be set here. The key will allow every model your entitlements permit.'
-              : 'Leave empty to allow every model your entitlements permit.'"
+              : 'Leave empty to inherit the currently active models from your account entitlements.'"
           >
             <USelectMenu
               v-model="createForm.allowed_model_aliases"
@@ -721,7 +644,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
               multiple
               :disabled="models.unavailable.value || aliasOptions.length === 0"
               :loading="models.loading.value"
-              placeholder="All permitted models"
+              placeholder="Use my entitlement models"
               class="w-full"
             />
           </UFormField>
@@ -769,8 +692,10 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
     <!-- Rotate -->
     <UModal
       :open="rotateTarget !== null"
-      title="Rotate this secret?"
-      description="A new secret is issued immediately and the current one stops working at the same moment."
+      :title="rotateTarget && !rotateTarget.secret_recopy_available ? 'Enable secure re-copy?' : 'Rotate this secret?'"
+      :description="rotateTarget && !rotateTarget.secret_recopy_available
+        ? 'This legacy secret cannot be reconstructed. SP Cambo will replace it once; the new secret can then be copied again later.'
+        : 'A new secret is issued immediately and the current one stops working at the same moment.'"
       @update:open="rotateTarget = null"
     >
       <template #body>
@@ -785,7 +710,9 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
             icon="i-lucide-info"
             color="neutral"
             variant="subtle"
-            description="Rotation is the correct fix if you never captured the original secret, or if it may have leaked."
+            :description="rotateTarget && !rotateTarget.secret_recopy_available
+              ? 'This is the only safe way to make an older hash-only key re-copyable. The key ID, model scope and entitlement access stay the same.'
+              : 'Rotation is the correct fix if the current secret may have leaked.'"
           />
         </div>
       </template>
@@ -803,7 +730,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
             :loading="rotateTarget ? isPending(rotateTarget.id, 'rotate') : false"
             @click="confirmRotate"
           >
-            Rotate secret
+            {{ rotateTarget && !rotateTarget.secret_recopy_available ? 'Replace and enable re-copy' : 'Rotate secret' }}
           </UButton>
         </div>
       </template>
@@ -917,7 +844,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   Tokens remaining
                 </dt>
                 <dd class="sp-numeric text-default">
-                  {{ testReport.token_quota_remaining === null ? 'Not applicable' : formatUnits(testReport.token_quota_remaining) }}
+                  {{ testReport.token_quota_remaining === null ? 'No matching purchased token balance' : formatUnits(testReport.token_quota_remaining) }}
                 </dd>
               </div>
               <div class="flex items-center justify-between gap-4 px-4 py-2.5">
@@ -925,7 +852,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   Credit remaining
                 </dt>
                 <dd class="sp-numeric text-default">
-                  {{ testReport.credit_remaining ? formatMoney(testReport.credit_remaining) : testReport.credit_balances?.length ? testReport.credit_balances.map(formatMoney).join(' + ') : 'Not applicable' }}
+                  {{ testReport.credit_remaining ? formatMoney(testReport.credit_remaining) : testReport.credit_balances?.length ? testReport.credit_balances.map(formatMoney).join(' + ') : 'No matching credit balance' }}
                 </dd>
               </div>
               <div class="flex items-center justify-between gap-4 px-4 py-2.5">
@@ -940,8 +867,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
 
             <p class="text-xs text-muted">
               This non-billable check reports only balances this credential can actually spend,
-              after active reservations. “Not applicable” means the key has no active balance in
-              that billing mode. See
+              after active reservations. A missing balance means this key's model scope does not currently match an active entitlement in that billing mode. See
               <NuxtLink
                 to="/dashboard/entitlements"
                 class="text-primary underline underline-offset-2"

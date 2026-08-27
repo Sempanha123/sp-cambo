@@ -64,6 +64,9 @@ const signIn = async (input: AuthFormState) => {
       </div>
     </div>
 
-    <GoogleLoginButton mode="login" :redirect-to="destination" />
+    <GoogleLoginButton
+      mode="login"
+      :redirect-to="destination"
+    />
   </div>
 </template>

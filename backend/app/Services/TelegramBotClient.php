@@ -28,7 +28,9 @@ class TelegramBotClient
 
         $response = $this->request()->post($this->endpoint('sendMessage'), $payload);
         if (! $response->successful() || $response->json('ok') !== true) {
-            throw new RuntimeException('Telegram delivery failed.');
+            $description = trim((string) $response->json('description', ''));
+            $suffix = $description !== '' ? ': '.mb_substr($description, 0, 240) : '';
+            throw new RuntimeException('Telegram sendMessage was rejected (HTTP '.$response->status().')'.$suffix);
         }
     }
 

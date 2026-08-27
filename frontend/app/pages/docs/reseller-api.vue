@@ -411,9 +411,11 @@ const errorRows = [
       :code="createKeyResponse"
     />
     <p>
-      <strong><code>secret</code> appears in this response and nowhere else, ever.</strong> SP Cambo
-      stores only a hash. If your automation does not capture it here, the key is unusable and your
-      only recourse is to revoke it and issue another.
+      <strong><code>secret</code> appears only in this reseller API response; the reseller API cannot fetch it again.</strong>
+      The customer-owned inference key keeps its normal lookup hash plus encrypted owner-recovery copy, so the
+      customer can later use <strong>Copy key</strong> from their own authenticated dashboard. If your reseller
+      automation needs the secret for delivery, capture the creation response — it cannot use the customer's
+      owner-reveal endpoint.
     </p>
 
     <h3 id="revoke-key">

@@ -32,7 +32,7 @@ class UsageController extends Controller
 
         return response()->json(['data' => $rows, 'meta' => [
             'server_time' => now()->toAtomString(),
-            'active_requests' => $rows->whereIn('state', ['reserved', 'connecting', 'streaming', 'reconciling'])->count(),
+            'active_requests' => $rows->whereIn('state', ['reserved', 'connecting', 'streaming'])->count(),
         ]]);
     }
 
@@ -48,6 +48,7 @@ class UsageController extends Controller
         ]);
 
         $key = ApiKey::query()
+            ->with('modelAliases')
             ->where('user_id', $request->user()->id)
             ->where('id', $keyId)
             ->firstOrFail();
@@ -149,6 +150,11 @@ class UsageController extends Controller
         $revision = $reservation?->providerConnectionRevision;
         $provider = $revision?->provider;
         $estimated = $usage === null && $log->estimated_units !== null;
+        $finishedAt = $log->finished_at ?? $reservation?->reconciliation_requested_at;
+        $durationMs = $log->duration_ms;
+        if ($durationMs === null && $finishedAt !== null && $log->started_at !== null) {
+            $durationMs = max(0, $log->started_at->diffInMilliseconds($finishedAt));
+        }
 
         return [
             'id' => $log->id,
@@ -163,8 +169,8 @@ class UsageController extends Controller
             'state' => strtolower($log->state),
             'endpoint' => $log->endpoint,
             'started_at' => $log->started_at->toAtomString(),
-            'finished_at' => $log->finished_at?->toAtomString(),
-            'duration_ms' => $log->duration_ms,
+            'finished_at' => $finishedAt?->toAtomString(),
+            'duration_ms' => $durationMs,
             'input_tokens' => $usage?->input_tokens,
             'output_tokens' => $usage?->output_tokens,
             'cache_read_tokens' => $usage?->cache_read_tokens,
@@ -194,7 +200,7 @@ class UsageController extends Controller
             'created_at' => $key->created_at->toAtomString(),
             'last_used_at' => $key->last_used_at?->toAtomString(),
             'expires_at' => $key->expires_at?->toAtomString(),
-            'allowed_model_aliases' => $key->allowed_model_aliases,
+            'allowed_model_aliases' => $key->modelAliases->pluck('public_alias')->values(),
             'limits' => [
                 'requests_per_minute' => $key->requests_per_minute,
                 'tokens_per_minute' => $key->tokens_per_minute,

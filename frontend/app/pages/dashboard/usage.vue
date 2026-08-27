@@ -152,7 +152,7 @@ const hasUsage = computed(() => buckets.value.some(bucket => !isUnitsDepleted(bu
 
 /** -------------------------------------------------------------- activity */
 
-const liveStates: RequestActivity['state'][] = ['reserved', 'connecting', 'streaming', 'reconciling']
+const liveStates: RequestActivity['state'][] = ['reserved', 'connecting', 'streaming']
 const liveRequests = computed(() => (activity.data.value ?? []).filter(item => liveStates.includes(item.state)))
 const displayDuration = (item: RequestActivity) => {
   if (item.duration_ms !== null) return formatLatency(item.duration_ms)
@@ -162,11 +162,10 @@ const displayDuration = (item: RequestActivity) => {
 }
 
 const stateTone = (item: RequestActivity) => {
-  if (item.error_code) {
-    return 'text-error'
-  }
-
-  return item.estimated ? 'text-warning' : 'text-default'
+  if (item.state === 'reconciling') return 'text-warning'
+  if (item.state === 'failed' || item.state === 'released') return 'text-error'
+  if (item.state === 'settled') return 'text-success'
+  return item.estimated ? 'text-warning' : 'text-primary'
 }
 
 const refreshAll = () => {
@@ -176,9 +175,15 @@ const refreshAll = () => {
 }
 
 onMounted(() => {
-  activityTimer = setInterval(() => { if (liveRefresh.value) void activity.refresh() }, 3000)
-  summaryTimer = setInterval(() => { if (liveRefresh.value) void summary.refresh() }, 12000)
-  clockTimer = setInterval(() => { liveClock.value = Date.now() }, 1000)
+  activityTimer = setInterval(() => {
+    if (liveRefresh.value) void activity.refresh()
+  }, 3000)
+  summaryTimer = setInterval(() => {
+    if (liveRefresh.value) void summary.refresh()
+  }, 12000)
+  clockTimer = setInterval(() => {
+    liveClock.value = Date.now()
+  }, 1000)
 })
 onBeforeUnmount(() => {
   if (activityTimer) clearInterval(activityTimer)
@@ -194,10 +199,17 @@ onBeforeUnmount(() => {
     description="Request metadata, token counts and charges as recorded by SP Cambo. Prompt and completion text is never stored, so it cannot be shown here."
   >
     <template #actions>
-      <UBadge v-if="liveRequests.length" color="warning" variant="subtle">
+      <UBadge
+        v-if="liveRequests.length"
+        color="warning"
+        variant="subtle"
+      >
         <span class="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-current" />{{ liveRequests.length }} running
       </UBadge>
-      <USwitch v-model="liveRefresh" label="Live" />
+      <USwitch
+        v-model="liveRefresh"
+        label="Live"
+      />
       <USelectMenu
         v-model="rangeValue"
         :items="ranges"
@@ -464,7 +476,7 @@ onBeforeUnmount(() => {
                 </UBadge>
                 <UBadge
                   v-if="item.error_code"
-                  color="error"
+                  :color="item.state === 'reconciling' ? 'warning' : 'error'"
                   variant="subtle"
                   size="sm"
                   class="font-mono"
@@ -478,7 +490,9 @@ onBeforeUnmount(() => {
                 · {{ formatDateTime(item.started_at) }}
               </p>
               <p class="truncate text-xs text-dimmed">
-                Route: {{ item.provider || 'resolving' }}<template v-if="item.route_version"> · v{{ item.route_version }}</template>
+                Route: {{ item.provider || 'resolving' }}<template v-if="item.route_version">
+                  · v{{ item.route_version }}
+                </template>
                 · upstream <span class="font-mono">{{ item.internal_model || '—' }}</span>
               </p>
             </div>
@@ -492,7 +506,7 @@ onBeforeUnmount(() => {
                   <dt class="text-dimmed">
                     {{ row.label }}
                   </dt>
-                  <dd class="sp-numeric text-default">
+                  <dd class="sp-numeric" :class="stateTone(item)">
                     {{ formatCompactUnits(row.value) }}
                   </dd>
                 </div>
@@ -522,7 +536,7 @@ onBeforeUnmount(() => {
                   <dt class="text-dimmed">
                     Duration
                   </dt>
-                  <dd class="sp-numeric text-default">
+                  <dd class="sp-numeric" :class="stateTone(item)">
                     {{ displayDuration(item) }}
                   </dd>
                 </div>

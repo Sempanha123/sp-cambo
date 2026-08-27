@@ -12,7 +12,7 @@ const pillars = [
   {
     icon: 'i-lucide-key-round',
     title: 'Scoped API keys',
-    description: 'Issue keys per project or per package. Full secrets are shown once at creation, then only a prefix and last four digits. Rotate or revoke instantly.'
+    description: 'Issue keys per project or package. Lists stay masked, while the signed-in owner can securely re-copy the current encrypted secret. Rotate or revoke instantly.'
   },
   {
     icon: 'i-lucide-gauge',
@@ -91,23 +91,10 @@ const audiences = [
 
 <template>
   <div>
-    <section class="sp-public-hero relative overflow-hidden">
-      <div
-        class="sp-grid-backdrop pointer-events-none absolute inset-0"
-        aria-hidden="true"
-      />
-      <div
-        class="sp-khmer-motif pointer-events-none absolute inset-y-0 right-0 w-[36rem] opacity-[0.055]"
-        aria-hidden="true"
-      />
-      <div
-        class="sp-ambient-glow pointer-events-none absolute inset-x-0 -top-32 h-96"
-        aria-hidden="true"
-      />
-
-      <UContainer class="relative py-16 sm:py-24 lg:py-28">
-        <div class="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
-          <div class="space-y-7">
+    <section class="sp-public-hero">
+      <UContainer class="py-10 sm:py-14 lg:py-16">
+        <div class="sp-hero-panel grid items-center gap-10 px-6 py-10 sm:px-9 lg:grid-cols-[1.05fr_0.95fr] lg:px-12 lg:py-14">
+          <div class="relative z-10 space-y-7">
             <UBadge
               color="neutral"
               variant="subtle"
@@ -115,23 +102,17 @@ const audiences = [
               class="rounded-full"
             >
               <span class="flex items-center gap-2">
-                <span class="relative flex size-1.5">
-                  <span class="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-75" />
-                  <span class="relative inline-flex size-1.5 rounded-full bg-primary" />
-                </span>
-                <span class="sp-khmer-chip">កម្ពុជា</span>
-                Prepaid AI access for Cambodia and beyond
+                <span class="inline-flex size-1.5 rounded-full bg-success" />
+                AI POWERED SOLUTIONS
               </span>
             </UBadge>
 
             <h1 class="text-4xl font-semibold tracking-tight text-highlighted text-balance sm:text-5xl lg:text-6xl">
-              <span class="sp-gradient-text">Managed AI access</span> you can actually budget for
+              Premium <span class="sp-gradient-text">AI packages</span><br> & API access
             </h1>
 
-            <p class="max-w-xl text-lg text-muted text-pretty">
-              Buy prepaid token or credit packages, issue scoped API keys, and run Claude Code,
-              Codex CLI or your own SDK against one endpoint. Every request is metered exactly and
-              settled against real provider usage.
+            <p class="max-w-xl text-lg leading-8 text-muted text-pretty">
+              High-performance managed AI models with simple prepaid pricing. Buy access, issue a scoped API key and connect your apps or CLI tools to one endpoint.
             </p>
 
             <div class="flex flex-wrap items-center gap-3">
@@ -195,34 +176,27 @@ const audiences = [
               </li>
             </ul>
 
-            <div class="inline-flex items-center gap-2 rounded-full border border-default/70 bg-elevated/35 px-3 py-1.5 text-xs text-muted">
-              <span class="sp-khmer-rule !h-px !w-8" />
-              <span style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;">បច្ចេកវិទ្យា AI សម្រាប់កម្ពុជា</span>
-              <span class="text-dimmed">· Built for developers everywhere</span>
+            <div class="flex flex-wrap items-center gap-4 text-xs text-muted">
+              <span class="inline-flex items-center gap-1.5"><UIcon name="i-lucide-shield-check" class="size-4 text-primary" /> Secure access</span>
+              <span class="inline-flex items-center gap-1.5"><UIcon name="i-lucide-globe-2" class="size-4 text-primary" /> Developer ready</span>
+              <span class="inline-flex items-center gap-1.5"><UIcon name="i-lucide-headphones" class="size-4 text-primary" /> SP Cambo support</span>
             </div>
           </div>
 
-          <div class="space-y-4 lg:pl-4">
-            <SpCodeBlock
-              filename="Claude Code — bash"
-              :code="claudeCodeShell"
-            />
-            <p class="text-xs text-muted">
-              Replace the placeholder key with a key you create in the dashboard, and the model
-              placeholder with an alias from
-              <NuxtLink
-                to="/models"
-                class="text-default underline decoration-dotted underline-offset-2"
-              >the model
-                catalogue
-              </NuxtLink>.
-            </p>
+          <div class="relative">
+            <div class="sp-hero-orbit hidden min-h-[310px] lg:block" aria-hidden="true">
+              <div class="sp-hero-core"><SpBrandMark class="size-16 text-white" /></div>
+              <div class="sp-floating-chip sp-floating-chip--api text-sm font-semibold">API</div>
+              <div class="sp-floating-chip sp-floating-chip--code"><UIcon name="i-lucide-code-xml" class="size-6" /></div>
+              <div class="sp-floating-chip sp-floating-chip--chart"><UIcon name="i-lucide-chart-no-axes-combined" class="size-6" /></div>
+            </div>
+            <div class="lg:hidden">
+              <SpCodeBlock filename="Claude Code — bash" :code="claudeCodeShell" />
+            </div>
           </div>
         </div>
       </UContainer>
     </section>
-
-    <USeparator />
 
     <UContainer class="py-16 sm:py-20">
       <div class="max-w-2xl space-y-3">
@@ -237,7 +211,7 @@ const audiences = [
 
       <div class="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <div
-          class="sp-premium-card sp-key-checker-card space-y-3 rounded-xl border border-default bg-elevated/30 p-6"
+          class="sp-premium-card sp-key-checker-card space-y-3 rounded-2xl p-6"
         >
           <div class="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <UIcon
@@ -263,7 +237,7 @@ const audiences = [
         <div
           v-for="pillar in pillars"
           :key="pillar.title"
-          class="sp-premium-card space-y-3 rounded-xl border border-default bg-elevated/30 p-6"
+          class="sp-premium-card space-y-3 rounded-2xl p-6"
         >
           <div class="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <UIcon
@@ -281,7 +255,7 @@ const audiences = [
       </div>
     </UContainer>
 
-    <div class="border-y border-default bg-elevated/25">
+    <div class="border-y border-default/60 bg-elevated/10">
       <UContainer class="py-16 sm:py-20">
         <div class="max-w-2xl space-y-3">
           <h2 class="text-3xl font-semibold tracking-tight text-highlighted">
@@ -349,7 +323,7 @@ const audiences = [
           v-for="audience in audiences"
           :key="audience.to"
           :ui="{ root: 'sp-premium-card h-full', body: 'flex h-full flex-col gap-4' }"
-        >
+         class="sp-app-card">
           <div class="flex size-10 items-center justify-center rounded-lg bg-elevated text-default">
             <UIcon
               :name="audience.icon"
@@ -380,7 +354,7 @@ const audiences = [
 
     <UContainer class="pb-20">
       <div
-        class="sp-premium-card relative overflow-hidden rounded-2xl border border-default bg-elevated/40 px-6 py-12 text-center sm:px-12"
+        class="sp-premium-card relative overflow-hidden rounded-3xl px-6 py-12 text-center sm:px-12"
       >
         <div
           class="sp-ambient-glow pointer-events-none absolute inset-x-0 -top-24 h-64"

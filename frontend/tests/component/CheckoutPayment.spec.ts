@@ -82,9 +82,10 @@ const plane = {
   statusError: null as SpApiError | null
 }
 
-const { getOrder, paymentStatus, createPayment, requestVerification, toastAdd } = vi.hoisted(() => ({
+const { getOrder, paymentStatus, autoCheckPayment, createPayment, requestVerification, toastAdd } = vi.hoisted(() => ({
   getOrder: vi.fn(),
   paymentStatus: vi.fn(),
+  autoCheckPayment: vi.fn(),
   createPayment: vi.fn(),
   requestVerification: vi.fn(),
   toastAdd: vi.fn()
@@ -94,6 +95,7 @@ mockNuxtImport('useSpApi', () => () => ({
   orders: {
     get: getOrder,
     paymentStatus,
+    autoCheckPayment,
     createPayment,
     requestVerification
   }
@@ -122,6 +124,7 @@ beforeEach(() => {
 
     return attempt({ status: plane.attemptStatus })
   })
+  autoCheckPayment.mockReset().mockImplementation(async () => attempt({ status: plane.attemptStatus }))
   createPayment.mockReset().mockImplementation(async () => attempt({ status: plane.attemptStatus }))
   requestVerification.mockReset().mockImplementation(async () => attempt({ status: plane.attemptStatus }))
   toastAdd.mockReset()
@@ -189,15 +192,16 @@ describe('checkout countdown', () => {
     expect(page.text()).toContain('This payment code expired')
   })
 
-  it('flips to the expired state when the window runs out, and stops offering payment', async () => {
+  it('flips to a safe expired state and still lets an already-paid customer re-check', async () => {
     const page = await mountCheckout()
 
     await vi.advanceTimersByTimeAsync(WINDOW_MS)
     await nextTick()
 
     expect(page.text()).toContain('This payment code expired')
-    expect(page.text()).toContain('Nothing was charged')
-    expect(page.text()).not.toContain('I have paid')
+    expect(page.text()).toContain('If you already paid, do not pay again')
+    expect(page.text()).toContain('Re-check payment')
+    expect(page.text()).not.toContain('I have paid — check now')
     expect(page.text()).not.toContain('Scan with any Bakong-enabled app')
   })
 
@@ -216,6 +220,33 @@ describe('checkout countdown', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(createPayment).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an expired attempt be explicitly re-checked before issuing another QR', async () => {
+    const page = await mountCheckout()
+
+    await vi.advanceTimersByTimeAsync(WINDOW_MS)
+    await nextTick()
+
+    requestVerification.mockClear()
+    const recheck = page.findAll('button').find(button => button.text().includes('Re-check payment'))
+    expect(recheck).toBeDefined()
+
+    await recheck!.trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(requestVerification).toHaveBeenCalledWith(ORDER_ID)
+  })
+
+  it('auto-checks payment server-side without requiring the manual button', async () => {
+    await mountCheckout()
+
+    autoCheckPayment.mockClear()
+    requestVerification.mockClear()
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(autoCheckPayment).toHaveBeenCalledWith(ORDER_ID)
+    expect(requestVerification).not.toHaveBeenCalled()
   })
 
   /** Polling exists to notice a settled transfer; once expired there is nothing to notice. */

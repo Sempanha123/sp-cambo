@@ -12,6 +12,8 @@ export interface UseSpResourceOptions {
   /** Fetch during SSR. Disable for authenticated data that needs a browser credential. */
   server?: boolean
   immediate?: boolean
+  /** Do not block route navigation while the client fetch is running. */
+  lazy?: boolean
   watch?: Array<WatchSource<unknown> | object>
 }
 
@@ -55,6 +57,7 @@ export async function useSpResource<T>(
     {
       server: options.server ?? true,
       immediate: options.immediate ?? true,
+      lazy: options.lazy ?? false,
       watch: options.watch,
       default: () => null
     }

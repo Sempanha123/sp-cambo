@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Promotion;
 use App\Services\AuditService;
+use App\Services\TelegramAnnouncementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,14 +18,24 @@ class PromotionController extends Controller
         return response()->json(['data' => Promotion::query()->with('packages:id,slug')->orderByDesc('priority')->orderBy('id')->get()->map(fn (Promotion $promotion) => $this->resource($promotion))]);
     }
 
-    public function store(Request $request, AuditService $audit): JsonResponse
+    public function store(Request $request, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
     {
-        return response()->json(['data' => $this->resource($this->persist($request, new Promotion, $audit, 'promotion.created'))], 201);
+        $promotion = $this->persist($request, new Promotion, $audit, 'promotion.created');
+        if ($promotion->enabled) {
+            $announcements->promotionPublished($promotion);
+        }
+
+        return response()->json(['data' => $this->resource($promotion)], 201);
     }
 
-    public function update(Request $request, Promotion $promotion, AuditService $audit): JsonResponse
+    public function update(Request $request, Promotion $promotion, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
     {
-        return response()->json(['data' => $this->resource($this->persist($request, $promotion, $audit, 'promotion.updated'))]);
+        $updated = $this->persist($request, $promotion, $audit, 'promotion.updated');
+        if ($updated->enabled) {
+            $announcements->promotionPublished($updated);
+        }
+
+        return response()->json(['data' => $this->resource($updated)]);
     }
 
     private function persist(Request $request, Promotion $promotion, AuditService $audit, string $action): Promotion

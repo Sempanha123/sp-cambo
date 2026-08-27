@@ -10,7 +10,14 @@ class TelegramPurchase extends Model
 {
     use HasUlids;
     protected $guarded = [];
-    protected function casts(): array { return ['delivered_at' => 'immutable_datetime', 'last_checked_at' => 'immutable_datetime']; }
+    protected function casts(): array {
+        return [
+            'delivered_at' => 'immutable_datetime',
+            'last_checked_at' => 'immutable_datetime',
+            'delivery_lease_expires_at' => 'immutable_datetime',
+            'delivery_secret_ciphertext' => 'encrypted',
+        ];
+    }
     public function tenant(): BelongsTo { return $this->belongsTo(Tenant::class); }
     public function user(): BelongsTo { return $this->belongsTo(User::class); }
     public function account(): BelongsTo { return $this->belongsTo(TelegramAccount::class, 'telegram_account_id'); }

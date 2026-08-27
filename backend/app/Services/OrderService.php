@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\InferenceIdempotencyException;
+use App\Exceptions\PackageStockException;
 use App\Models\Order;
 use App\Models\Package;
 use App\Models\PromotionRedemption;
@@ -15,7 +16,12 @@ use Illuminate\Validation\ValidationException;
 
 class OrderService
 {
-    public function __construct(private readonly PromotionService $promotions, private readonly OrderFulfillmentService $fulfillment) {}
+    public function __construct(
+        private readonly PromotionService $promotions,
+        private readonly OrderFulfillmentService $fulfillment,
+        private readonly TelegramPurchaseAlertService $purchaseAlerts,
+        private readonly PackageStockService $stock,
+    ) {}
 
     /**
      * Create an order exactly once for one user-scoped idempotency key.
@@ -30,7 +36,7 @@ class OrderService
         $fingerprint = $this->fingerprint($packageSlug, $quantity, $promotionCode);
 
         try {
-            return DB::transaction(function () use ($user, $packageSlug, $quantity, $promotionCode, $idempotencyKey, $fingerprint): array {
+            $result = DB::transaction(function () use ($user, $packageSlug, $quantity, $promotionCode, $idempotencyKey, $fingerprint): array {
                 $existing = $this->existing($user, $idempotencyKey, $fingerprint);
                 if ($existing !== null) {
                     return ['order' => $existing, 'created' => false];
@@ -48,15 +54,24 @@ class OrderService
                 $discount = $promotion['discount_minor'] ?? 0;
                 $order = Order::query()->create(['user_id' => $user->id, 'tenant_id' => $user->tenant_id, 'idempotency_key' => $idempotencyKey, 'request_fingerprint' => $fingerprint, 'reference' => 'SPC-'.Str::ulid(), 'status' => 'PENDING_PAYMENT', 'currency' => $package->currency, 'currency_exponent' => $package->currency_exponent, 'subtotal_minor' => $subtotal, 'discount_total_minor' => $discount, 'total_minor' => $subtotal - $discount, 'promotion_id' => $promotion['promotion']->id ?? null, 'promotion_snapshot' => $promotion === null ? null : ['code' => $promotion['code'], 'label' => $promotion['label'], 'type' => $promotion['promotion']->type, 'discount_minor' => $discount, 'bonus_units' => $promotion['bonus_units']]]);
                 $order->items()->create(['package_id' => $package->id, 'package_slug' => $package->slug, 'package_name' => $package->name, 'quantity' => $quantity, 'unit_price_minor' => $package->price_minor, 'line_total_minor' => $subtotal, 'package_snapshot' => ['billing_mode' => $package->billing_mode, 'family_label' => $package->family_label, 'advertised_units' => (string) $package->advertised_units, 'unit_label' => $package->unit_label, 'currency' => $package->currency, 'currency_exponent' => (int) $package->currency_exponent, 'duration_seconds' => (int) $package->duration_seconds, 'allowed_model_aliases' => $package->modelAliases()->published()->pluck('public_alias')->values()->all(), 'limits' => $package->limits, 'billing_rules' => $package->billing_rules, 'auto_creates_api_key' => $package->auto_creates_api_key]]);
+                try {
+                    $order = $this->stock->reserveForOrder($order->fresh('items'));
+                } catch (PackageStockException $exception) {
+                    throw ValidationException::withMessages(['package_slug' => [$exception->getMessage()]]);
+                }
                 if ($promotion !== null) {
                     PromotionRedemption::query()->create(['promotion_id' => $promotion['promotion']->id, 'user_id' => $user->id, 'order_id' => $order->id, 'discount_minor' => $discount, 'bonus_units' => $promotion['bonus_units']]);
                 }
+                $this->purchaseAlerts->orderCreated($order->load('items'));
+
                 if ((int) $order->total_minor === 0) {
                     $order = $this->fulfillment->fulfill($order);
                 }
 
                 return ['order' => $order->load('items'), 'created' => true];
             });
+
+            return $result;
         } catch (UniqueConstraintViolationException $exception) {
             return $this->recoverConcurrentInsert($user, $idempotencyKey, $fingerprint, $exception);
         } catch (QueryException $exception) {

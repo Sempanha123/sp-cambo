@@ -61,7 +61,7 @@ export function upstreamBody(path: InferencePath, prepared: Prepared, internalMo
 export function usageFromJson(value: unknown, path: InferencePath): Usage | null {
   if (!record(value)) return null;
   if (path === "/v1/messages/count_tokens") {
-    const countedInput = integer(value.input_tokens);
+    const countedInput = integer(value.input_tokens) ?? integer(value.inputTokens) ?? integer(value.prompt_tokens) ?? integer(value.promptTokens);
     return countedInput === null ? null : {
       input_tokens: countedInput,
       output_tokens: 0,
@@ -71,19 +71,31 @@ export function usageFromJson(value: unknown, path: InferencePath): Usage | null
     };
   }
 
-  const usage = record(value.usage) ? value.usage
-    : record(value.response) && record(value.response.usage) ? value.response.usage
-    : record(value.message) && record(value.message.usage) ? value.message.usage
-    : null;
+  const usage = findUsage(value);
   if (!usage) return null;
 
-  const inputTotal = integer(usage.input_tokens) ?? integer(usage.prompt_tokens) ?? 0;
-  const outputTotal = integer(usage.output_tokens) ?? integer(usage.completion_tokens) ?? 0;
-  const inputDetails = record(usage.input_tokens_details) ? usage.input_tokens_details : record(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {};
-  const outputDetails = record(usage.output_tokens_details) ? usage.output_tokens_details : record(usage.completion_tokens_details) ? usage.completion_tokens_details : {};
-  const reportedCacheRead = integer(usage.cache_read_input_tokens) ?? integer(inputDetails.cached_tokens) ?? 0;
-  const reportedCacheWrite = integer(usage.cache_creation_input_tokens) ?? 0;
-  const reasoning = Math.min(outputTotal, integer(outputDetails.reasoning_tokens) ?? 0);
+  const inputTotal = firstInteger(usage, [
+    "input_tokens", "prompt_tokens", "inputTokens", "promptTokens", "prompt_token_count", "promptTokenCount",
+  ]) ?? 0;
+  const outputTotal = firstInteger(usage, [
+    "output_tokens", "completion_tokens", "outputTokens", "completionTokens", "candidates_token_count", "candidatesTokenCount",
+  ]) ?? 0;
+  const inputDetails = record(usage.input_tokens_details) ? usage.input_tokens_details
+    : record(usage.prompt_tokens_details) ? usage.prompt_tokens_details
+      : record(usage.inputTokensDetails) ? usage.inputTokensDetails
+        : record(usage.promptTokensDetails) ? usage.promptTokensDetails
+          : {};
+  const outputDetails = record(usage.output_tokens_details) ? usage.output_tokens_details
+    : record(usage.completion_tokens_details) ? usage.completion_tokens_details
+      : record(usage.outputTokensDetails) ? usage.outputTokensDetails
+        : record(usage.completionTokensDetails) ? usage.completionTokensDetails
+          : {};
+  const reportedCacheRead = firstInteger(usage, ["cache_read_input_tokens", "cacheReadInputTokens"])
+    ?? firstInteger(inputDetails, ["cached_tokens", "cachedTokens"])
+    ?? 0;
+  const reportedCacheWrite = firstInteger(usage, ["cache_creation_input_tokens", "cacheCreationInputTokens"])
+    ?? 0;
+  const reasoning = Math.min(outputTotal, firstInteger(outputDetails, ["reasoning_tokens", "reasoningTokens"]) ?? 0);
 
   if (path === "/v1/responses" || path === "/v1/chat/completions") {
     // OpenAI totals include cached/reasoning subsets. Partition those totals so
@@ -108,6 +120,78 @@ export function usageFromJson(value: unknown, path: InferencePath): Usage | null
     cache_write_tokens: reportedCacheWrite,
     reasoning_tokens: reasoning,
   };
+}
+
+function findUsage(value: Record<string, unknown>): Record<string, unknown> | null {
+  const direct: unknown[] = [
+    value.usage, value.usage_metadata, value.usageMetadata,
+    record(value.response) ? value.response.usage : null,
+    record(value.message) ? value.message.usage : null,
+    record(value.data) ? value.data.usage : null,
+    record(value.meta) ? value.meta.usage : null,
+    record(value.metadata) ? value.metadata.usage : null,
+  ];
+  for (const candidate of direct) if (record(candidate)) return candidate;
+
+  // OmniRoute adapters can wrap provider events differently depending on the
+  // selected combo/protocol. Search a small bounded object tree for a usage-like
+  // record instead of assuming one vendor-specific envelope.
+  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (seen.has(current.value)) continue;
+    seen.add(current.value);
+    if (looksLikeUsage(current.value)) return current.value;
+    if (current.depth >= 4) continue;
+    for (const child of Object.values(current.value)) {
+      if (record(child)) queue.push({ value: child, depth: current.depth + 1 });
+      else if (Array.isArray(child)) for (const item of child) if (record(item)) queue.push({ value: item, depth: current.depth + 1 });
+    }
+  }
+  return null;
+}
+
+function looksLikeUsage(value: Record<string, unknown>): boolean {
+  return [
+    "input_tokens", "prompt_tokens", "inputTokens", "promptTokens", "prompt_token_count", "promptTokenCount",
+    "output_tokens", "completion_tokens", "outputTokens", "completionTokens", "candidates_token_count", "candidatesTokenCount",
+  ].some((key) => integer(value[key]) !== null);
+}
+
+export function usageFromHeaders(headers: Headers, path: InferencePath): Usage | null {
+  const get = (...names: string[]): number | null => {
+    for (const name of names) {
+      const raw = headers.get(name);
+      if (raw === null || raw.trim() === "") continue;
+      const value = Number(raw);
+      if (Number.isSafeInteger(value) && value >= 0) return value;
+    }
+    return null;
+  };
+  const input = get("x-usage-input-tokens", "x-omniroute-input-tokens", "x-prompt-tokens", "x-input-tokens");
+  const output = get("x-usage-output-tokens", "x-omniroute-output-tokens", "x-completion-tokens", "x-output-tokens");
+  if (input === null && output === null) return null;
+  const cacheRead = get("x-usage-cache-read-tokens", "x-cache-read-tokens") ?? 0;
+  const cacheWrite = get("x-usage-cache-write-tokens", "x-cache-write-tokens") ?? 0;
+  const reasoning = get("x-usage-reasoning-tokens", "x-reasoning-tokens") ?? 0;
+  const inputTotal = input ?? 0;
+  const outputTotal = output ?? 0;
+  if (path === "/v1/responses" || path === "/v1/chat/completions") {
+    const cached = Math.min(inputTotal, cacheRead);
+    const written = Math.min(Math.max(0, inputTotal - cached), cacheWrite);
+    const reasoned = Math.min(outputTotal, reasoning);
+    return { input_tokens: inputTotal - cached - written, output_tokens: outputTotal - reasoned, cache_read_tokens: cached, cache_write_tokens: written, reasoning_tokens: reasoned };
+  }
+  return { input_tokens: inputTotal, output_tokens: Math.max(0, outputTotal - Math.min(outputTotal, reasoning)), cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite, reasoning_tokens: Math.min(outputTotal, reasoning) };
+}
+
+function firstInteger(value: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const parsed = integer(value[key]);
+    if (parsed !== null) return parsed;
+  }
+  return null;
 }
 
 export function mergeUsage(current: Usage | null, next: Usage | null): Usage | null {

@@ -29,6 +29,14 @@ const groups = computed(() => {
 const billingModeLabel = (mode: PublicPackage['billing_mode']) =>
   mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance'
 
+const includedLabel = (item: PublicPackage): string => {
+  if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
+    return `${formatMoney(item.credit_amount)} credit`
+  }
+
+  return `${formatUnits(item.advertised_units)} ${item.unit_label}`
+}
+
 const faqs = [
   {
     label: 'What happens when a package runs out?',
@@ -146,7 +154,7 @@ const faqs = [
                         Included
                       </dt>
                       <dd class="sp-numeric font-medium text-highlighted">
-                        {{ formatUnits(item.advertised_units) }} {{ item.unit_label }}
+                        {{ includedLabel(item) }}
                       </dd>
                     </div>
                     <div class="flex items-baseline justify-between gap-3">
@@ -208,7 +216,7 @@ const faqs = [
                         name="i-lucide-check"
                         class="mt-0.5 size-4 shrink-0 text-primary"
                       />
-                      API access activation is included after payment
+                      Automatic default API access is included after payment
                     </li>
                     <li class="flex items-start gap-2">
                       <UIcon

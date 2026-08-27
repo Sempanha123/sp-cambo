@@ -8,13 +8,13 @@ use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Notifications\ResetPassword;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Session\TokenMismatchException;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
-use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use Tests\TestCase;
 
 class AuthenticationTest extends TestCase
@@ -201,12 +201,24 @@ class AuthenticationTest extends TestCase
 
     public function test_stateful_spa_write_without_csrf_token_is_rejected_with_stable_code(): void
     {
-        $middleware = new \ReflectionMethod(EnsureFrontendRequestsAreStateful::class, 'frontendMiddleware');
-        $this->assertContains(ValidateCsrfToken::class, $middleware->invoke(app(EnsureFrontendRequestsAreStateful::class)));
+        // Keep proving that Sanctum's first-party SPA pipeline includes CSRF
+        // validation, but accept the framework's VerifyCsrfToken compatibility
+        // class as well as Laravel's newer ValidateCsrfToken name. This avoids
+        // pinning the application test to one private Sanctum representation.
+        $method = new \ReflectionMethod(EnsureFrontendRequestsAreStateful::class, 'frontendMiddleware');
+        $stack = $method->invoke(app(EnsureFrontendRequestsAreStateful::class));
+        $hasCsrf = collect($stack)->contains(static function ($middleware): bool {
+            if (! is_string($middleware)) {
+                return false;
+            }
 
-        // Laravel bypasses CSRF only while its test runner is active. Exercise the
-        // centralized TokenMismatchException mapping directly and keep an integration
-        // assertion above proving the real XSRF cookie/header path succeeds.
+            return is_a($middleware, ValidateCsrfToken::class, true)
+                || is_a($middleware, VerifyCsrfToken::class, true);
+        });
+        $this->assertTrue($hasCsrf, 'Sanctum stateful SPA middleware must include CSRF validation.');
+
+        // Laravel bypasses request CSRF while its own test runner is active, so
+        // exercise the centralized TokenMismatchException mapping directly too.
         $response = $this->postJson('/api/v1/test-csrf-exception');
         $response->assertStatus(419)->assertJsonPath('code', 'csrf_token_mismatch');
         $this->assertStringNotContainsString('private csrf detail', $response->getContent());
@@ -308,12 +320,13 @@ class AuthenticationTest extends TestCase
 
     public function test_unauthenticated_identity_request_is_rejected(): void
     {
-        $this->getJson('/api/v1/me')
+        $response = $this->getJson('/api/v1/me')
             ->assertUnauthorized()
-            ->assertExactJson([
-                'message' => 'Authentication is required.',
-                'code' => 'unauthenticated',
-            ]);
+            ->assertJsonPath('message', 'Authentication is required.')
+            ->assertJsonPath('code', 'unauthenticated');
+
+        $this->assertIsString($response->json('request_id'));
+        $this->assertNotSame('', $response->json('request_id'));
     }
 
     public function test_suspended_user_cannot_log_in_or_use_an_existing_token(): void

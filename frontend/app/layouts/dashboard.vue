@@ -3,6 +3,39 @@ const { dashboardLinks } = useSiteNavigation()
 const auth = useAuthStore()
 const router = useRouter()
 
+const navigationGroups = computed(() => {
+  const groups = [
+    {
+      label: 'Main',
+      test: (to: string) => ['/dashboard', '/dashboard/buy', '/dashboard/checkout', '/dashboard/usage', '/dashboard/orders', '/dashboard/entitlements'].some(prefix => to === prefix || (prefix !== '/dashboard' && to.startsWith(prefix)))
+    },
+    {
+      label: 'Developer',
+      test: (to: string) => ['/dashboard/api-keys', '/dashboard/playground', '/dashboard/cli-setup'].some(prefix => to.startsWith(prefix))
+    },
+    {
+      label: 'Support',
+      test: (to: string) => ['/dashboard/support', '/dashboard/telegram', '/dashboard/account'].some(prefix => to.startsWith(prefix))
+    },
+    {
+      label: 'Platform',
+      test: (to: string) => to.startsWith('/admin')
+    },
+    {
+      label: 'Reseller',
+      test: (to: string) => to.startsWith('/reseller')
+    }
+  ]
+
+  const items = dashboardLinks.value
+  return groups
+    .map(group => ({
+      label: group.label,
+      items: items.filter(item => group.test(String(item.to ?? '')))
+    }))
+    .filter(group => group.items.length > 0)
+})
+
 const signOut = async () => {
   await auth.logout()
   await router.push('/login')
@@ -65,25 +98,28 @@ const accountItems = computed(() => [
             aria-label="SP Cambo dashboard"
           >
             <SpLogo :mark-only="collapsed" />
-            <span v-if="!collapsed" class="sp-khmer-chip shrink-0">កម្ពុជា</span>
+            <span
+              v-if="!collapsed"
+              class="sp-khmer-chip shrink-0"
+            >កម្ពុជា</span>
           </NuxtLink>
 
           <UDashboardSidebarCollapse class="ml-auto" />
         </template>
 
         <template #default="{ collapsed }">
-          <div v-if="!collapsed" class="mx-1 mb-3 rounded-lg border border-white/10 bg-white/5 backdrop-blur-md px-3 py-2.5 transition-all duration-300 hover:bg-white/10">
-            <p class="text-[10px] font-semibold tracking-[0.16em] text-dimmed uppercase">Customer workspace</p>
-            <p class="mt-1 truncate text-xs text-muted">{{ auth.user?.email ?? 'Secure AI access' }}</p>
+          <div class="sp-dashboard-nav-groups">
+            <section v-for="group in navigationGroups" :key="group.label" class="sp-dashboard-nav-group">
+              <p v-if="!collapsed" class="sp-dashboard-nav-label">{{ group.label }}</p>
+              <UNavigationMenu
+                :items="group.items"
+                :collapsed="collapsed"
+                orientation="vertical"
+                :tooltip="collapsed"
+                class="sp-dashboard-nav-menu"
+              />
+            </section>
           </div>
-
-          <UNavigationMenu
-            :items="dashboardLinks"
-            :collapsed="collapsed"
-            orientation="vertical"
-            :tooltip="collapsed"
-            class="-mx-1.5"
-          />
         </template>
 
         <template #footer="{ collapsed }">

@@ -174,6 +174,9 @@ export interface AdminPackage {
   price: MoneyAmount
   compare_at_price: MoneyAmount | null
   duration_seconds: number
+  /** null = unlimited; 0 = sold out; positive = remaining purchasable units. */
+  stock_quantity: string | null
+  stock_status: 'UNLIMITED' | 'IN_STOCK' | 'OUT_OF_STOCK'
   limits: AdminPackageLimits | null
   billing_rules: AdminPackageBillingRules | null
   auto_creates_api_key: boolean
@@ -223,6 +226,8 @@ export interface AdminPackageInput {
   currency: string
   currency_exponent: number
   duration_seconds: number
+  /** null = unlimited; otherwise exact remaining package purchase units. */
+  stock_quantity: number | null
   /** Always present, possibly empty. Absent keys are absent ceilings. */
   limits: AdminPackageLimits
   billing_rules: AdminPackageBillingRules | null
@@ -631,10 +636,187 @@ export interface AdminTelegramAnnouncement {
   finished_at: string | null
 }
 
+export interface AdminTelegramPurchaseAlert {
+  id: string
+  event_type: string
+  audience: 'PUBLIC_FEED' | 'CUSTOMER' | string
+  status: 'PENDING' | 'SENDING' | 'SENT' | 'FAILED' | string
+  attempts: number
+  reference: string
+  package: string
+  amount: string
+  source: string
+  last_error: string | null
+  created_at: string | null
+  sent_at: string | null
+}
+
 export interface AdminTelegramStoreOverview {
+  /** Backward-compatible alias for storefront_bot_configured. */
   configured: boolean
+  storefront_bot_configured: boolean
+  storefront_bot_username: string | null
+  website_telegram_silent: boolean
+  purchase_activity_enabled: boolean
+  website_alert_bot_configured: boolean
+  website_alert_uses_storefront_fallback: boolean
+  website_alert_targets: number
+  customer_website_telegram_alerts_enabled: boolean
+  purchase_feed_enabled: boolean
+  purchase_feed_subscribers_enabled: boolean
+  purchase_feed_targets: number
   active_accounts: number
   announcement_subscribers: number
   queued_announcements: number
+  pending_purchase_messages: number
+  failed_purchase_messages: number
+  pending_website_alerts: number
+  failed_website_alerts: number
+  sellable_package_count: number
+  limited_stock_packages: number
+  sold_out_packages: number
+  recent_purchase_messages: AdminTelegramPurchaseAlert[]
   recent_announcements: AdminTelegramAnnouncement[]
+}
+
+/** Immutable administrative audit record. Sensitive metadata is redacted server-side before persistence. */
+export interface AdminAuditLog {
+  id: string
+  action: string
+  subject_type: string
+  subject_id: string
+  reason: string | null
+  metadata: Record<string, unknown> | null
+  actor: { id: string, name: string, email: string } | null
+  created_at: string | null
+}
+
+export interface AdminOperationsOverview {
+  release: string
+  updated_at: string
+  users: number
+  orders: Record<string, number>
+  payments: Record<string, number>
+  payments_recoverable: number
+  telegram_purchases: Record<string, number>
+  telegram_recoverable: number
+  telegram_announcement_failures: number
+  api_keys: { total: number, active: number }
+  entitlements: { active: number, expired: number }
+  reservations: { active: number, reconciliation_required: number, stale: number }
+}
+
+export interface AdminReconciliationReservation {
+  id: string
+  user: { id: string, name: string, email: string } | null
+  api_key: { id: string, label: string, masked: string } | null
+  public_model: string
+  billing_mode: string
+  reserved_units: string
+  reason: string | null
+  requested_at: string | null
+  original_expires_at: string | null
+  created_at: string | null
+}
+
+export type AdminRecoveryAction = 'payments' | 'telegram_purchases' | 'reservations' | 'entitlements' | 'announcements'
+
+export interface AdminRecoveryResponse {
+  action: AdminRecoveryAction
+  result: Record<string, number>
+}
+
+export interface AdminAccessUserRef {
+  id: string
+  name: string
+  email: string
+}
+
+export interface AdminCustomerAccess {
+  id: string
+  name: string
+  email: string
+  status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED' | string
+  roles: string[]
+  api_keys_count: number
+  entitlements_count: number
+  orders_count: number
+  created_at: string | null
+}
+
+export interface AdminAccessModelAlias {
+  id: number
+  public_alias: string
+  display_name: string
+}
+
+export interface AdminAccessApiKey {
+  id: string
+  user: AdminAccessUserRef | null
+  label: string
+  masked_key: string
+  status: 'ACTIVE' | 'DISABLED' | 'REVOKED' | 'EXPIRED' | string
+  stored_status: 'ACTIVE' | 'DISABLED' | 'REVOKED' | string
+  allowed_model_aliases: string[]
+  requests_per_minute: number | null
+  tokens_per_minute: number | null
+  concurrency_limit: number | null
+  max_request_bytes: number | null
+  max_output_tokens: number | null
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string | null
+}
+
+export interface AdminAccessApiKeyCreated {
+  key: AdminAccessApiKey
+  /** One-time plaintext secret. The backend never persists this value. */
+  secret: string
+}
+
+export interface AdminAccessEntitlement {
+  id: string
+  user: AdminAccessUserRef | null
+  source_type: string
+  source_id: string | null
+  package_name: string
+  billing_mode: BillingMode
+  original_units: string
+  remaining_units: string
+  reserved_units: string
+  unit_label: string
+  currency: string | null
+  currency_exponent: number | null
+  allowed_model_aliases: string[]
+  status: string
+  activated_at: string | null
+  expires_at: string | null
+  created_at: string | null
+}
+
+export interface AdminUsageRequest {
+  request_id: string
+  user: AdminAccessUserRef | null
+  api_key: { id: string, label: string, masked: string } | null
+  state: string
+  endpoint: string
+  public_model: string
+  internal_model: string | null
+  provider: string | null
+  route_version: number | null
+  estimated_units: string | null
+  input_tokens: string | null
+  output_tokens: string | null
+  cache_read_tokens: string | null
+  cache_write_tokens: string | null
+  reasoning_tokens: string | null
+  metered_units: string | null
+  credit_charge_minor: string | null
+  currency: string | null
+  currency_exponent: number | null
+  duration_ms: number | null
+  error_code: string | null
+  started_at: string | null
+  finished_at: string | null
 }

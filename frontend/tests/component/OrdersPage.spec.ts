@@ -51,11 +51,17 @@ const plane = {
   error: null as SpApiError | null
 }
 
-const { listOrders } = vi.hoisted(() => ({ listOrders: vi.fn() }))
+const { listOrders, hideOrder, clearOrderHistory, toastAdd } = vi.hoisted(() => ({
+  listOrders: vi.fn(),
+  hideOrder: vi.fn(),
+  clearOrderHistory: vi.fn(),
+  toastAdd: vi.fn()
+}))
 
 mockNuxtImport('useSpApi', () => () => ({
-  orders: { list: listOrders }
+  orders: { list: listOrders, hide: hideOrder, clearHistory: clearOrderHistory }
 }))
+mockNuxtImport('useToast', () => () => ({ add: toastAdd }))
 
 enableAutoUnmount(afterEach)
 
@@ -73,6 +79,9 @@ beforeEach(() => {
 
     return plane.orders
   })
+  hideOrder.mockReset().mockResolvedValue({ hidden: true, order_id: 'done1' })
+  clearOrderHistory.mockReset().mockResolvedValue({ hidden_count: 1 })
+  toastAdd.mockReset()
 
   // `useSpResource` caches into the payload, which is shared across this file.
   clearNuxtData()
@@ -356,3 +365,30 @@ describe('order list honesty about missing data', () => {
     expect(page.text()).toContain('could not be reached')
   })
 })
+
+describe('customer history controls', () => {
+  it('removes one completed order from the visible history through the safe hide endpoint', async () => {
+    plane.orders = [order({ id: 'done1', status: 'FULFILLED', fulfilled_at: iso(NOW - HOUR) })]
+    const page = await mountOrders()
+    const vm = page.vm as unknown as { removeOrder: (id: string) => Promise<void> }
+
+    await vm.removeOrder('done1')
+
+    expect(hideOrder).toHaveBeenCalledWith('done1')
+    expect(listOrders).toHaveBeenCalledTimes(2)
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: 'Removed from history' }))
+  })
+
+  it('clears removable history without asking the frontend to hard-delete accounting rows', async () => {
+    plane.orders = [order({ id: 'done1', status: 'FULFILLED', fulfilled_at: iso(NOW - HOUR) })]
+    const page = await mountOrders()
+    const vm = page.vm as unknown as { clearHistory: () => Promise<void> }
+
+    await vm.clearHistory()
+
+    expect(clearOrderHistory).toHaveBeenCalledTimes(1)
+    expect(listOrders).toHaveBeenCalledTimes(2)
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: 'History cleared' }))
+  })
+})
+

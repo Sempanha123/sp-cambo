@@ -1,15 +1,13 @@
 <script setup lang="ts">
-/**
- * Consistent dashboard page frame: navbar with title/actions plus a padded body.
- * Keeps every authenticated page structurally identical.
- */
 withDefaults(defineProps<{
   title: string
   description?: string
   icon?: string
+  eyebrow?: string
 }>(), {
   description: undefined,
-  icon: undefined
+  icon: undefined,
+  eyebrow: undefined
 })
 </script>
 
@@ -19,6 +17,7 @@ withDefaults(defineProps<{
       <UDashboardNavbar
         :title="title"
         :icon="icon"
+        class="sp-dashboard-navbar border-b border-default/60"
       >
         <template
           v-if="$slots.actions"
@@ -30,23 +29,34 @@ withDefaults(defineProps<{
     </template>
 
     <template #body>
-      <div class="mx-auto w-full max-w-7xl space-y-8 pb-10">
-        <div
-          v-if="description"
-          class="sp-dashboard-intro group"
+      <div class="sp-dashboard-content mx-auto w-full max-w-[1440px] space-y-7 pb-10">
+        <section
+          v-if="description || eyebrow"
+          class="sp-dashboard-intro sp-page-lead rounded-2xl p-4 sm:p-5"
         >
-          <div class="relative z-10 flex items-start gap-3">
-            <div class="mt-1 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary transition-all duration-500 group-hover:scale-110 group-hover:bg-primary/30 group-hover:shadow-[0_0_15px_rgba(99,102,241,0.4)]">
-              <UIcon :name="icon || 'i-lucide-sparkles'" class="size-4" />
+          <div class="flex items-start gap-3 sm:gap-4">
+            <div class="sp-page-lead-icon flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/10 text-primary">
+              <UIcon
+                :name="icon || 'i-lucide-sparkles'"
+                class="size-4.5"
+              />
             </div>
             <div class="min-w-0">
-              <div class="sp-khmer-rule mb-2 !h-px !w-12 transition-all duration-700 group-hover:w-20" />
-              <p class="max-w-3xl text-sm leading-6 text-muted transition-colors duration-300 group-hover:text-text">
+              <p
+                v-if="eyebrow"
+                class="sp-page-eyebrow text-[11px] font-semibold tracking-[0.16em] text-primary uppercase"
+              >
+                {{ eyebrow }}
+              </p>
+              <p
+                v-if="description"
+                class="mt-1 max-w-4xl text-sm leading-6 text-muted"
+              >
                 {{ description }}
               </p>
             </div>
           </div>
-        </div>
+        </section>
 
         <slot />
       </div>

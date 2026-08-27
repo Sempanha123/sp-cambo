@@ -32,4 +32,14 @@ class EntitlementLot extends Model
     {
         return $this->hasMany(CreditLedger::class);
     }
+
+    public function boundApiKey(): BelongsTo
+    {
+        return $this->belongsTo(ApiKey::class, 'bound_api_key_id');
+    }
+
+    public function fulfillmentClaim(): BelongsTo
+    {
+        return $this->belongsTo(FulfillmentClaim::class);
+    }
 }

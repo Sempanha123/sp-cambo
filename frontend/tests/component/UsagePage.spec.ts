@@ -24,6 +24,7 @@ const key = (overrides: Partial<ApiKeySummary> & { id: string }): ApiKeySummary 
     max_output_tokens: null
   },
   bound_entitlement_id: null,
+  secret_recopy_available: true,
   ...overrides
 })
 

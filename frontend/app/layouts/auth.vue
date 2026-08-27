@@ -30,13 +30,24 @@
     </header>
 
     <div class="mx-auto grid w-full max-w-7xl flex-1 items-stretch gap-8 px-4 pb-8 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-10 lg:pb-10">
-      <aside class="sp-auth-showcase relative hidden min-h-[38rem] rounded-2xl p-8 lg:flex lg:flex-col lg:justify-between xl:p-10 transition-all duration-700">
-        <div class="sp-khmer-motif pointer-events-none absolute inset-0 opacity-[0.18]" aria-hidden="true" />
-        <div class="sp-ambient-glow pointer-events-none absolute inset-0" aria-hidden="true" />
+      <aside class="sp-auth-showcase relative hidden min-h-[38rem] rounded-[1.4rem] p-8 lg:flex lg:flex-col lg:justify-between xl:p-10">
+        <div
+          class="sp-khmer-motif pointer-events-none absolute inset-0 opacity-[0.18]"
+          aria-hidden="true"
+        />
+        <div
+          class="sp-ambient-glow pointer-events-none absolute inset-0"
+          aria-hidden="true"
+        />
 
         <div class="relative z-10 max-w-xl space-y-6">
           <div class="flex items-center gap-3">
-            <UBadge color="neutral" variant="subtle" size="lg" class="rounded-full">
+            <UBadge
+              color="neutral"
+              variant="subtle"
+              size="lg"
+              class="rounded-full"
+            >
               SP Cambo · Cambodia
             </UBadge>
             <span class="sp-khmer-chip">AI សម្រាប់កម្ពុជា</span>
@@ -52,27 +63,51 @@
               Buy timed packages, receive your own SP Cambo API key, and connect Claude Code,
               Codex or compatible apps without exposing upstream provider credentials.
             </p>
-            <p class="text-sm font-medium text-default" style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;">
+            <p
+              class="text-sm font-medium text-default"
+              style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
+            >
               បច្ចេកវិទ្យា AI សម្រាប់កម្ពុជា · សាមញ្ញ សុវត្ថិភាព និងងាយគ្រប់គ្រង
             </p>
           </div>
         </div>
 
         <div class="relative z-10 grid gap-3 sm:grid-cols-3">
-          <div class="group rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md transition-all duration-300 hover:bg-white/10 hover:-translate-y-1 hover:shadow-lg">
-            <UIcon name="i-lucide-wallet" class="mb-3 size-5 text-primary transition-transform group-hover:scale-110" />
-            <p class="text-sm font-medium text-highlighted">Prepaid control</p>
-            <p class="mt-1 text-xs text-muted">Know the package price and expiry before you use it.</p>
+          <div class="sp-auth-feature group rounded-xl p-4">
+            <UIcon
+              name="i-lucide-wallet"
+              class="mb-3 size-5 text-primary transition-transform group-hover:scale-110"
+            />
+            <p class="text-sm font-medium text-highlighted">
+              Prepaid control
+            </p>
+            <p class="mt-1 text-xs text-muted">
+              Know the package price and expiry before you use it.
+            </p>
           </div>
-          <div class="group rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md transition-all duration-300 hover:bg-white/10 hover:-translate-y-1 hover:shadow-lg">
-            <UIcon name="i-lucide-shield-check" class="mb-3 size-5 text-primary transition-transform group-hover:scale-110" />
-            <p class="text-sm font-medium text-highlighted">Private routing</p>
-            <p class="mt-1 text-xs text-muted">Provider secrets and private model routes stay server-side.</p>
+          <div class="sp-auth-feature group rounded-xl p-4">
+            <UIcon
+              name="i-lucide-shield-check"
+              class="mb-3 size-5 text-primary transition-transform group-hover:scale-110"
+            />
+            <p class="text-sm font-medium text-highlighted">
+              Private routing
+            </p>
+            <p class="mt-1 text-xs text-muted">
+              Provider secrets and private model routes stay server-side.
+            </p>
           </div>
-          <div class="group rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md transition-all duration-300 hover:bg-white/10 hover:-translate-y-1 hover:shadow-lg">
-            <UIcon name="i-lucide-chart-line" class="mb-3 size-5 text-primary transition-transform group-hover:scale-110" />
-            <p class="text-sm font-medium text-highlighted">Live usage</p>
-            <p class="mt-1 text-xs text-muted">Track tokens, expiry and spend from one dashboard.</p>
+          <div class="sp-auth-feature group rounded-xl p-4">
+            <UIcon
+              name="i-lucide-chart-line"
+              class="mb-3 size-5 text-primary transition-transform group-hover:scale-110"
+            />
+            <p class="text-sm font-medium text-highlighted">
+              Live usage
+            </p>
+            <p class="mt-1 text-xs text-muted">
+              Track tokens, expiry and spend from one dashboard.
+            </p>
           </div>
         </div>
       </aside>
@@ -86,9 +121,18 @@
       <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 text-xs text-muted sm:flex-row">
         <p>Managed AI access with prepaid, metered billing.</p>
         <div class="flex items-center gap-4">
-          <NuxtLink to="/legal/terms" class="transition-colors hover:text-default">Terms</NuxtLink>
-          <NuxtLink to="/legal/privacy" class="transition-colors hover:text-default">Privacy</NuxtLink>
-          <NuxtLink to="/status" class="transition-colors hover:text-default">Status</NuxtLink>
+          <NuxtLink
+            to="/legal/terms"
+            class="transition-colors hover:text-default"
+          >Terms</NuxtLink>
+          <NuxtLink
+            to="/legal/privacy"
+            class="transition-colors hover:text-default"
+          >Privacy</NuxtLink>
+          <NuxtLink
+            to="/status"
+            class="transition-colors hover:text-default"
+          >Status</NuxtLink>
         </div>
       </div>
     </footer>

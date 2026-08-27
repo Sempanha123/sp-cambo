@@ -1,11 +1,10 @@
 <script setup lang="ts">
-/** Compact metric tile for dashboards. Never renders a fabricated value. */
+/** Smooth premium metric tile used across the SP Cambo dashboard. */
 withDefaults(defineProps<{
   label: string
   value: string
   hint?: string
   icon?: string
-  /** Marks interim numbers that settlement will replace. */
   estimated?: boolean
   tone?: 'default' | 'warning' | 'error' | 'success'
 }>(), {
@@ -24,26 +23,32 @@ const toneClass = {
 </script>
 
 <template>
-  <div class="sp-metric-tile rounded-lg border border-default bg-elevated/40 p-5">
-    <div class="flex items-start justify-between gap-3">
-      <p class="text-xs font-medium tracking-wide text-muted uppercase">
-        {{ label }}
-      </p>
-      <UIcon
+  <div class="sp-metric-tile rounded-2xl p-5">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <p class="text-xs font-medium text-muted">
+          {{ label }}
+        </p>
+        <p
+          class="sp-numeric mt-2 text-2xl font-semibold tracking-tight"
+          :class="toneClass[tone]"
+        >
+          {{ value }}
+        </p>
+      </div>
+
+      <div
         v-if="icon"
-        :name="icon"
-        class="size-4 shrink-0 text-dimmed"
-      />
+        class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/10 text-primary"
+      >
+        <UIcon
+          :name="icon"
+          class="size-5"
+        />
+      </div>
     </div>
 
-    <p
-      class="sp-numeric mt-2.5 text-2xl font-semibold tracking-tight"
-      :class="toneClass[tone]"
-    >
-      {{ value }}
-    </p>
-
-    <div class="mt-1.5 flex flex-wrap items-center gap-2">
+    <div class="mt-2 flex min-h-5 flex-wrap items-center gap-2">
       <UBadge
         v-if="estimated"
         color="warning"

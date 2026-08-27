@@ -11,6 +11,7 @@ useSeoMeta({
 })
 
 const api = useSpApi()
+const toast = useToast()
 
 const orders = await useSpResource('dashboard:orders', () => api.orders.list(), { server: false })
 
@@ -50,6 +51,37 @@ const filters = computed<Array<{ label: string, value: Filter, count: number }>>
 /** Template aliases for the shared helpers in `~/utils/orderState`. */
 const itemSummary = orderItemSummary
 const action = orderPrimaryAction
+
+const removingId = ref<string | null>(null)
+const clearOpen = ref(false)
+const clearing = ref(false)
+
+const removeOrder = async (id: string) => {
+  removingId.value = id
+  try {
+    await api.orders.hide(id)
+    await orders.refresh()
+    toast.add({ title: 'Removed from history', description: 'The order is hidden from your account view. Billing and audit records remain protected.', color: 'success' })
+  } catch (cause) {
+    toast.add({ title: 'Order could not be removed', description: toSpApiError(cause).message, color: 'error' })
+  } finally {
+    removingId.value = null
+  }
+}
+
+const clearHistory = async () => {
+  clearing.value = true
+  try {
+    const result = await api.orders.clearHistory()
+    clearOpen.value = false
+    await orders.refresh()
+    toast.add({ title: 'History cleared', description: `${result.hidden_count} removable order${result.hidden_count === 1 ? '' : 's'} hidden. Active payment orders were kept.`, color: 'success' })
+  } catch (cause) {
+    toast.add({ title: 'History could not be cleared', description: toSpApiError(cause).message, color: 'error' })
+  } finally {
+    clearing.value = false
+  }
+}
 </script>
 
 <template>
@@ -67,6 +99,15 @@ const action = orderPrimaryAction
         @click="orders.refresh()"
       >
         Refresh
+      </UButton>
+      <UButton
+        v-if="sorted.length > 0"
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-trash-2"
+        @click="clearOpen = true"
+      >
+        Clear history
       </UButton>
       <UButton
         to="/dashboard/buy"
@@ -130,7 +171,7 @@ const action = orderPrimaryAction
 
         <ul
           v-else
-          class="divide-y divide-default overflow-hidden rounded-lg border border-default"
+          class="sp-dashboard-list divide-y divide-default overflow-hidden rounded-lg border border-default"
         >
           <li
             v-for="order in visible"
@@ -185,6 +226,15 @@ const action = orderPrimaryAction
               >
                 {{ action(order).label }}
               </UButton>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="sm"
+                icon="i-lucide-trash-2"
+                :loading="removingId === order.id"
+                aria-label="Remove order from history"
+                @click="removeOrder(order.id)"
+              />
             </div>
           </li>
         </ul>
@@ -211,5 +261,25 @@ const action = orderPrimaryAction
         </p>
       </div>
     </div>
+
+    <UModal
+      v-model:open="clearOpen"
+      title="Clear order & payment history?"
+      description="This removes completed, failed and expired orders from your customer view. Active payment orders are kept. Financial, fulfillment and audit records are retained server-side for reconciliation and security."
+    >
+      <template #body>
+        <UAlert
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-shield-check"
+          title="This is a privacy-safe clear, not destructive accounting deletion"
+          description="You will no longer see removable orders in your history, but SP Cambo keeps the protected records needed to prevent double fulfillment and resolve payment issues."
+        />
+        <div class="mt-5 flex justify-end gap-2">
+          <UButton color="neutral" variant="ghost" @click="clearOpen = false">Cancel</UButton>
+          <UButton color="error" icon="i-lucide-trash-2" :loading="clearing" @click="clearHistory">Clear my history</UButton>
+        </div>
+      </template>
+    </UModal>
   </SpDashboardPage>
 </template>

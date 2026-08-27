@@ -12,19 +12,16 @@ import SpApiKeyRevealModal from '~/components/SpApiKeyRevealModal.vue'
  * The API keys page, mounted for real.
  *
  * `SpApiKeyRevealModal.spec.ts` covers the dialog itself. This file covers the
- * page that owns the secret, because one-time reveal is a property of the whole
- * flow rather than of one component: a modal that hides the key perfectly is
- * worth nothing if the page keeps it in state, puts it in the list, or hands it
- * back after the dialog closes.
- *
- * The guarantees asserted here are the ones CLAUDE.md states as non-negotiable —
- * a full key is rendered exactly once, and never re-fetchable — plus the one
- * irreversible action on the page: revoke.
+ * page that owns the secret. Customer-owned inference keys can now be securely
+ * re-copied through an explicit authenticated reveal endpoint, but list responses
+ * remain masked and the page must drop the plaintext as soon as the dialog closes.
+ * The other irreversible behavior covered here is revoke.
  *
  * Both values below are test fixtures and must never be real keys.
  */
 const CREATED_SECRET = 'sk-spc-created-000000000000000000000000'
 const ROTATED_SECRET = 'sk-spc-rotated-111111111111111111111111'
+const RECOVERED_SECRET = 'sk-spc-recovered-2222222222222222222222'
 
 const NOW = Date.parse('2026-08-21T10:00:00.000Z')
 
@@ -45,6 +42,7 @@ const summary = (overrides: Partial<ApiKeySummary> & { id: string }): ApiKeySumm
     max_output_tokens: null
   },
   bound_entitlement_id: null,
+  secret_recopy_available: true,
   ...overrides
 })
 
@@ -60,6 +58,7 @@ const {
   listModels,
   createKey,
   rotateKey,
+  revealKey,
   setKeyStatus,
   testKey,
   toastAdd
@@ -68,6 +67,7 @@ const {
   listModels: vi.fn(),
   createKey: vi.fn(),
   rotateKey: vi.fn(),
+  revealKey: vi.fn(),
   setKeyStatus: vi.fn(),
   testKey: vi.fn(),
   toastAdd: vi.fn()
@@ -78,6 +78,7 @@ mockNuxtImport('useSpApi', () => () => ({
     apiKeys: listKeys,
     createApiKey: createKey,
     rotateApiKey: rotateKey,
+    revealApiKey: revealKey,
     setApiKeyStatus: setKeyStatus,
     testApiKey: testKey
   },
@@ -115,6 +116,11 @@ beforeEach(() => {
     secret: ROTATED_SECRET
   }))
 
+  revealKey.mockReset().mockImplementation(async (id: string): Promise<ApiKeyCreated> => ({
+    key: summary({ id, label: 'Production key' }),
+    secret: RECOVERED_SECRET
+  }))
+
   setKeyStatus.mockReset().mockImplementation(async () => {
     if (plane.statusError) {
       throw plane.statusError
@@ -143,8 +149,9 @@ interface KeysVm {
   submitCreate: () => Promise<void>
   revealOpen: boolean
   revealSecret: string | null
-  revealContext: 'created' | 'rotated'
+  revealContext: 'created' | 'rotated' | 'recovered'
   clearReveal: () => void
+  revealExisting: (key: ApiKeySummary) => Promise<void>
   rotateTarget: ApiKeySummary | null
   confirmRotate: () => Promise<void>
   revokeTarget: ApiKeySummary | null
@@ -181,8 +188,8 @@ const documentHtml = () => document.body.innerHTML
 /** Template line breaks are not sentence breaks; copy is asserted on the sentence. */
 const squashed = (text: string) => text.replace(/\s+/g, ' ')
 
-describe('api keys one-time reveal', () => {
-  it('reveals the secret exactly once, on creation', async () => {
+describe('api keys secure reveal', () => {
+  it('reveals a new secret on creation', async () => {
     const page = await mountKeys()
     const vm = page.vm as unknown as KeysVm
 
@@ -247,8 +254,21 @@ describe('api keys one-time reveal', () => {
     vm.clearReveal()
     await nextTick()
 
-    // Nothing about the new key can reproduce its secret.
+    // Closing the dialog clears plaintext from page state; re-copy requires a fresh API request.
     expect(documentHtml()).not.toContain(CREATED_SECRET)
+  })
+
+  it('re-copies an existing customer-owned key through the explicit reveal endpoint', async () => {
+    const page = await mountKeys()
+    const vm = page.vm as unknown as KeysVm
+
+    await vm.revealExisting(plane.keys[0]!)
+    await nextTick()
+
+    expect(revealKey).toHaveBeenCalledWith('key1')
+    expect(vm.revealContext).toBe('recovered')
+    expect(vm.revealSecret).toBe(RECOVERED_SECRET)
+    expect(documentText()).toContain(RECOVERED_SECRET)
   })
 
   /** A rotation kills the previous secret, so it must not read as a new key. */
@@ -276,7 +296,7 @@ describe('api keys one-time reveal', () => {
     expect(page.text()).toContain('ab12')
     expect(page.text()).not.toContain(CREATED_SECRET)
     // Stated on the page, so the customer knows the list is not hiding a copy.
-    expect(page.text()).toContain('shown once at creation or rotation')
+    expect(page.text()).toContain('securely re-fetch your own encrypted secret')
   })
 
   it('never writes a secret into the page markup outside the dialog', async () => {
@@ -398,21 +418,21 @@ describe('api keys revoke', () => {
   })
 })
 
-describe('api keys activity links', () => {
-  it('links an active key to its safe activity deep link', async () => {
+describe('api key detail links', () => {
+  it('links an active key to its dedicated detail view', async () => {
     const page = await mountKeys()
-    const activityLink = page.get('a[href="/dashboard/usage?key=key1"]')
+    const detailLink = page.get('a[href="/dashboard/api-keys/key1"]')
 
-    expect(activityLink.text()).toContain('View activity')
+    expect(detailLink.text()).toContain('Key details')
   })
 
-  it('keeps historical activity reachable for a revoked key', async () => {
+  it('keeps a revoked key detail view reachable for historical activity', async () => {
     plane.keys = [summary({ id: 'revoked-key', label: 'Retired worker', status: 'REVOKED' })]
 
     const page = await mountKeys()
-    const activityLink = page.get('a[href="/dashboard/usage?key=revoked-key"]')
+    const detailLink = page.get('a[href="/dashboard/api-keys/revoked-key"]')
 
-    expect(activityLink.text()).toContain('View activity')
+    expect(detailLink.text()).toContain('Key details')
   })
 })
 
@@ -485,9 +505,9 @@ describe('api keys ceilings', () => {
   })
 
   /**
-   * The non-billable check now reports the credential's actual spendable pool.
-   * `null` means that billing mode is not applicable, while an exact zero must
-   * remain visible as zero rather than being mistaken for a missing balance.
+   * The non-billable check reports the credential's actual spendable pool.
+   * A missing balance mode is explained as no matching purchased balance, while
+   * an exact zero remains visible as zero rather than being mistaken for missing data.
    */
   it('distinguishes an inapplicable balance mode from an exact zero balance', async () => {
     testKey.mockResolvedValue({
@@ -515,7 +535,7 @@ describe('api keys ceilings', () => {
     await nextTick()
 
     expect(squashed(documentText())).toContain('Tokens remaining 0')
-    expect(squashed(documentText())).toContain('Credit remaining Not applicable')
+    expect(squashed(documentText())).toContain('Credit remaining No matching credit balance')
     expect(squashed(documentText())).toContain('reports only balances this credential can actually spend')
   })
 })

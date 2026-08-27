@@ -73,6 +73,8 @@ const fullPackage = (overrides: Partial<AdminPackage> = {}): AdminPackage => ({
   price: { minor: '4900', currency: 'USD', exponent: 2 },
   compare_at_price: { minor: '6900', currency: 'USD', exponent: 2 },
   duration_seconds: 2_592_000,
+  stock_quantity: null,
+  stock_status: 'UNLIMITED',
   limits: {
     requests_per_minute: 60,
     tokens_per_minute: 200_000,
@@ -131,6 +133,7 @@ describe('package form round trip', () => {
       currency: 'USD',
       currency_exponent: 2,
       duration_seconds: 2_592_000,
+      stock_quantity: null,
       limits: item.limits,
       billing_rules: item.billing_rules,
       auto_creates_api_key: true,

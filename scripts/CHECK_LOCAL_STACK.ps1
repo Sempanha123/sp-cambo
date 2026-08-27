@@ -1,6 +1,6 @@
 ﻿param(
   [string]$ApiKey = '',
-  [string]$Model = 'claude-opus-5'
+  [string]$Model = 'openai-codex'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -17,13 +17,32 @@ function Check-Url([string]$Name, [string]$Url) {
 }
 
 $laravelOk = Check-Url 'Laravel' 'http://127.0.0.1:8000/api/v1/health'
+$controlPlaneOk = Check-Url 'Gateway control plane' 'http://127.0.0.1:8001/api/v1/health'
 $gatewayOk = Check-Url 'Inference gateway' 'http://127.0.0.1:3010/health'
+if ($gatewayOk) {
+  try {
+    $gatewayHealth = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:3010/health' -TimeoutSec 5
+    if ($gatewayHealth.data.model_routing -ne 'database_internal_model_id' -or $gatewayHealth.data.build -ne 'fix28') {
+      Write-Host '[FAIL] Gateway is an older/unknown build. Restart it from this Fix25 source tree.' -ForegroundColor Red
+      $gatewayOk = $false
+    } else {
+      Write-Host '[OK] Gateway uses database internal-model routing' -ForegroundColor Green
+    }
+  } catch {
+    Write-Host '[FAIL] Could not verify Gateway build marker.' -ForegroundColor Red
+    $gatewayOk = $false
+  }
+}
+$readyOk = Check-Url 'Gateway readiness' 'http://127.0.0.1:3010/ready'
 $khqrOk = Check-Url 'KHQR generator' 'http://127.0.0.1:3011/health'
 
 if (-not $laravelOk) {
     Write-Host "  Start: .\scripts\START_LARAVEL.ps1" -ForegroundColor Yellow
 }
-if (-not $gatewayOk) {
+if (-not $controlPlaneOk) {
+    Write-Host "  Start: .\scripts\START_CONTROL_PLANE.ps1" -ForegroundColor Yellow
+}
+if (-not $gatewayOk -or -not $readyOk) {
     Write-Host "  Start: .\scripts\START_LOCAL_GATEWAY.ps1" -ForegroundColor Yellow
 }
 if (-not $khqrOk) {

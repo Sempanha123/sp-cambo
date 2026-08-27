@@ -2,7 +2,7 @@
  * Permission checks for the elevated surfaces (admin, catalogue, reseller).
  *
  * These are *presentation* checks only. The control plane enforces
- * `admin.view`, `catalog.manage` and `reseller.manage` on every route, so a wrong
+ * `admin.view`, `catalog.manage`, `access.manage` and `reseller.manage` on every route, so a wrong
  * answer here can hide a link or show one that 403s — it can never grant access.
  *
  * `GET /me` publishes role names and effective permissions for discovery.
@@ -35,6 +35,7 @@ export function useSpPermissions() {
    * definition — so an analytics-only admin is not shown a link that would 403.
    */
   const canManageCatalog = computed(() => can('catalog.manage') || hasRole('SUPER_ADMIN'))
+  const canManageAccess = computed(() => can('access.manage') || hasRole('SUPER_ADMIN'))
 
   return {
     permissions,
@@ -44,6 +45,7 @@ export function useSpPermissions() {
     hasRole,
     canViewAdmin,
     canManageCatalog,
+    canManageAccess,
     canManageReseller
   }
 }

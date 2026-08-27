@@ -29,6 +29,18 @@ describe('toSpApiError — backend code', () => {
     expect(error.message).toBe('This customer is already closed.')
   })
 
+
+  it('preserves the database migration-required code so stale local schemas are actionable', () => {
+    const error = toSpApiError(fetchError(503, {
+      message: 'SP Cambo needs the latest database update before this feature can be used.',
+      code: 'database_migration_required'
+    }))
+
+    expect(error.code).toBe('database_migration_required')
+    expect(error.message).toContain('database update')
+    expect(error.message).not.toContain('SQLSTATE')
+  })
+
   it('accepts the documented alias spellings rather than degrading a clear failure', () => {
     expect(toSpApiError(fetchError(402, { message: 'x', code: 'token_quota_exhausted' })).code)
       .toBe('insufficient_tokens')
@@ -212,6 +224,7 @@ describe('messageForCode', () => {
       'payment_verification_failed',
       'insufficient_tokens',
       'insufficient_credits',
+      'database_migration_required',
       'server_error',
       'network_unreachable',
       'endpoint_unavailable',

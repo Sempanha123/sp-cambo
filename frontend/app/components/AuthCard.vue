@@ -112,7 +112,10 @@ onBeforeUnmount(() => auth.resetErrors())
 
 <template>
   <div class="w-full max-w-md">
-    <UCard class="sp-auth-card" :ui="{ root: 'ring-default/80' }">
+    <UCard
+      class="sp-auth-card"
+      :ui="{ root: 'ring-default/80' }"
+    >
       <template #header>
         <div class="space-y-3">
           <div class="sp-khmer-rule !h-px !w-14" />

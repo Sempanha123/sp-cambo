@@ -23,6 +23,16 @@ class Reservation extends Model
         ];
     }
 
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function apiKey(): BelongsTo
+    {
+        return $this->belongsTo(ApiKey::class);
+    }
+
     public function providerConnectionRevision(): BelongsTo
     {
         return $this->belongsTo(ProviderConnectionRevision::class);

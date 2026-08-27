@@ -105,7 +105,7 @@ const formatMoneySet = (single: MoneyAmount | null | undefined, grouped: MoneyAm
   if (grouped?.length) return grouped.map(amount => formatMoney(amount)).join(' + ')
   return '—'
 }
-const runningStates = ['reserved', 'connecting', 'streaming', 'reconciling']
+const runningStates = ['reserved', 'connecting', 'streaming']
 const requestDuration = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
   if (request.duration_ms !== null) return request.duration_ms < 1000 ? `${request.duration_ms} ms` : `${(request.duration_ms / 1000).toFixed(2)} s`
   if (!runningStates.includes(request.state)) return '—'
@@ -155,7 +155,7 @@ const statusColor = (status?: string) => {
     <UContainer class="py-10 sm:py-14">
       <div class="mx-auto max-w-5xl space-y-8">
         <div class="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.6fr)]">
-          <UCard class="sp-premium-card sp-key-checker-card">
+          <UCard class="sp-premium-card sp-key-checker-card sp-app-card">
             <template #header>
               <div class="flex items-start gap-3">
                 <div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -272,7 +272,7 @@ const statusColor = (status?: string) => {
           </section>
 
           <div class="grid gap-6 lg:grid-cols-2">
-            <UCard class="sp-premium-card">
+            <UCard class="sp-premium-card sp-app-card">
               <template #header>
                 <h3 class="font-semibold text-highlighted">Access details</h3>
               </template>
@@ -302,7 +302,7 @@ const statusColor = (status?: string) => {
               </dl>
             </UCard>
 
-            <UCard class="sp-premium-card">
+            <UCard class="sp-premium-card sp-app-card">
               <template #header>
                 <h3 class="font-semibold text-highlighted">Metered usage</h3>
               </template>
@@ -329,7 +329,7 @@ const statusColor = (status?: string) => {
             </UCard>
           </div>
 
-          <UCard v-if="keyStatus.recent_requests?.length" class="sp-premium-card">
+          <UCard v-if="keyStatus.recent_requests?.length" class="sp-premium-card sp-app-card">
             <template #header>
               <div>
                 <h3 class="font-semibold text-highlighted">Recent requests</h3>
@@ -367,7 +367,7 @@ const statusColor = (status?: string) => {
             </div>
           </UCard>
 
-          <UCard v-else class="sp-premium-card">
+          <UCard v-else class="sp-premium-card sp-app-card">
             <div class="flex flex-col items-center py-6 text-center">
               <div class="mb-3 flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
                 <UIcon name="i-lucide-activity" class="size-5" />

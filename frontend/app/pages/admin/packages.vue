@@ -262,6 +262,40 @@ const openClone = (item: AdminPackage) => open(clonePackageForm(item), {
   submitLabel: 'Create package'
 })
 
+const addingStockId = ref<string | null>(null)
+
+const addStock = async (item: AdminPackage) => {
+  if (item.stock_quantity === null || addingStockId.value) return
+
+  const raw = window.prompt(`How many units of stock do you want to add to ${item.name}?`, '10')
+  if (raw === null) return
+  const quantity = Number(raw.trim())
+  if (!Number.isSafeInteger(quantity) || quantity < 1) {
+    toast.add({ title: 'Invalid stock quantity', description: 'Enter a positive whole number.', color: 'warning' })
+    return
+  }
+
+  const reason = window.prompt('Reason for this stock change (required for audit log):', 'Restocked package inventory for customer sales.')
+  if (!reason || reason.trim().length < 10) return
+
+  addingStockId.value = item.id
+  try {
+    const saved = await api.admin.addPackageStock(item.id, quantity, reason.trim())
+    await packages.refresh()
+    toast.add({
+      title: item.stock_quantity === '0' ? `${saved.name} is back in stock` : `Stock added to ${saved.name}`,
+      description: `Available stock: ${saved.stock_quantity ?? 'Unlimited'}. Telegram subscribers will receive the matching store update with Buy now.`,
+      color: 'success',
+      icon: 'i-lucide-package-plus'
+    })
+  } catch (cause) {
+    const error = toSpApiError(cause)
+    toast.add({ title: 'Could not add stock', description: error.message, color: 'error' })
+  } finally {
+    addingStockId.value = null
+  }
+}
+
 const submit = async (input: AdminPackageInput) => {
   const id = editingId.value
 
@@ -348,7 +382,7 @@ const submit = async (input: AdminPackageInput) => {
       @retry="packages.refresh()"
     >
       <div class="space-y-6">
-        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <SpMetric
             label="Packages"
             icon="i-lucide-package"
@@ -374,6 +408,13 @@ const submit = async (input: AdminPackageInput) => {
             :value="formatCount(aliasesMissingCost.length)"
             hint="No verified upstream cost"
             :tone="aliasesMissingCost.length > 0 ? 'warning' : 'success'"
+          />
+          <SpMetric
+            label="Sold out"
+            icon="i-lucide-package-x"
+            :value="formatCount(all.filter(item => item.stock_quantity === '0').length)"
+            hint="Finite packages with no stock"
+            :tone="all.some(item => item.stock_quantity === '0') ? 'warning' : 'success'"
           />
         </div>
 
@@ -432,7 +473,7 @@ const submit = async (input: AdminPackageInput) => {
           <li
             v-for="item in visible"
             :key="item.id"
-            class="overflow-hidden rounded-xl border bg-elevated/30"
+            class="sp-admin-record overflow-hidden rounded-xl border bg-elevated/30"
             :class="isAtRisk(item) ? 'border-error/40' : 'border-default'"
           >
             <div class="flex flex-col gap-4 border-b border-default p-5 sm:flex-row sm:items-start sm:justify-between">
@@ -454,6 +495,13 @@ const submit = async (input: AdminPackageInput) => {
                     size="sm"
                   >
                     {{ item.billing_mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance' }}
+                  </UBadge>
+                  <UBadge
+                    :color="item.stock_quantity === '0' ? 'warning' : 'neutral'"
+                    variant="subtle"
+                    size="sm"
+                  >
+                    {{ item.stock_quantity === null ? 'Unlimited stock' : item.stock_quantity === '0' ? 'Sold out' : `${formatCount(Number(item.stock_quantity))} in stock` }}
                   </UBadge>
                 </div>
                 <code class="block font-mono text-xs text-dimmed">{{ item.slug }}</code>
@@ -477,6 +525,17 @@ const submit = async (input: AdminPackageInput) => {
                     Edit
                   </UButton>
                   <UButton
+                    v-if="item.stock_quantity !== null"
+                    color="neutral"
+                    variant="subtle"
+                    icon="i-lucide-package-plus"
+                    size="sm"
+                    :loading="addingStockId === item.id"
+                    @click="addStock(item)"
+                  >
+                    Add stock
+                  </UButton>
+                  <UButton
                     color="neutral"
                     variant="ghost"
                     icon="i-lucide-copy"
@@ -497,6 +556,14 @@ const submit = async (input: AdminPackageInput) => {
                 </dt>
                 <dd class="sp-numeric text-sm text-default">
                   {{ formatUnits(item.advertised_units) }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs text-dimmed">
+                  Package stock
+                </dt>
+                <dd class="sp-numeric text-sm text-default">
+                  {{ item.stock_quantity === null ? 'Unlimited' : formatCount(Number(item.stock_quantity)) }}
                 </dd>
               </div>
               <div>

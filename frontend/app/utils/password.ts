@@ -11,7 +11,7 @@
  * creation (`Password::min(12)->letters()->mixedCase()->numbers()->symbols()`).
  *
  * The two differ because the backend rules differ; that inconsistency is
- * reported in `docs/ai/CLAUDE_TO_CODEX.md`.
+ * enforced by the current account policy.
  */
 
 export type PasswordPolicyLevel = 'basic' | 'strong'

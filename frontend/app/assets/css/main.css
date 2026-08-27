@@ -77,7 +77,6 @@
     --sp-shadow-layered: var(--sp-shadow-ambient), var(--sp-shadow-focused);
     --sp-glow-primary: color-mix(in oklab, var(--ui-primary) 40%, transparent);
     --sp-glow-gold: color-mix(in oklab, var(--sp-khmer-gold) 40%, transparent);
-    --sp-glass-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
     --sp-transition-premium: all 400ms cubic-bezier(0.23, 1, 0.32, 1);
 
     /*
@@ -407,7 +406,6 @@
     content: '';
     position: fixed;
     inset: 0;
-    background-image: var(--sp-glass-grain);
     opacity: 0.02;
     pointer-events: none;
     z-index: 9999;
@@ -490,7 +488,6 @@
     content: '';
     position: absolute;
     inset: 0;
-    background-image: var(--sp-glass-grain);
     opacity: 0.04;
     pointer-events: none;
     z-index: 1;
@@ -597,7 +594,6 @@
     content: '';
     position: absolute;
     inset: 0;
-    background-image: var(--sp-glass-grain);
     opacity: 0.03;
     pointer-events: none;
   }
@@ -635,4 +631,988 @@
     min-height: 2.5rem;
   }
 
+}
+
+/* --------------------------------------------------------------------------
+ * FIX20 — Smooth premium SaaS visual system
+ * Removes noisy texture/pattern backgrounds and gives every surface the same
+ * restrained navy/indigo/cyan language used by the approved SP Cambo mockup.
+ * ------------------------------------------------------------------------ */
+@layer theme {
+  :root {
+    --sp-surface-0: oklch(98.8% 0.004 255);
+    --sp-surface-1: oklch(97.4% 0.008 255);
+    --sp-surface-2: oklch(95.8% 0.012 255);
+    --sp-panel: color-mix(in oklab, white 84%, var(--ui-primary) 2%);
+    --sp-panel-strong: color-mix(in oklab, white 94%, var(--ui-primary) 2%);
+    --sp-panel-border: color-mix(in oklab, var(--ui-color-neutral-300) 66%, var(--ui-primary) 12%);
+    --sp-soft-shadow: 0 18px 54px -34px color-mix(in oklab, var(--ui-color-neutral-950) 36%, transparent);
+    --sp-card-shadow: 0 14px 36px -28px color-mix(in oklab, var(--ui-color-neutral-950) 42%, transparent);
+    --sp-hover-shadow: 0 22px 48px -30px color-mix(in oklab, var(--ui-primary) 42%, transparent);
+  }
+
+  .dark {
+    --sp-surface-0: #061225;
+    --sp-surface-1: #08172c;
+    --sp-surface-2: #0b1c34;
+    --sp-panel: rgba(12, 28, 52, 0.76);
+    --sp-panel-strong: rgba(13, 31, 58, 0.92);
+    --sp-panel-border: rgba(135, 166, 216, 0.16);
+    --sp-soft-shadow: 0 24px 64px -32px rgba(0, 0, 0, 0.72);
+    --sp-card-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.72);
+    --sp-hover-shadow: 0 24px 56px -34px rgba(45, 106, 255, 0.52);
+  }
+}
+
+@layer base {
+  body::before {
+    display: none !important;
+  }
+
+  body {
+    background: var(--sp-surface-0);
+  }
+}
+
+@layer components {
+  .sp-shell-aurora,
+  .sp-dashboard-shell {
+    background-color: var(--sp-surface-0) !important;
+    background-image:
+      radial-gradient(900px 520px at 62% -160px, color-mix(in oklab, var(--ui-primary) 15%, transparent), transparent 70%),
+      radial-gradient(680px 460px at 100% 8%, color-mix(in oklab, var(--ui-secondary) 8%, transparent), transparent 72%),
+      linear-gradient(180deg, var(--sp-surface-0), var(--sp-surface-1) 58%, var(--sp-surface-0)) !important;
+    background-attachment: scroll !important;
+  }
+
+  .sp-site-header {
+    border-bottom: 1px solid var(--sp-panel-border) !important;
+    background: color-mix(in oklab, var(--sp-surface-0) 90%, transparent) !important;
+    box-shadow: none !important;
+    backdrop-filter: blur(20px) saturate(120%) !important;
+  }
+
+  .sp-grid-backdrop,
+  .sp-khmer-motif,
+  .sp-ambient-glow {
+    display: none !important;
+  }
+
+  .sp-khmer-rule {
+    background: linear-gradient(90deg, var(--ui-primary), var(--ui-secondary), transparent) !important;
+    box-shadow: none !important;
+  }
+
+  .sp-gradient-text {
+    background: linear-gradient(105deg, #55b5ff 0%, #7a8cff 44%, #9c66ff 78%, #4bd7e8 100%) !important;
+    background-clip: text !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+  }
+
+  .sp-premium-card,
+  .sp-metric-tile,
+  .sp-dashboard-intro,
+  .sp-smooth-panel {
+    border: 1px solid var(--sp-panel-border) !important;
+    background: var(--sp-panel) !important;
+    box-shadow: var(--sp-card-shadow) !important;
+    backdrop-filter: blur(16px) saturate(112%) !important;
+  }
+
+  .sp-premium-card::after,
+  .sp-premium-card::before,
+  .sp-dashboard-intro::after {
+    display: none !important;
+  }
+
+  .sp-premium-card,
+  .sp-metric-tile {
+    transition: border-color 220ms ease, background-color 220ms ease, box-shadow 220ms ease, transform 220ms ease !important;
+  }
+
+  .sp-premium-card:hover,
+  .sp-metric-tile:hover {
+    transform: translateY(-2px) !important;
+    border-color: color-mix(in oklab, var(--ui-primary) 42%, var(--sp-panel-border)) !important;
+    box-shadow: var(--sp-hover-shadow) !important;
+  }
+
+  .sp-dashboard-sidebar {
+    border-right: 1px solid var(--sp-panel-border) !important;
+    background: color-mix(in oklab, var(--sp-surface-0) 93%, transparent) !important;
+    backdrop-filter: blur(20px) saturate(116%);
+  }
+
+  .sp-dashboard-page {
+    background: transparent !important;
+  }
+
+  .sp-dashboard-page [data-slot='header'],
+  .sp-dashboard-page header {
+    background: color-mix(in oklab, var(--sp-surface-0) 84%, transparent);
+    backdrop-filter: blur(16px);
+  }
+
+  .sp-public-hero {
+    background: transparent !important;
+  }
+
+  .sp-hero-panel {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--sp-panel-border);
+    border-radius: 1.4rem;
+    background:
+      radial-gradient(70% 120% at 82% 20%, rgba(81, 72, 255, 0.24), transparent 58%),
+      radial-gradient(50% 100% at 60% 120%, rgba(21, 138, 255, 0.18), transparent 64%),
+      linear-gradient(125deg, rgba(14, 46, 95, 0.95), rgba(12, 28, 61, 0.92) 48%, rgba(19, 24, 68, 0.94));
+    box-shadow: var(--sp-soft-shadow);
+  }
+
+  :root:not(.dark) .sp-hero-panel {
+    background:
+      radial-gradient(70% 120% at 82% 20%, rgba(91, 87, 255, 0.14), transparent 58%),
+      radial-gradient(50% 100% at 60% 120%, rgba(39, 151, 255, 0.12), transparent 64%),
+      linear-gradient(125deg, #eef5ff, #f5f7ff 50%, #f6f4ff);
+  }
+
+  .sp-hero-orbit {
+    position: relative;
+    min-height: 260px;
+  }
+
+  .sp-hero-orbit::before,
+  .sp-hero-orbit::after {
+    content: '';
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
+  .sp-hero-orbit::before {
+    width: 220px;
+    height: 220px;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(112, 158, 255, 0.2);
+    box-shadow: 0 0 70px rgba(80, 88, 255, 0.16) inset;
+  }
+
+  .sp-hero-orbit::after {
+    width: 290px;
+    height: 150px;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) rotate(-12deg);
+    border: 1px solid rgba(72, 213, 239, 0.14);
+  }
+
+  .sp-hero-core {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 142px;
+    height: 142px;
+    transform: translate(-50%, -50%) rotate(-8deg);
+    border: 1px solid rgba(135, 174, 255, 0.32);
+    border-radius: 30px;
+    background: linear-gradient(145deg, rgba(56, 126, 255, 0.92), rgba(66, 54, 205, 0.95));
+    box-shadow: 0 30px 60px rgba(2, 8, 26, 0.4), 0 0 56px rgba(61, 130, 255, 0.26);
+  }
+
+  .sp-hero-core::before,
+  .sp-hero-core::after {
+    content: '';
+    position: absolute;
+    inset: 18px -22px -28px 22px;
+    z-index: -1;
+    border-radius: 26px;
+    border: 1px solid rgba(114, 133, 255, 0.28);
+    background: rgba(58, 67, 172, 0.46);
+  }
+
+  .sp-hero-core::after {
+    inset: 34px -40px -48px 40px;
+    opacity: 0.6;
+  }
+
+  .sp-floating-chip {
+    position: absolute;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 54px;
+    height: 54px;
+    padding: 0 12px;
+    border: 1px solid rgba(139, 171, 255, 0.2);
+    border-radius: 15px;
+    background: rgba(14, 31, 69, 0.8);
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24);
+    color: #cfe2ff;
+    backdrop-filter: blur(12px);
+  }
+
+  .sp-floating-chip--api { right: 11%; top: 18%; transform: rotate(7deg); }
+  .sp-floating-chip--code { right: 5%; top: 48%; transform: rotate(8deg); }
+  .sp-floating-chip--chart { left: 11%; bottom: 14%; transform: rotate(-8deg); }
+
+  .sp-action-primary {
+    box-shadow: 0 10px 28px -14px color-mix(in oklab, var(--ui-primary) 64%, transparent);
+  }
+
+  .sp-dashboard-section {
+    border: 1px solid var(--sp-panel-border);
+    border-radius: 1rem;
+    background: color-mix(in oklab, var(--sp-panel) 76%, transparent);
+    box-shadow: var(--sp-card-shadow);
+    padding: 1rem;
+  }
+
+  .sp-dashboard-list {
+    border: 1px solid var(--sp-panel-border) !important;
+    border-radius: 1rem !important;
+    background: var(--sp-panel) !important;
+    box-shadow: var(--sp-card-shadow);
+  }
+
+  .sp-dashboard-list > * {
+    background: transparent !important;
+  }
+
+  @media (max-width: 1023px) {
+    .sp-hero-orbit { min-height: 220px; }
+    .sp-hero-core { width: 118px; height: 118px; }
+  }
+}
+@layer components {
+  .sp-key-checker-card,
+  .sp-buy-package-card,
+  .sp-checkout-card {
+    background: var(--sp-panel) !important;
+  }
+
+  /* Normalize Nuxt UI cards/panels so secondary pages inherit the same theme. */
+  .sp-dashboard-shell [data-slot='root'].ring-default,
+  .sp-shell-aurora [data-slot='root'].ring-default {
+    border-color: var(--sp-panel-border);
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * FIX21 — polished smooth system
+ * A calmer, more realistic SaaS finish layered on top of Fix20. The goal is
+ * clarity: no grain, no pattern overlays, no oversized hover movement, and a
+ * consistent glass/surface hierarchy across dashboard, auth, public, tables,
+ * forms, menus and dialogs.
+ * ------------------------------------------------------------------------ */
+@layer theme {
+  :root {
+    --sp-radius-card: 1rem;
+    --sp-radius-hero: 1.5rem;
+    --sp-line-soft: color-mix(in oklab, var(--sp-panel-border) 78%, transparent);
+    --sp-line-focus: color-mix(in oklab, var(--ui-primary) 52%, var(--sp-panel-border));
+    --sp-panel-hover: color-mix(in oklab, var(--sp-panel) 94%, var(--ui-primary) 6%);
+    --sp-nav-hover: color-mix(in oklab, var(--ui-primary) 8%, transparent);
+    --sp-nav-active: color-mix(in oklab, var(--ui-primary) 15%, transparent);
+    --sp-focus-glow: 0 0 0 3px color-mix(in oklab, var(--ui-primary) 14%, transparent);
+    --sp-button-glow: 0 12px 28px -15px color-mix(in oklab, var(--ui-primary) 72%, transparent);
+    --sp-inset-highlight: inset 0 1px 0 color-mix(in oklab, white 7%, transparent);
+  }
+
+  .dark {
+    --sp-panel-hover: rgba(17, 39, 72, 0.9);
+    --sp-line-soft: rgba(132, 161, 208, 0.11);
+    --sp-line-focus: rgba(91, 139, 255, 0.45);
+    --sp-nav-hover: rgba(75, 117, 225, 0.08);
+    --sp-nav-active: rgba(66, 111, 237, 0.16);
+  }
+}
+
+@layer base {
+  body {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    transition-timing-function: cubic-bezier(.2,.75,.25,1);
+  }
+}
+
+@layer components {
+  /* Smooth global shell: intentionally static and texture-free. */
+  .sp-shell-aurora,
+  .sp-dashboard-shell,
+  .sp-auth-shell {
+    background-image:
+      radial-gradient(760px 380px at 57% -120px, color-mix(in oklab, var(--ui-primary) 11%, transparent), transparent 72%),
+      radial-gradient(540px 360px at 98% 14%, color-mix(in oklab, var(--ui-secondary) 6%, transparent), transparent 74%),
+      linear-gradient(180deg, var(--sp-surface-0) 0%, var(--sp-surface-1) 50%, var(--sp-surface-0) 100%) !important;
+  }
+
+  /* Header / dashboard chrome. */
+  .sp-site-header,
+  .sp-dashboard-navbar {
+    border-color: var(--sp-line-soft) !important;
+    background: color-mix(in oklab, var(--sp-surface-0) 88%, transparent) !important;
+    box-shadow: 0 1px 0 color-mix(in oklab, white 3%, transparent) inset !important;
+    backdrop-filter: blur(18px) saturate(112%) !important;
+  }
+
+  .sp-dashboard-sidebar {
+    box-shadow: 10px 0 34px -28px rgba(0, 0, 0, .8);
+  }
+
+  .sp-dashboard-sidebar nav a,
+  .sp-dashboard-sidebar nav button {
+    border: 1px solid transparent;
+    border-radius: .75rem;
+    transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease;
+  }
+
+  .sp-dashboard-sidebar nav a:hover,
+  .sp-dashboard-sidebar nav button:hover {
+    background: var(--sp-nav-hover);
+    border-color: var(--sp-line-soft);
+  }
+
+  .sp-dashboard-sidebar nav a[aria-current='page'],
+  .sp-dashboard-sidebar nav a[data-active='true'] {
+    background: var(--sp-nav-active);
+    border-color: color-mix(in oklab, var(--ui-primary) 28%, var(--sp-line-soft));
+    box-shadow: inset 3px 0 0 var(--ui-primary);
+  }
+
+  .sp-dashboard-content {
+    padding-top: .25rem;
+  }
+
+  /* Hero becomes flatter and more believable than a decorative wallpaper. */
+  .sp-hero-panel {
+    border-radius: var(--sp-radius-hero) !important;
+    border-color: rgba(128, 158, 214, .16) !important;
+    background:
+      radial-gradient(520px 300px at 80% 34%, rgba(91, 82, 255, .19), transparent 68%),
+      radial-gradient(420px 260px at 62% 112%, rgba(39, 160, 255, .12), transparent 72%),
+      linear-gradient(125deg, rgba(14, 42, 82, .97), rgba(10, 26, 52, .96) 48%, rgba(17, 22, 58, .97)) !important;
+    box-shadow: 0 22px 65px -42px rgba(0, 0, 0, .78), var(--sp-inset-highlight) !important;
+  }
+
+  :root:not(.dark) .sp-hero-panel {
+    border-color: rgba(70, 107, 178, .14) !important;
+    background:
+      radial-gradient(520px 300px at 80% 34%, rgba(102, 95, 255, .11), transparent 68%),
+      radial-gradient(420px 260px at 62% 112%, rgba(39, 160, 255, .09), transparent 72%),
+      linear-gradient(125deg, #f4f8ff, #f8faff 52%, #f8f7ff) !important;
+  }
+
+  .sp-hero-core {
+    box-shadow: 0 22px 54px -18px rgba(2, 8, 26, .54), 0 0 44px rgba(61, 130, 255, .18) !important;
+  }
+
+  .sp-floating-chip {
+    border-color: rgba(139, 171, 255, .17) !important;
+    background: rgba(12, 27, 57, .78) !important;
+    box-shadow: 0 16px 36px -24px rgba(0, 0, 0, .9) !important;
+  }
+
+  /* Cards: slight depth, no shimmer, no decorative pseudo-layers. */
+  .sp-premium-card,
+  .sp-metric-tile,
+  .sp-dashboard-section,
+  .sp-dashboard-list,
+  .sp-auth-card,
+  .sp-auth-feature,
+  .sp-smooth-panel {
+    border: 1px solid var(--sp-line-soft) !important;
+    background: var(--sp-panel) !important;
+    box-shadow: var(--sp-card-shadow), var(--sp-inset-highlight) !important;
+    backdrop-filter: blur(14px) saturate(108%) !important;
+  }
+
+  .sp-dashboard-section,
+  .sp-dashboard-list,
+  .sp-auth-feature {
+    border-radius: var(--sp-radius-card) !important;
+  }
+
+  .sp-premium-card:hover,
+  .sp-metric-tile:hover,
+  .sp-command-card:hover {
+    transform: translateY(-1px) !important;
+    border-color: var(--sp-line-focus) !important;
+    background: var(--sp-panel-hover) !important;
+    box-shadow: var(--sp-hover-shadow), var(--sp-inset-highlight) !important;
+  }
+
+  .sp-command-card {
+    min-height: 12.5rem;
+  }
+
+  .sp-activity-panel,
+  .sp-playground-preview {
+    min-width: 0;
+  }
+
+  .sp-playground-preview > div:last-child,
+  .sp-playground-preview .rounded-xl {
+    background: color-mix(in oklab, var(--sp-surface-0) 66%, transparent) !important;
+  }
+
+  /* Auth experience: sophisticated but calm. */
+  .sp-auth-showcase {
+    border: 1px solid var(--sp-line-soft) !important;
+    background:
+      radial-gradient(520px 340px at 16% 4%, color-mix(in oklab, var(--ui-primary) 16%, transparent), transparent 70%),
+      linear-gradient(145deg, color-mix(in oklab, var(--sp-panel-strong) 94%, var(--ui-primary) 6%), var(--sp-panel)) !important;
+    box-shadow: var(--sp-soft-shadow), var(--sp-inset-highlight) !important;
+  }
+
+  .sp-auth-feature {
+    transition: border-color 180ms ease, background-color 180ms ease;
+  }
+
+  .sp-auth-feature:hover {
+    border-color: var(--sp-line-focus) !important;
+    background: var(--sp-panel-hover) !important;
+  }
+
+  .sp-public-footer {
+    border-color: var(--sp-line-soft) !important;
+    background: color-mix(in oklab, var(--sp-surface-0) 88%, transparent) !important;
+    backdrop-filter: blur(14px);
+  }
+
+  /* Nuxt UI form fields, selects and textareas inherit one crisp surface. */
+  .sp-dashboard-shell :is(input, textarea, select),
+  .sp-auth-shell :is(input, textarea, select),
+  .sp-shell-aurora :is(input, textarea, select) {
+    border-color: var(--sp-line-soft);
+  }
+
+  .sp-dashboard-shell :is(input, textarea, select):focus,
+  .sp-auth-shell :is(input, textarea, select):focus,
+  .sp-shell-aurora :is(input, textarea, select):focus {
+    border-color: var(--sp-line-focus);
+    box-shadow: var(--sp-focus-glow);
+  }
+
+  /* Tables / data rows should scan like a real admin product. */
+  .sp-dashboard-shell table tbody tr {
+    transition: background-color 150ms ease;
+  }
+
+  .sp-dashboard-shell table tbody tr:hover {
+    background: color-mix(in oklab, var(--ui-primary) 4%, transparent);
+  }
+
+  .sp-dashboard-list > li {
+    transition: background-color 150ms ease;
+  }
+
+  .sp-dashboard-list > li:hover {
+    background: color-mix(in oklab, var(--ui-primary) 4%, transparent) !important;
+  }
+
+  /* Primary actions get a subtle, realistic lift rather than neon bloom. */
+  .sp-action-primary {
+    box-shadow: var(--sp-button-glow) !important;
+  }
+
+  .sp-action-primary:hover {
+    box-shadow: 0 14px 32px -16px color-mix(in oklab, var(--ui-primary) 82%, transparent) !important;
+  }
+
+  /* Improve scrollbars without forcing a bright track. */
+  .sp-dashboard-shell,
+  .sp-shell-aurora,
+  .sp-auth-shell {
+    scrollbar-color: color-mix(in oklab, var(--ui-border-accented) 70%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  @media (max-width: 767px) {
+    .sp-shell-aurora,
+    .sp-dashboard-shell,
+    .sp-auth-shell {
+      background-image:
+        radial-gradient(520px 280px at 70% -80px, color-mix(in oklab, var(--ui-primary) 9%, transparent), transparent 74%),
+        linear-gradient(180deg, var(--sp-surface-0), var(--sp-surface-1) 55%, var(--sp-surface-0)) !important;
+    }
+
+    .sp-hero-panel {
+      border-radius: 1.15rem !important;
+    }
+
+    .sp-premium-card,
+    .sp-metric-tile,
+    .sp-dashboard-section,
+    .sp-auth-card {
+      backdrop-filter: blur(10px) !important;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sp-premium-card:hover,
+    .sp-metric-tile:hover,
+    .sp-command-card:hover {
+      transform: none !important;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * FIX22 — complete product-wide visual pass
+ * Extends the approved smooth realistic SP Cambo direction to customer,
+ * checkout, Playground, API key, order, admin, reseller and docs surfaces.
+ * No texture images, moving wallpaper, grain or decorative grid backgrounds.
+ * ------------------------------------------------------------------------ */
+@layer theme {
+  :root {
+    --sp-panel-subtle: color-mix(in oklab, var(--sp-panel) 86%, transparent);
+    --sp-panel-raised: color-mix(in oklab, var(--sp-panel-strong) 94%, var(--ui-primary) 2%);
+    --sp-panel-selected: color-mix(in oklab, var(--sp-panel) 88%, var(--ui-primary) 12%);
+    --sp-divider: color-mix(in oklab, var(--sp-panel-border) 72%, transparent);
+    --sp-success-soft: color-mix(in oklab, var(--ui-success) 9%, var(--sp-panel));
+    --sp-warning-soft: color-mix(in oklab, var(--ui-warning) 8%, var(--sp-panel));
+    --sp-error-soft: color-mix(in oklab, var(--ui-error) 8%, var(--sp-panel));
+  }
+
+  .dark {
+    --sp-panel-subtle: rgba(10, 25, 47, .68);
+    --sp-panel-raised: rgba(14, 34, 63, .94);
+    --sp-panel-selected: rgba(22, 49, 92, .92);
+    --sp-divider: rgba(128, 158, 207, .105);
+  }
+}
+
+@layer components {
+  /* Every Nuxt UCard used by pages gets the same calm product surface. */
+  .sp-app-card {
+    border: 1px solid var(--sp-line-soft) !important;
+    border-radius: var(--sp-radius-card) !important;
+    background: var(--sp-panel) !important;
+    box-shadow: var(--sp-card-shadow), var(--sp-inset-highlight) !important;
+    backdrop-filter: blur(14px) saturate(108%) !important;
+    overflow: clip;
+  }
+
+  .sp-app-card[data-variant='subtle'],
+  .sp-app-card.bg-elevated\/30,
+  .sp-app-card.bg-elevated\/40 {
+    background: var(--sp-panel-subtle) !important;
+  }
+
+  .sp-app-card:hover {
+    border-color: color-mix(in oklab, var(--ui-primary) 22%, var(--sp-line-soft)) !important;
+  }
+
+  /* Page lead is information hierarchy, not a decorative banner. */
+  .sp-page-lead {
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(110deg, color-mix(in oklab, var(--sp-panel) 98%, var(--ui-primary) 2%), var(--sp-panel)) !important;
+  }
+
+  .sp-page-lead::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--ui-primary), color-mix(in oklab, var(--ui-secondary) 70%, transparent), transparent);
+    opacity: .9;
+  }
+
+  .sp-page-lead-icon {
+    background: color-mix(in oklab, var(--ui-primary) 10%, var(--sp-panel-raised)) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 6%, transparent);
+  }
+
+  .sp-page-eyebrow {
+    text-shadow: none;
+  }
+
+  /* Common legacy/raw Tailwind panels inherit the same depth without editing
+     every old page one by one. */
+  .sp-dashboard-content :is(
+    [class~='rounded-lg'][class~='border'][class~='border-default'],
+    [class~='rounded-xl'][class~='border'][class~='border-default'],
+    [class~='rounded-2xl'][class~='border'][class~='border-default']
+  ) {
+    border-color: var(--sp-line-soft) !important;
+  }
+
+  .sp-dashboard-content :is(
+    [class~='bg-elevated/20'],
+    [class~='bg-elevated/30'],
+    [class~='bg-elevated/35'],
+    [class~='bg-elevated/40']
+  ) {
+    background-color: var(--sp-panel-subtle) !important;
+  }
+
+  /* Product / buy cards: polished selectable tiles. */
+  .sp-dashboard-content button[class~='border'][class~='p-4'][class~='text-left'] {
+    border-radius: .95rem !important;
+    border-color: var(--sp-line-soft) !important;
+    background: var(--sp-panel-subtle);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
+    transition: border-color 170ms ease, background-color 170ms ease, box-shadow 170ms ease, transform 170ms ease !important;
+  }
+
+  .sp-dashboard-content button[class~='border'][class~='p-4'][class~='text-left']:hover {
+    transform: translateY(-1px);
+    border-color: var(--sp-line-focus) !important;
+    background: var(--sp-panel-hover);
+  }
+
+  .sp-dashboard-content button[class~='border-primary'] {
+    background: var(--sp-panel-selected) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-primary) 18%, transparent), var(--sp-card-shadow) !important;
+  }
+
+  /* Checkout / payment area: place payment information on a stronger surface. */
+  .sp-checkout-card,
+  .sp-buy-package-card,
+  .sp-key-checker-card {
+    border: 1px solid var(--sp-line-soft) !important;
+    border-radius: 1rem !important;
+    background: var(--sp-panel-raised) !important;
+    box-shadow: var(--sp-card-shadow), var(--sp-inset-highlight) !important;
+  }
+
+  .sp-dashboard-content :is(.bg-success\/5, .bg-success\/10) {
+    background: var(--sp-success-soft) !important;
+  }
+
+  .sp-dashboard-content :is(.bg-warning\/5, .bg-warning\/10) {
+    background: var(--sp-warning-soft) !important;
+  }
+
+  .sp-dashboard-content :is(.bg-error\/5, .bg-error\/10) {
+    background: var(--sp-error-soft) !important;
+  }
+
+  /* API keys and order rows read like production data, not stacked boxes. */
+  .sp-dashboard-content .divide-y.divide-default,
+  .sp-dashboard-content dl.divide-y.divide-default {
+    border-color: var(--sp-line-soft) !important;
+    border-radius: 1rem;
+    background: var(--sp-panel-subtle);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  }
+
+  .sp-dashboard-content .divide-y.divide-default > * {
+    border-color: var(--sp-divider) !important;
+  }
+
+  .sp-dashboard-content .divide-y.divide-default > :is(a, button, div) {
+    transition: background-color 150ms ease, border-color 150ms ease;
+  }
+
+  .sp-dashboard-content .divide-y.divide-default > :is(a, button, div):hover {
+    background: color-mix(in oklab, var(--ui-primary) 4%, transparent);
+  }
+
+  /* Forms: consistent height, quieter borders and readable focus. */
+  .sp-dashboard-shell :is(input, textarea, select),
+  .sp-auth-shell :is(input, textarea, select),
+  .sp-shell-aurora :is(input, textarea, select) {
+    background-color: color-mix(in oklab, var(--sp-surface-0) 56%, var(--sp-panel)) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  }
+
+  .sp-dashboard-shell textarea,
+  .sp-auth-shell textarea,
+  .sp-shell-aurora textarea {
+    line-height: 1.55;
+  }
+
+  /* Menus/popovers/dialogs should not switch to a harsher visual language. */
+  [role='menu'],
+  [role='listbox'],
+  [data-reka-popper-content-wrapper] > div {
+    border-color: var(--sp-line-soft) !important;
+    background-color: var(--sp-panel-strong) !important;
+    box-shadow: 0 24px 64px -30px rgba(0, 0, 0, .72), var(--sp-inset-highlight) !important;
+    backdrop-filter: blur(18px) saturate(110%);
+  }
+
+  /* Tables: one calm sheet, subtle row separation, sticky headers remain legible. */
+  .sp-dashboard-content table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .sp-dashboard-content table thead th {
+    border-bottom-color: var(--sp-divider) !important;
+    background: color-mix(in oklab, var(--sp-panel-raised) 90%, transparent);
+    color: var(--ui-text-muted);
+    font-size: .72rem;
+    font-weight: 650;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+  }
+
+  .sp-dashboard-content table tbody td {
+    border-bottom-color: var(--sp-divider) !important;
+  }
+
+  .sp-dashboard-content table tbody tr:last-child td {
+    border-bottom-color: transparent !important;
+  }
+
+  /* Code, key and raw-response panels use a refined terminal surface. */
+  .sp-code-block,
+  .sp-dashboard-content pre,
+  .sp-dashboard-content code[class*='block'] {
+    border-color: color-mix(in oklab, var(--sp-line-soft) 86%, var(--ui-primary) 8%) !important;
+  }
+
+  .sp-dashboard-content pre {
+    border-radius: .9rem;
+    background: color-mix(in oklab, var(--sp-surface-0) 82%, #050913 18%) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  }
+
+  /* Playground: chat canvas, run setup and telemetry read as one workspace. */
+  .sp-dashboard-content .sp-premium-card.overflow-hidden {
+    background: color-mix(in oklab, var(--sp-panel) 95%, var(--sp-surface-0) 5%) !important;
+  }
+
+  .sp-dashboard-content [data-playground-composer] {
+    min-height: 5.5rem;
+    resize: vertical;
+  }
+
+  /* Nuxt UI buttons: make primary actions crisp and secondary actions flatter. */
+  .sp-dashboard-shell button,
+  .sp-shell-aurora button,
+  .sp-auth-shell button {
+    border-radius: .72rem;
+  }
+
+  .sp-dashboard-shell button:not(:disabled):active,
+  .sp-shell-aurora button:not(:disabled):active,
+  .sp-auth-shell button:not(:disabled):active {
+    transform: translateY(1px);
+  }
+
+  /* Admin metric grids and operation cards get stronger scan hierarchy. */
+  .sp-dashboard-content .grid > .sp-app-card,
+  .sp-dashboard-content .grid > .sp-premium-card {
+    min-width: 0;
+  }
+
+  .sp-dashboard-content :is(h2, h3).font-semibold,
+  .sp-dashboard-content :is(h2, h3).font-medium {
+    letter-spacing: -.012em;
+  }
+
+  /* Scrollbar inside dense lists/tables. */
+  .sp-dashboard-content * {
+    scrollbar-color: color-mix(in oklab, var(--ui-border-accented) 56%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .sp-app-card {
+      transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+    }
+
+    .sp-app-card:hover {
+      background: var(--sp-panel-hover) !important;
+      box-shadow: var(--sp-hover-shadow), var(--sp-inset-highlight) !important;
+    }
+  }
+
+  @media (max-width: 639px) {
+    .sp-dashboard-content {
+      padding-inline: .125rem;
+    }
+
+    .sp-page-lead {
+      border-radius: .9rem !important;
+    }
+
+    .sp-app-card,
+    .sp-dashboard-section,
+    .sp-dashboard-list {
+      border-radius: .9rem !important;
+    }
+
+    .sp-dashboard-content table thead th {
+      font-size: .68rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sp-dashboard-content button[class~='border'][class~='p-4'][class~='text-left']:hover,
+    .sp-dashboard-shell button:not(:disabled):active,
+    .sp-shell-aurora button:not(:disabled):active,
+    .sp-auth-shell button:not(:disabled):active {
+      transform: none !important;
+    }
+  }
+}
+
+@layer components {
+  .sp-catalog-option,
+  .sp-api-key-row,
+  .sp-admin-record,
+  .sp-admin-mini-card,
+  .sp-admin-callout {
+    border-color: var(--sp-line-soft) !important;
+    background: var(--sp-panel-subtle) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  }
+
+  .sp-catalog-option {
+    min-height: 10.75rem;
+  }
+
+  .sp-catalog-option[aria-checked='true'] {
+    border-color: var(--sp-line-focus) !important;
+    background: var(--sp-panel-selected) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-primary) 18%, transparent), var(--sp-card-shadow) !important;
+  }
+
+  .sp-api-key-row,
+  .sp-admin-record,
+  .sp-admin-mini-card {
+    transition: border-color 170ms ease, background-color 170ms ease, box-shadow 170ms ease;
+  }
+
+  .sp-api-key-row:hover,
+  .sp-admin-record:hover,
+  .sp-admin-mini-card:hover {
+    border-color: color-mix(in oklab, var(--ui-primary) 26%, var(--sp-line-soft)) !important;
+    background: var(--sp-panel-hover) !important;
+  }
+
+  .sp-admin-callout {
+    background: color-mix(in oklab, var(--sp-panel-subtle) 92%, var(--ui-primary) 8%) !important;
+  }
+}
+
+/* FIX28 — viewport Playground + responsive composer/history refinements. */
+@layer components {
+  .sp-dashboard-content:has(.sp-playground-shell) {
+    width: 100%;
+    max-width: 1600px !important;
+    padding-bottom: .25rem !important;
+  }
+
+  .sp-playground-shell {
+    overscroll-behavior: contain;
+    contain: layout paint;
+  }
+
+  .sp-playground-shell [data-playground-composer] {
+    min-height: 2.75rem !important;
+    max-height: 10rem !important;
+    resize: none !important;
+    overflow-y: auto !important;
+  }
+
+  @media (max-width: 639px) {
+    .sp-dashboard-content:has(.sp-playground-shell) {
+      padding-inline: 0 !important;
+    }
+
+    .sp-playground-shell [data-playground-composer] {
+      min-height: 2.7rem !important;
+      max-height: 7.5rem !important;
+      font-size: 16px !important;
+      line-height: 1.45 !important;
+    }
+  }
+}
+
+/* FIX28 — compact premium navigation + production Playground composer polish. */
+@layer components {
+  .sp-dashboard-sidebar {
+    background: color-mix(in oklab, var(--sp-surface-0) 96%, transparent) !important;
+    box-shadow: 8px 0 30px -28px rgba(0, 0, 0, .76) !important;
+  }
+
+  .sp-dashboard-nav-groups {
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
+    padding: .15rem .25rem .75rem;
+  }
+
+  .sp-dashboard-nav-group {
+    min-width: 0;
+  }
+
+  .sp-dashboard-nav-label {
+    margin: 0 .55rem .3rem;
+    color: color-mix(in oklab, var(--ui-text-muted) 88%, transparent);
+    font-size: .625rem;
+    font-weight: 650;
+    letter-spacing: .085em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  .sp-dashboard-nav-menu {
+    margin-inline: -.15rem;
+  }
+
+  .sp-dashboard-sidebar nav a,
+  .sp-dashboard-sidebar nav button {
+    min-height: 2.25rem;
+    border-color: transparent !important;
+    border-radius: .62rem !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease !important;
+  }
+
+  .sp-dashboard-sidebar nav a:hover,
+  .sp-dashboard-sidebar nav button:hover {
+    border-color: transparent !important;
+    background: color-mix(in oklab, var(--ui-primary) 5%, transparent) !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+
+  .sp-dashboard-sidebar nav a[aria-current='page'],
+  .sp-dashboard-sidebar nav a[data-active='true'] {
+    border-color: color-mix(in oklab, var(--ui-primary) 22%, transparent) !important;
+    background: color-mix(in oklab, var(--ui-primary) 10%, transparent) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-primary) 8%, transparent) !important;
+  }
+
+  .sp-dashboard-sidebar nav a[aria-current='page']:hover,
+  .sp-dashboard-sidebar nav a[data-active='true']:hover {
+    background: color-mix(in oklab, var(--ui-primary) 12%, transparent) !important;
+  }
+
+  .sp-playground-shell [data-playground-composer] textarea,
+  .sp-playground-shell textarea[data-playground-composer] {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  @media (max-width: 639px) {
+    .sp-dashboard-nav-groups {
+      gap: .65rem;
+    }
+  }
 }

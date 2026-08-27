@@ -7,6 +7,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AdminOverviewTest extends TestCase
@@ -41,10 +42,12 @@ class AdminOverviewTest extends TestCase
     public function test_system_health_uses_measured_scheduler_heartbeat_and_safe_details(): void
     {
         config(['services.bakong.token' => 'must-never-appear', 'services.spcambo.gateway_secret' => 'must-never-appear']);
+        Http::fake(fn () => Http::response(['ok' => true, 'data' => ['status' => 'ok']], 200));
         $this->artisan('system:heartbeat')->assertSuccessful();
-        $response = $this->actingAs($this->admin())->getJson('/api/v1/admin/system-health')->assertOk()->assertJsonPath('data.components.3.key', 'scheduler')->assertJsonPath('data.components.3.status', 'operational');
+        $response = $this->actingAs($this->admin())->getJson('/api/v1/admin/system-health')->assertOk();
         $this->assertStringNotContainsString('must-never-appear', $response->getContent());
-        $response->assertJsonFragment(['key' => 'gateway', 'status' => 'maintenance', 'detail' => 'Connectivity is not currently measured.']);
+        $response->assertJsonFragment(['key' => 'scheduler', 'status' => 'operational', 'detail' => null]);
+        $response->assertJsonFragment(['key' => 'gateway', 'status' => 'operational', 'detail' => null]);
     }
 
     private function admin(): User

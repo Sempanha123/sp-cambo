@@ -96,6 +96,7 @@ export interface ControlPlane {
     request_id: string;
     request_fingerprint: string;
     endpoint: InferencePath;
+    playground_funding_scope?: "DAILY" | "BALANCE";
   }): Promise<PreflightData>;
   state?(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void>;
   settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void>;

@@ -48,7 +48,7 @@ $env:GATEWAY_RATE_STORE = (Get-DotEnvValue $gatewayEnv 'GATEWAY_RATE_STORE')
 
 if (-not $env:GATEWAY_HOST) { $env:GATEWAY_HOST = '127.0.0.1' }
 if (-not $env:GATEWAY_PORT) { $env:GATEWAY_PORT = '3010' }
-if (-not $env:CONTROL_PLANE_BASE_URL) { $env:CONTROL_PLANE_BASE_URL = 'http://127.0.0.1:8000' }
+if (-not $env:CONTROL_PLANE_BASE_URL -or $env:CONTROL_PLANE_BASE_URL -in @('http://127.0.0.1:8000','http://localhost:8000')) { $env:CONTROL_PLANE_BASE_URL = 'http://127.0.0.1:8001' }
 if (-not $env:GATEWAY_RATE_STORE) { $env:GATEWAY_RATE_STORE = 'memory' }
 
 Set-Location $gateway
@@ -58,6 +58,7 @@ Write-Host "HTTP: http://127.0.0.1:3010" -ForegroundColor Green
 Write-Host "Claude Code base: http://127.0.0.1:3010  (NO /v1)" -ForegroundColor Yellow
 Write-Host "OpenAI/Codex base: http://127.0.0.1:3010/v1" -ForegroundColor Yellow
 Write-Host "Internal secret loaded: $($secret.Length) chars (hidden)" -ForegroundColor DarkGray
+Write-Host "Control plane: $env:CONTROL_PLANE_BASE_URL" -ForegroundColor DarkGray
 Write-Host "Rate store: $env:GATEWAY_RATE_STORE" -ForegroundColor DarkGray
 
 npx pnpm@11.22.0 dev

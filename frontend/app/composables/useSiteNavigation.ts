@@ -62,8 +62,8 @@ export function useSiteNavigation() {
         active: route.path.startsWith('/dashboard/api-keys')
       },
       {
-        label: 'Entitlements',
-        icon: 'i-lucide-hourglass',
+        label: 'Entitlements & redeem',
+        icon: 'i-lucide-gift',
         to: '/dashboard/entitlements',
         active: route.path.startsWith('/dashboard/entitlements')
       },
@@ -92,6 +92,12 @@ export function useSiteNavigation() {
         active: route.path.startsWith('/dashboard/cli-setup')
       },
       {
+        label: 'Support',
+        icon: 'i-lucide-circle-help',
+        to: '/dashboard/support',
+        active: route.path.startsWith('/dashboard/support')
+      },
+      {
         label: 'Telegram bot',
         icon: 'i-lucide-send',
         to: '/dashboard/telegram',
@@ -118,6 +124,31 @@ export function useSiteNavigation() {
         to: '/admin',
         // The catalogue pages have their own entries, so this must not claim them.
         active: route.path === '/admin'
+      }, {
+        label: 'Customers & access',
+        icon: 'i-lucide-users-round',
+        to: '/admin/access',
+        active: route.path.startsWith('/admin/access')
+      }, {
+        label: 'Operations',
+        icon: 'i-lucide-activity',
+        to: '/admin/operations',
+        active: route.path.startsWith('/admin/operations')
+      }, {
+        label: 'System health',
+        icon: 'i-lucide-heart-pulse',
+        to: '/admin/system-health',
+        active: route.path.startsWith('/admin/system-health')
+      }, {
+        label: 'Audit log',
+        icon: 'i-lucide-scroll-text',
+        to: '/admin/audit-log',
+        active: route.path.startsWith('/admin/audit-log')
+      }, {
+        label: 'Settings',
+        icon: 'i-lucide-settings',
+        to: '/admin/settings',
+        active: route.path.startsWith('/admin/settings')
       })
     }
 
@@ -204,7 +235,8 @@ export function useSiteNavigation() {
         { label: 'Service status', to: '/status' },
         { label: 'Rate limits', to: '/docs/rate-limits' },
         { label: 'Errors', to: '/docs/errors' },
-        { label: 'Billing model', to: '/docs/billing' }
+        { label: 'Billing model', to: '/docs/billing' },
+        { label: 'Support', to: '/support' }
       ]
     },
     {

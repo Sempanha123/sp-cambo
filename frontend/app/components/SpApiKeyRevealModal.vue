@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * One-time API key reveal.
+ * Guarded API key reveal.
  *
  * The full secret exists only in this component's props for as long as the modal
- * is open. It is never written to storage, never put in a URL, never logged and
- * never re-fetchable — no list endpoint returns secrets. The dialog is
- * intentionally not dismissible so the value cannot be lost by a stray click.
+ * is open. It is never written to browser storage, put in a URL or logged.
+ * Customer-owned inference keys may arrive here again through the explicit
+ * authenticated reveal endpoint; list endpoints remain masked.
  *
  * `audience` selects the handling guidance, because the three secrets SP Cambo
  * issues are used in genuinely different places. Telling a reseller to put an
@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   secret: string | null
   keyLabel: string
   /** Whether this secret came from a creation or a rotation. */
-  context: 'created' | 'rotated'
+  context: 'created' | 'rotated' | 'recovered'
   /**
    * `own`        -> the signed-in account's own inference key
    * `managed`    -> an inference key belonging to a reseller's customer
@@ -44,6 +44,10 @@ const heading = computed(() => {
     return 'New secret for this key'
   }
 
+  if (props.context === 'recovered') {
+    return 'Your API key'
+  }
+
   return {
     own: 'Your new API key',
     managed: 'New key for this customer',
@@ -56,8 +60,12 @@ const intro = computed(() => {
     return 'The previous secret for this key stopped working the moment this one was issued. Update anywhere that used it.'
   }
 
+  if (props.context === 'recovered') {
+    return 'You securely re-opened the current secret for this key. Copy it only on a trusted device.'
+  }
+
   return {
-    own: 'Copy this now and store it in a secret manager or an environment variable.',
+    own: 'Copy this into a secret manager or an environment variable. You can securely re-copy your own inference key later from API Keys.',
     managed: 'Copy this now and hand it to the customer over a channel they control. You cannot retrieve it again.',
     management: 'Copy this now and store it in your automation\'s secret manager.'
   }[props.audience]
@@ -96,8 +104,12 @@ const masked = computed(() => props.secret ? '•'.repeat(Math.min(props.secret.
  * revoke plus a fresh key.
  */
 const lossRemedy = computed(() => props.audience === 'own'
-  ? 'SP Cambo stores only a hash of this secret. If you lose it, the only remedy is to rotate the key and update your configuration.'
-  : 'SP Cambo stores only a hash of this secret. If you lose it, the only remedy is to revoke this key and issue a new one.')
+  ? 'SP Cambo keeps a hash for authentication and an encrypted recovery copy for your account. The key list stays masked; revealing the full secret again requires an authenticated, throttled request and is audited.'
+  : 'SP Cambo does not provide recovery for this managed credential. If it is lost, revoke it and issue a new one.')
+
+const warningTitle = computed(() => props.audience === 'own'
+  ? 'Sensitive secret — keep it private'
+  : 'Shown once and never again')
 
 const acknowledgement = computed(() => props.audience === 'managed'
   ? 'I have delivered this secret to the customer and kept no copy'
@@ -131,7 +143,7 @@ watch(() => props.open, (open) => {
           icon="i-lucide-triangle-alert"
           color="warning"
           variant="subtle"
-          title="Shown once and never again"
+          :title="warningTitle"
           :description="lossRemedy"
         />
 

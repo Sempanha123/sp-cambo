@@ -81,6 +81,79 @@ it("maps public model, strips customer auth and settles normalized JSON usage", 
   expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 5, output_tokens: 7, cache_read_tokens: 2 }); expect(control.releases).toHaveLength(0);
 });
 
+
+it("forwards exact database internal model IDs containing spaces", async () => {
+  const control = new FakeControlPlane();
+  control.preflightData = { ...control.preflightData, internal_model: "OpenAI Codex" };
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const sent = JSON.parse(init.body as string);
+    expect(sent.model).toBe("OpenAI Codex");
+    return new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 2, output_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const [instance] = app(control, fetchMock as typeof fetch);
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: { ...body, model: "openai-codex" } });
+  expect(response.statusCode).toBe(200);
+});
+
+it("echoes a safe request reference on gateway errors", async () => {
+  const control = new FakeControlPlane();
+  control.preflightError = new ControlPlaneError(403, "model_not_allowed", "Rejected");
+  const [instance] = app(control);
+  const response = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: { ...auth, "x-request-id": "pg_reference_123" },
+    payload: body,
+  });
+  expect(response.statusCode).toBe(403);
+  expect(response.headers["x-request-id"]).toBe("pg_reference_123");
+});
+
+it("restores exact Claude Code tool casing in non-stream Anthropic responses", async () => {
+  const requestBody = { ...body, tools: [{ name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } }] };
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    id: "msg-tool", type: "message", content: [{ type: "tool_use", id: "tool_1", name: "bash", input: {} }], usage: { input_tokens: 5, output_tokens: 7 },
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+  const [instance] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: requestBody });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().content[0].name).toBe("Bash");
+});
+
+it("restores exact Claude Code tool casing in streamed Anthropic responses", async () => {
+  const requestBody = { ...body, stream: true, tools: [{ name: "Edit", description: "Edit a file", input_schema: { type: "object", properties: {} } }] };
+  const stream = [
+    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", content_block: { type: "tool_use", id: "tool_1", name: "edit", input: {} } })}\n\n`,
+    `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", usage: { input_tokens: 4, output_tokens: 6 } })}\n\n`,
+  ].join("");
+  const fetchMock = vi.fn(async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
+  const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: requestBody });
+  expect(response.statusCode).toBe(200);
+  expect(response.body).toContain('"name":"Edit"');
+  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 4, output_tokens: 6 });
+});
+
+it("forwards Playground funding scope only to the control plane and never upstream", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-sp-cambo-playground-funding"]).toBeUndefined();
+    return new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 2, output_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: { ...auth, "x-sp-cambo-playground-funding": "BALANCE" }, payload: body });
+  expect(response.statusCode).toBe(200);
+  expect(control.lastPreflight?.playground_funding_scope).toBe("BALANCE");
+});
+
+it("rejects an invalid Playground funding scope before preflight", async () => {
+  const [instance, control, fetchMock] = app();
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: { ...auth, "x-sp-cambo-playground-funding": "anything" }, payload: body });
+  expect(response.statusCode).toBe(400);
+  expect(control.preflightCalls).toBe(0);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 it("returns a completed non-stream response and reconciles a failed settlement", async () => {
   const control = new FakeControlPlane(); control.settleError = new Error("control plane unavailable");
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 5, output_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } }));

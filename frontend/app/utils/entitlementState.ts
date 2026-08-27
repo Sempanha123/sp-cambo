@@ -21,7 +21,7 @@ export function lotExpiryMs(lot: EntitlementLot): number | null {
 
 /** A lot that can still serve a request: active, and with something left in it. */
 export function isLotSpendable(lot: EntitlementLot): boolean {
-  return lot.status === 'ACTIVE' && !isUnitsDepleted(lot.remaining_units)
+  return lot.status === 'ACTIVE' && lot.access_scope !== 'UNASSIGNED' && !isUnitsDepleted(lot.remaining_units)
 }
 
 /**
@@ -42,7 +42,7 @@ export function spendableLots(lots: EntitlementLot[]): EntitlementLot[] {
 
 /** Paid for but not yet activated, usually awaiting fulfilment of an order. */
 export function pendingLots(lots: EntitlementLot[]): EntitlementLot[] {
-  return lots.filter(lot => lot.status === 'PENDING')
+  return lots.filter(lot => lot.status === 'PENDING' || lot.access_scope === 'UNASSIGNED')
 }
 
 /**
@@ -51,7 +51,7 @@ export function pendingLots(lots: EntitlementLot[]): EntitlementLot[] {
  */
 export function closedLots(lots: EntitlementLot[]): EntitlementLot[] {
   return lots
-    .filter(lot => lot.status !== 'PENDING' && !isLotSpendable(lot))
+    .filter(lot => lot.status !== 'PENDING' && lot.access_scope !== 'UNASSIGNED' && !isLotSpendable(lot))
     .sort((a, b) => (lotExpiryMs(b) ?? 0) - (lotExpiryMs(a) ?? 0))
 }
 

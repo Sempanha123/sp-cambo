@@ -9,16 +9,11 @@ class DatabaseSeeder extends Seeder
 {
     use WithoutModelEvents;
 
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        $this->call([
-            RolePermissionSeeder::class,
-            ProviderSeeder::class,
-            PackageCatalogSeeder::class,
-            LocalDemoSeeder::class,
-        ]);
+        // Only canonical authorization data belongs in the default seed. The
+        // sell catalog is explicit and is run with:
+        // php artisan db:seed --class=SellCatalogSeeder --force
+        $this->call(RolePermissionSeeder::class);
     }
 }

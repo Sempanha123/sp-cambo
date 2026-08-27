@@ -70,7 +70,7 @@ const tones: Record<string, { color: Tone, label: string, icon?: string }> = {
   reserved: { color: 'info', label: 'Reserved' },
   connecting: { color: 'info', label: 'Connecting' },
   streaming: { color: 'info', label: 'Streaming' },
-  reconciling: { color: 'warning', label: 'Reconciling' },
+  reconciling: { color: 'warning', label: 'Billing pending' },
   settled: { color: 'success', label: 'Settled' },
   released: { color: 'neutral', label: 'Released' }
 }

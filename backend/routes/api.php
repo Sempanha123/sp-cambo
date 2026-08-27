@@ -1,9 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AccountSecurityController;
+use App\Http\Controllers\Api\V1\Admin\AccessController as AdminAccessController;
+use App\Http\Controllers\Api\V1\Admin\AuditLogController as AdminAuditLogController;
 use App\Http\Controllers\Api\V1\Admin\ModelAliasController as AdminModelAliasController;
 use App\Http\Controllers\Api\V1\Admin\ModelPricingController as AdminModelPricingController;
 use App\Http\Controllers\Api\V1\Admin\OverviewController as AdminOverviewController;
+use App\Http\Controllers\Api\V1\Admin\OperationsController as AdminOperationsController;
 use App\Http\Controllers\Api\V1\Admin\PackageController as AdminPackageController;
 use App\Http\Controllers\Api\V1\Admin\PlaygroundSettingController as AdminPlaygroundSettingController;
 use App\Http\Controllers\Api\V1\Admin\PromotionController as AdminPromotionController;
@@ -30,6 +33,7 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\PlaygroundController;
+use App\Http\Controllers\Api\V1\PlaygroundChatController;
 use App\Http\Controllers\Api\V1\PromotionPreviewController;
 use App\Http\Controllers\Api\V1\RedeemCodeController;
 use App\Http\Controllers\Api\V1\ResellerCustomerController;
@@ -98,6 +102,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('packages', [AdminPackageController::class, 'index']);
         Route::post('packages', [AdminPackageController::class, 'store']);
         Route::put('packages/{package}', [AdminPackageController::class, 'update']);
+        Route::post('packages/{package}/stock', [AdminPackageController::class, 'addStock'])->middleware('throttle:30,1');
         Route::get('packages/{package}/profitability', [AdminPackageController::class, 'profitability']);
         Route::get('model-aliases', [AdminModelPricingController::class, 'index']);
         Route::put('model-aliases/{modelAlias}/pricing', [AdminModelPricingController::class, 'update']);
@@ -117,11 +122,32 @@ Route::prefix('v1')->group(function (): void {
         Route::put('redeem-codes/{redeemCode}', [AdminRedeemCodeController::class, 'update']);
         Route::get('telegram-store', [TelegramStoreController::class, 'show']);
         Route::post('telegram-store/announcements', [TelegramStoreController::class, 'broadcast'])->middleware('throttle:10,1');
+        Route::post('telegram-store/announcements/{announcement}/retry-failed', [TelegramStoreController::class, 'retryFailed'])->middleware('throttle:10,1');
+        Route::post('telegram-store/purchase-alerts/{alert}/retry', [TelegramStoreController::class, 'retryPurchaseAlert'])->middleware('throttle:10,1');
+        Route::post('operations/recover', [AdminOperationsController::class, 'recover'])->middleware('throttle:10,1');
+        Route::post('operations/payments/{paymentAttempt}/verify', [AdminOperationsController::class, 'verifyPayment'])->middleware('throttle:10,1');
+        Route::post('operations/telegram-purchases/{telegramPurchase}/retry', [AdminOperationsController::class, 'retryTelegramPurchase'])->middleware('throttle:10,1');
+    });
+
+    Route::middleware(['auth:sanctum', 'account.active', 'permission:access.manage'])->prefix('admin')->group(function (): void {
+        Route::get('access/model-aliases', [AdminAccessController::class, 'modelAliases']);
+        Route::patch('access/customers/{customer}/status', [AdminAccessController::class, 'updateCustomerStatus'])->middleware('throttle:20,1');
+        Route::post('access/api-keys', [AdminAccessController::class, 'storeKey'])->middleware('throttle:10,1');
+        Route::patch('access/api-keys/{apiKey}/status', [AdminAccessController::class, 'updateKeyStatus'])->middleware('throttle:20,1');
+        Route::post('access/entitlements/{entitlementLot}/expire', [AdminAccessController::class, 'expireEntitlement'])->middleware('throttle:20,1');
+        Route::post('operations/reservations/{reservation}/release-confirmed', [AdminOperationsController::class, 'releaseReconciliation'])->middleware('throttle:10,1');
     });
 
     Route::middleware(['auth:sanctum', 'account.active', 'permission:admin.view'])->prefix('admin')->group(function (): void {
         Route::get('overview', AdminOverviewController::class);
         Route::get('system-health', AdminSystemHealthController::class);
+        Route::get('audit-logs', [AdminAuditLogController::class, 'index']);
+        Route::get('operations', [AdminOperationsController::class, 'show']);
+        Route::get('operations/reconciliation-reservations', [AdminOperationsController::class, 'reconciliationReservations']);
+        Route::get('access/customers', [AdminAccessController::class, 'customers']);
+        Route::get('access/api-keys', [AdminAccessController::class, 'keys']);
+        Route::get('access/entitlements', [AdminAccessController::class, 'entitlements']);
+        Route::get('access/usage', [AdminAccessController::class, 'usage']);
     });
 
     Route::middleware(['auth:sanctum', 'account.active', 'permission:reseller.manage'])->prefix('reseller')->group(function (): void {
@@ -174,13 +200,23 @@ Route::prefix('v1')->group(function (): void {
     Route::get('me/usage/summary', [UsageController::class, 'summary'])->middleware(['auth:sanctum', 'account.active']);
     Route::get('me/playground/quota', [PlaygroundController::class, 'quota'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
     Route::post('me/playground/run', [PlaygroundController::class, 'run'])->middleware(['auth:sanctum', 'account.active', 'throttle:12,1']);
+    Route::post('me/playground/stream', [PlaygroundController::class, 'stream'])->middleware(['auth:sanctum', 'account.active', 'throttle:12,1']);
+    Route::get('me/playground/chats', [PlaygroundChatController::class, 'index'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
+    Route::post('me/playground/chats', [PlaygroundChatController::class, 'store'])->middleware(['auth:sanctum', 'account.active', 'throttle:30,1']);
+    Route::delete('me/playground/chats', [PlaygroundChatController::class, 'clear'])->middleware(['auth:sanctum', 'account.active', 'throttle:10,1']);
+    Route::get('me/playground/chats/{chat}', [PlaygroundChatController::class, 'show'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
+    Route::put('me/playground/chats/{chat}', [PlaygroundChatController::class, 'update'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
+    Route::delete('me/playground/chats/{chat}', [PlaygroundChatController::class, 'destroy'])->middleware(['auth:sanctum', 'account.active', 'throttle:30,1']);
     Route::get('me/usage/keys/{apiKey}/summary', [UsageController::class, 'keySummary'])->middleware(['auth:sanctum', 'account.active']);
     Route::middleware(['auth:sanctum', 'account.active'])->group(function (): void {
         Route::get('orders', [OrderController::class, 'index']);
+        Route::delete('orders/history', [OrderController::class, 'clearHistory'])->middleware('throttle:10,1');
         Route::post('orders', [OrderController::class, 'store'])->middleware('throttle:20,1');
         Route::get('orders/{order}', [OrderController::class, 'show']);
+        Route::delete('orders/{order}', [OrderController::class, 'hide'])->middleware('throttle:20,1');
         Route::get('orders/{order}/payment', [PaymentController::class, 'show']);
         Route::post('orders/{order}/payment', [PaymentController::class, 'store'])->middleware('throttle:10,1');
+        Route::post('orders/{order}/payment/auto-check', [PaymentController::class, 'autoCheck'])->middleware('throttle:120,1');
         Route::post('orders/{order}/payment/verify', [PaymentController::class, 'verify'])->middleware('throttle:20,1');
         Route::post('promotions/preview', PromotionPreviewController::class)->middleware('throttle:30,1');
         Route::post('redeem-codes/redeem', [RedeemCodeController::class, 'store'])->middleware('throttle:10,1');
@@ -188,6 +224,8 @@ Route::prefix('v1')->group(function (): void {
     Route::middleware(['auth:sanctum', 'account.active'])->prefix('me/api-keys')->group(function (): void {
         Route::get('/', [ApiKeyController::class, 'index']);
         Route::post('/', [ApiKeyController::class, 'store'])->middleware('throttle:10,1');
+        Route::get('{apiKey}', [ApiKeyController::class, 'show']);
+        Route::post('{apiKey}/reveal', [ApiKeyController::class, 'reveal'])->middleware('throttle:10,1');
         Route::post('{apiKey}/rotate', [ApiKeyController::class, 'rotate'])->middleware('throttle:5,1');
         Route::patch('{apiKey}/status', [ApiKeyController::class, 'updateStatus']);
         Route::post('{apiKey}/revoke', [ApiKeyController::class, 'revoke']);

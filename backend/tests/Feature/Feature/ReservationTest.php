@@ -169,7 +169,21 @@ class ReservationTest extends TestCase
             $this->assertSame('TOKEN_QUOTA', $exception->billingMode);
         }
 
-        $this->assertDatabaseHas('entitlement_lots', ['id' => $paidLot->id, 'reserved_units' => 30]);
+        $balanceReservation = $service->reserve(
+            $user,
+            'claude-coding',
+            'TOKEN_QUOTA',
+            10,
+            'request:playground-explicit-balance',
+            $playgroundCreated['key']->id,
+            null,
+            null,
+            null,
+            'BALANCE',
+        );
+        $this->assertSame([$paidLot->id], $balanceReservation->allocations->pluck('entitlement_lot_id')->all());
+
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $paidLot->id, 'reserved_units' => 40]);
         $this->assertDatabaseHas('entitlement_lots', ['id' => $freeLot->id, 'reserved_units' => 20]);
     }
 
@@ -219,18 +233,21 @@ class ReservationTest extends TestCase
         $this->assertDatabaseHas('entitlement_lots', ['id' => $lot->id, 'remaining_units' => 55, 'reserved_units' => 0]);
     }
 
-    public function test_stale_reconciliation_reservation_can_expire_without_spending_capacity(): void
+    public function test_stale_reconciliation_reservation_holds_capacity_until_explicit_resolution(): void
     {
         $user = User::factory()->create();
-        $lot = app(EntitlementService::class)->grant($user, $this->snapshot(100, now()->addDay()), 'grant:reconcile-expire');
+        $lot = app(EntitlementService::class)->grant($user, $this->snapshot(100, now()->addDay()), 'grant:reconcile-hold');
         $service = app(ReservationService::class);
-        $reservation = $service->reserve($user, 'claude-coding', 'TOKEN_QUOTA', 70, 'request:reconcile-expire');
+        $reservation = $service->reserve($user, 'claude-coding', 'TOKEN_QUOTA', 70, 'request:reconcile-hold');
         $service->markForReconciliation($reservation, 'usage_unavailable');
         $reservation->update(['expires_at' => now()->subSecond()]);
 
-        $this->assertSame(1, $service->recoverStale());
         $this->assertSame(0, $service->recoverStale());
-        $this->assertDatabaseHas('reservations', ['id' => $reservation->id, 'status' => 'EXPIRED', 'settled_units' => 0, 'reconciliation_reason' => null]);
+        $this->assertDatabaseHas('reservations', ['id' => $reservation->id, 'status' => 'RECONCILIATION_REQUIRED', 'reconciliation_reason' => 'usage_unavailable']);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $lot->id, 'remaining_units' => 100, 'reserved_units' => 70]);
+
+        $released = $service->releaseReconciliation($reservation->fresh(), 'CONFIRMED NO UPSTREAM USAGE');
+        $this->assertSame('RELEASED', $released->status);
         $this->assertDatabaseHas('entitlement_lots', ['id' => $lot->id, 'remaining_units' => 100, 'reserved_units' => 0]);
     }
 

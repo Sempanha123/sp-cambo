@@ -35,9 +35,11 @@ const pkg = (overrides: Partial<PublicPackage> & { slug: string }): PublicPackag
   family_label: 'Standard',
   advertised_units: '20000000',
   unit_label: 'tokens',
+  credit_amount: null,
   price: { minor: '1500', currency: 'USD', exponent: 2 },
   compare_at_price: null,
   duration_seconds: 2592000,
+  stock_remaining: null,
   allowed_model_aliases: ['sp-fast'],
   limits: {
     requests_per_minute: null,

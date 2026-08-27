@@ -54,9 +54,10 @@ const { claudeCodeShell, curlMessages } = useCliSnippets()
       <code>laptop-cli</code> or <code>ci-runner</code>.
     </p>
     <p>
-      <strong>The full secret is shown exactly once, at creation.</strong> Copy it into your password
-      manager or your environment before closing the dialog. Afterwards, only the prefix and last
-      four characters are ever displayed. If you lose it, rotate the key — you cannot recover it.
+      <strong>Copy the full secret into your password manager or environment.</strong> Normal key lists
+      show only the prefix and last four characters. If you need the current secret later, open API
+      Keys and choose <strong>Copy key</strong>; the authenticated reveal is throttled and audited.
+      Rotate the key if you suspect exposure.
     </p>
 
     <h2 id="pick-a-model-alias">

@@ -27,6 +27,7 @@ class RolePermissionSeeder extends Seeder
     private const PERMISSIONS = [
         'admin.view' => 'View admin analytics',
         'catalog.manage' => 'Manage catalog',
+        'access.manage' => 'Manage customer access',
         'reseller.manage' => 'Manage reseller customers',
     ];
 
@@ -34,7 +35,7 @@ class RolePermissionSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private const ROLE_PERMISSIONS = [
-        'SUPER_ADMIN' => ['admin.view', 'catalog.manage', 'reseller.manage'],
+        'SUPER_ADMIN' => ['admin.view', 'catalog.manage', 'access.manage', 'reseller.manage'],
         'ADMIN' => ['admin.view'],
         'FINANCE' => [],
         'SUPPORT' => [],

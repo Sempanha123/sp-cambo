@@ -52,6 +52,10 @@ class TelegramWebhookController extends Controller
                     $bot->sendMessage($chatId, 'Website account linked. Use the Store button to continue.');
                     return response()->json(['ok' => true]);
                 }
+                if (in_array($legacyCommand, ['/chatid', '/myid'], true)) {
+                    $bot->sendMessage($chatId, "ℹ️ This is your SP Cambo Store Bot chat ID: {$chatId}.\n\nThe website does not send Telegram order alerts.");
+                    return response()->json(['ok' => true]);
+                }
             }
 
             $account = $telegram->ensureStorefrontAccount(
@@ -72,8 +76,25 @@ class TelegramWebhookController extends Controller
             $normalized = mb_strtolower($text);
 
             if ($command === '/start') {
-                $telegram->sendHome($account);
-            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង'])) {
+                $startArg = mb_strtolower($argument);
+                if ($startArg === 'store') {
+                    $telegram->sendStorefront($account);
+                } elseif (str_starts_with($startArg, 'package_')) {
+                    $slug = substr($argument, strlen('package_'));
+                    if ($slug !== '' && preg_match('/^[A-Za-z0-9_-]{1,48}$/', $slug) === 1) {
+                        $package = \App\Models\Package::query()->published()->where('slug', $slug)->first();
+                        if ($package) {
+                            $telegram->sendProduct($account, (int) $package->id);
+                        } else {
+                            $telegram->sendStorefront($account);
+                        }
+                    } else {
+                        $telegram->sendStorefront($account);
+                    }
+                } else {
+                    $telegram->sendHome($account);
+                }
+            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង', '🛍 buy package', '🛍 ទិញកញ្ចប់'])) {
                 $telegram->sendStorefront($account);
             } elseif ($command === '/buy' && $argument !== '') {
                 $telegram->beginPurchase($account, $argument, $updateId);
@@ -81,14 +102,18 @@ class TelegramWebhookController extends Controller
                 $purchase = $telegram->checkLatest($account);
                 if (! $purchase) $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
                 elseif ($purchase->delivered_at === null) $bot->sendMessage($chatId, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
-            } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 សមតុល្យ'])) {
+            } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 my balance', '💰 សមតុល្យ', '💰 សមតុល្យរបស់ខ្ញុំ'])) {
                 $telegram->sendBalance($account);
-            } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 ការបញ្ជាទិញ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
+            } elseif ($command === '/keys' || $command === '/apikeys' || $this->matches($normalized, ['🔑 my api keys', '🔑 api keys របស់ខ្ញុំ'])) {
+                $telegram->sendApiKeys($account);
+            } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 my orders', '🧾 ការបញ្ជាទិញ', '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
                 $telegram->sendOrders($account);
             } elseif ($command === '/models' || $this->matches($normalized, ['🧠 models', '🧠 ម៉ូដែល'])) {
                 $telegram->sendModels($account);
             } elseif ($command === '/language' || $this->matches($normalized, ['🌐 language', '🌐 ភាសា'])) {
                 $telegram->sendLanguage($account);
+            } elseif ($command === '/support' || $this->matches($normalized, ['📞 support', '📞 ជំនួយ'])) {
+                $telegram->sendSupport($account);
             } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
                 $telegram->sendUpdatesStatus($account);
             } else {
@@ -161,6 +186,11 @@ class TelegramWebhookController extends Controller
             $ack($bot, $callbackId);
             return;
         }
+        if ($data === 'keys') {
+            $telegram->sendApiKeys($account);
+            $ack($bot, $callbackId);
+            return;
+        }
         if ($data === 'orders') {
             $telegram->sendOrders($account);
             $ack($bot, $callbackId);
@@ -181,6 +211,11 @@ class TelegramWebhookController extends Controller
             $account = $telegram->setLocale($account, $locale);
             $ack($bot, $callbackId, $locale === 'km' ? 'បានប្ដូរភាសា' : 'Language updated');
             $telegram->sendHome($account);
+            return;
+        }
+        if ($data === 'support') {
+            $telegram->sendSupport($account);
+            $ack($bot, $callbackId);
             return;
         }
         if ($data === 'updates') {

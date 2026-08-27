@@ -6,6 +6,7 @@ use App\Events\CustomerStateChanged;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Services\OrderService;
+use App\Services\AuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -13,7 +14,7 @@ class OrderController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $orders = Order::query()->where('user_id', $request->user()->id)->with('items')->latest()->get();
+        $orders = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->with('items')->latest()->get();
 
         return response()->json(['data' => $orders->map(fn (Order $order) => $this->resource($order))]);
     }
@@ -33,9 +34,91 @@ class OrderController extends Controller
 
     public function show(Request $request, string $order): JsonResponse
     {
-        $model = Order::query()->where('user_id', $request->user()->id)->with('items')->findOrFail($order);
+        $model = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->with('items')->findOrFail($order);
 
         return response()->json(['data' => $this->resource($model)]);
+    }
+
+
+    public function hide(Request $request, string $order, AuditService $audit): JsonResponse
+    {
+        $model = Order::query()
+            ->where('user_id', $request->user()->id)
+            ->with('paymentAttempts')
+            ->findOrFail($order);
+
+        if (! $this->canHide($model)) {
+            return response()->json([
+                'message' => 'This order is still active. Finish or let the current payment code expire before removing it from your history.',
+                'code' => 'order_history_active',
+            ], 409);
+        }
+
+        if ($model->customer_hidden_at === null) {
+            $model->forceFill(['customer_hidden_at' => now()])->save();
+            $audit->record(
+                $request->user(),
+                'order.customer_hidden',
+                'order',
+                $model->id,
+                'Customer removed an order from their visible history. Billing and audit records were retained.'
+            );
+        }
+
+        return response()->json(['data' => ['hidden' => true, 'order_id' => (string) $model->id]]);
+    }
+
+    public function clearHistory(Request $request, AuditService $audit): JsonResponse
+    {
+        $orders = Order::query()
+            ->where('user_id', $request->user()->id)
+            ->whereNull('customer_hidden_at')
+            ->with('paymentAttempts')
+            ->get();
+
+        $hidden = 0;
+        foreach ($orders as $order) {
+            if (! $this->canHide($order)) {
+                continue;
+            }
+            $order->forceFill(['customer_hidden_at' => now()])->save();
+            $hidden++;
+        }
+
+        if ($hidden > 0) {
+            $audit->record(
+                $request->user(),
+                'order.customer_history_cleared',
+                'user',
+                (string) $request->user()->id,
+                'Customer cleared removable orders from their visible history. Billing and audit records were retained.',
+                ['hidden_count' => $hidden]
+            );
+        }
+
+        return response()->json(['data' => ['hidden_count' => $hidden]]);
+    }
+
+    private function canHide(Order $order): bool
+    {
+        if ($order->status === 'FULFILLED') {
+            return true;
+        }
+
+        if ($order->status !== 'PENDING_PAYMENT') {
+            return true;
+        }
+
+        $latest = $order->paymentAttempts->sortByDesc('created_at')->first();
+        if ($latest === null) {
+            return true;
+        }
+
+        if (in_array($latest->status, ['PAID', 'FAILED', 'EXPIRED'], true)) {
+            return true;
+        }
+
+        return $latest->expires_at?->isPast() === true;
     }
 
     private function resource(Order $order): array

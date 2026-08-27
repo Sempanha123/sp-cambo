@@ -82,6 +82,13 @@ export function paymentOutcome({ attemptStatus, orderStatus, countdownExpired }:
     return 'paid'
   }
 
+  // If the backend already owns a verification lease, let that authoritative
+  // check finish before offering a new QR. This prevents a deadline race from
+  // showing an old in-flight payment as expired while Bakong is still being read.
+  if (attemptStatus === 'VERIFYING' || orderStatus === 'VERIFYING') {
+    return 'waiting'
+  }
+
   if (attemptStatus === 'EXPIRED' || orderStatus === 'EXPIRED' || countdownExpired) {
     return 'expired'
   }

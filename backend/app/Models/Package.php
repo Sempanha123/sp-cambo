@@ -8,11 +8,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Package extends Model
 {
-    protected $fillable = ['slug', 'name', 'subtitle', 'badge', 'billing_mode', 'family', 'family_label', 'advertised_units', 'unit_label', 'price_minor', 'compare_at_price_minor', 'currency', 'currency_exponent', 'duration_seconds', 'limits', 'billing_rules', 'auto_creates_api_key', 'featured', 'sort_order', 'starts_at', 'ends_at', 'enabled', 'customer_visible', 'minimum_margin_bps', 'profitability_override_reason'];
+    protected $fillable = ['slug', 'name', 'subtitle', 'badge', 'billing_mode', 'family', 'family_label', 'advertised_units', 'unit_label', 'price_minor', 'compare_at_price_minor', 'currency', 'currency_exponent', 'duration_seconds', 'stock_quantity', 'limits', 'billing_rules', 'auto_creates_api_key', 'featured', 'sort_order', 'starts_at', 'ends_at', 'enabled', 'customer_visible', 'minimum_margin_bps', 'profitability_override_reason'];
 
     protected function casts(): array
     {
-        return ['limits' => 'array', 'billing_rules' => 'array', 'enabled' => 'boolean', 'customer_visible' => 'boolean', 'auto_creates_api_key' => 'boolean', 'featured' => 'boolean', 'starts_at' => 'immutable_datetime', 'ends_at' => 'immutable_datetime'];
+        return ['limits' => 'array', 'billing_rules' => 'array', 'enabled' => 'boolean', 'customer_visible' => 'boolean', 'auto_creates_api_key' => 'boolean', 'featured' => 'boolean', 'starts_at' => 'immutable_datetime', 'ends_at' => 'immutable_datetime', 'stock_quantity' => 'integer'];
     }
 
     public function modelAliases(): BelongsToMany
@@ -25,6 +25,7 @@ class Package extends Model
         return $query->where('enabled', true)->where('customer_visible', true)
             ->where(fn (Builder $q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', now()))
             ->where(fn (Builder $q) => $q->whereNull('ends_at')->orWhere('ends_at', '>', now()))
+            ->where(fn (Builder $q) => $q->whereNull('stock_quantity')->orWhere('stock_quantity', '>', 0))
             ->whereHas('modelAliases', fn (Builder $alias) => $alias->published());
     }
 }

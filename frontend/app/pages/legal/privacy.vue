@@ -23,8 +23,8 @@ const stored: DataRow[] = [
   },
   {
     category: 'API keys',
-    examples: 'A hash of the secret, a display prefix, the last four characters, scope, status.',
-    why: 'To authenticate requests without ever being able to show you the secret again.'
+    examples: 'A lookup hash, an encrypted recovery copy for customer-owned inference keys, a display prefix, the last four characters, scope, status.',
+    why: 'To authenticate requests and let the signed-in owner explicitly re-copy their own inference key without exposing it in normal key lists.'
   },
   {
     category: 'Request metadata',
@@ -43,7 +43,6 @@ const notStored: string[] = [
   'Completion text a model returns.',
   'Tool call arguments and results, and file contents you attach.',
   'System prompts and conversation history.',
-  'Full API key secrets — only a hash, a prefix and the last four characters.',
   'Card or bank credentials. Payment happens on the payment network, not here.'
 ]
 </script>
@@ -145,14 +144,13 @@ const notStored: string[] = [
     </h2>
     <ul>
       <li>Passwords are hashed, never stored or transmitted in a recoverable form.</li>
-      <li>API key secrets are hashed. The full secret is shown exactly once, at creation or rotation.</li>
+      <li>Inference API keys use a lookup hash for authentication. Customer-owned keys also keep an encrypted recovery copy so the signed-in owner can explicitly re-copy the current secret.</li>
       <li>Secrets are redacted from logs and error reports.</li>
       <li>Privileged administrative actions are recorded in an audit trail.</li>
       <li>Traffic is served over TLS, and browser sessions are separate from inference credentials.</li>
     </ul>
     <p>
-      Practical consequence for you: a compromised browser session cannot reveal your existing API key
-      secrets, and a compromised API key cannot touch your account.
+      Practical consequence for you: normal key lists never contain plaintext secrets, but an authenticated browser session can explicitly request the current secret for a customer-owned inference key. Treat your account session as sensitive and sign out on shared devices. A compromised API key still cannot manage your account.
     </p>
 
     <h2 id="your-controls">

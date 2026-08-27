@@ -2,17 +2,16 @@
  * SP Cambo commercial contracts: catalogue, entitlements, orders, payments, usage,
  * API keys and reseller provisioning.
  *
- * These are implemented by the Laravel control plane. `docs/architecture/API_CONTRACT.md`
- * is authoritative for the wire shapes, and the controllers under
- * `backend/app/Http/Controllers/Api/V1/` are authoritative over that document — verify
- * against the source before changing a field here.
+ * These are implemented by the Laravel control plane. The controllers under
+ * `backend/app/Http/Controllers/Api/V1/` are authoritative for the wire shapes —
+ * verify against the source before changing a field here.
  *
  * A field typed optional is one the control plane does not publish today. Absent must
  * always read as "not stated", never as a value: pages render an honest "not available"
  * state rather than substituting a default, because a guessed price, quota or capability
- * is worse than a blank. Outstanding gaps are itemised in `docs/ai/CLAUDE_TO_CODEX.md`.
+ * is worse than a blank.
  *
- * Numeric policy (mirrors docs/product/BILLING_AND_ENTITLEMENTS.md):
+ * Numeric policy:
  * - money is transported as integer minor units in a decimal string;
  * - token/credit quantities are transported as integer decimal strings;
  * - the frontend never performs binary-float arithmetic on money or quota.
@@ -47,6 +46,8 @@ export interface PublicModelCapabilities {
   messages_api?: boolean
   responses_api?: boolean
   chat_completions_api?: boolean
+  /** Preferred protocol for SP Cambo's hosted Playground when several are verified. */
+  playground_protocol?: 'messages' | 'responses' | 'chat_completions' | null
 }
 
 /** `GET /catalog/models` — public, no auth. Internal OmniRoute ids must never appear. */
@@ -95,11 +96,15 @@ export interface PublicPackage {
   advertised_units: string
   /** Human unit label defined by admin, e.g. "tokens" or "credits". */
   unit_label: string
+  /** Exact funded money for CREDIT_BALANCE packages; null for token quota packages. */
+  credit_amount: MoneyAmount | null
   price: MoneyAmount
   /** Optional pre-discount price for campaign display. */
   compare_at_price: MoneyAmount | null
   /** Exact lifetime in seconds. 86400 means exactly 24 hours from activation. */
   duration_seconds: number
+  /** null = unlimited stock; otherwise exact remaining purchasable package units. */
+  stock_remaining: string | null
   allowed_model_aliases: string[]
   limits: {
     requests_per_minute: number | null
@@ -115,6 +120,29 @@ export interface PublicPackage {
 
 /** `GET /me/balance` — aggregate of spendable entitlement lots. */
 
+export interface PlaygroundModel {
+  public_alias: string
+  display_name: string
+  capabilities: PublicModelCapabilities
+  limits: Record<string, number | null>
+}
+
+export interface PlaygroundChatSummary {
+  id: number
+  title: string
+  model_alias: string | null
+  message_count: number
+  last_message_at: string | null
+  expires_at: string | null
+}
+
+export interface PlaygroundChat extends PlaygroundChatSummary {
+  system_prompt: string | null
+  messages: Array<{ role: 'user' | 'assistant', content: string }>
+  created_at: string | null
+  updated_at: string | null
+}
+
 export interface PlaygroundQuota {
   enabled: boolean
   limit: number
@@ -122,17 +150,47 @@ export interface PlaygroundQuota {
   reset_at: string
   max_output_tokens: number
   free_model_aliases: string[]
+  /** Daily quota can remain available while the configured free route is temporarily unavailable. */
+  free_models_available: boolean
+  free_model_message: string | null
   redeem_token_remaining: number
   paid_token_remaining: number
   paid_credit_remaining: number
   fallback_available: boolean
+  fallback_model_aliases: string[]
+  available_model_aliases: string[]
+  available_models: PlaygroundModel[]
+  funded_model_statuses?: Array<{
+    public_alias: string
+    display_name: string
+    available: boolean
+    reason: string | null
+    token_remaining: number
+    credit_remaining: number
+  }>
+  unavailable_funded_models?: Array<{
+    public_alias: string
+    display_name: string
+    available: boolean
+    reason: string | null
+    token_remaining: number
+    credit_remaining: number
+  }>
+  model_balances: Array<{
+    alias: string
+    free_eligible: boolean
+    balance_available: boolean
+    token_remaining: number
+    credit_remaining: number
+    next_expires_at: string | null
+  }>
   default_model_alias: string | null
   allow_model_switching: boolean
 }
 
 export interface BalanceSummary {
   token_quota: {
-    /** Spendable metered units across all non-expired TOKEN_QUOTA lots. */
+    /** Spendable metered units across allocated/legacy non-expired TOKEN_QUOTA lots. Unassigned purchases are excluded until the customer chooses access. */
     remaining_units: string
     reserved_units: string
     original_units: string
@@ -141,7 +199,7 @@ export interface BalanceSummary {
     remaining: MoneyAmount
     reserved: MoneyAmount
   }
-  /** Earliest expiry across spendable lots, ISO-8601 UTC. */
+  /** Earliest expiry across allocated/legacy spendable lots, ISO-8601 UTC. */
   next_expires_at: string | null
   active_lot_count: number
   /** Monotonic version so realtime events can be reconciled against REST. */
@@ -176,11 +234,14 @@ export interface EntitlementLot {
    * printing a raw enum name at a customer.
    */
   source: string
+  access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED'
+  fulfillment_claim_id: string | null
+  bound_api_key: { id: string, label: string, masked_key: string } | null
 }
 
 export type ApiKeyStatus = 'ACTIVE' | 'DISABLED' | 'REVOKED' | 'EXPIRED'
 
-/** `GET /me/api-keys` — never contains a full secret. */
+/** `GET /me/api-keys` — never contains a full secret; re-copy requires an explicit owner-only reveal request. */
 export interface ApiKeySummary {
   id: string
   label: string
@@ -200,10 +261,40 @@ export interface ApiKeySummary {
     max_output_tokens: number | null
   }
   bound_entitlement_id: string | null
+  secret_recopy_available: boolean
+}
+
+export interface ApiKeyDetails {
+  key: ApiKeySummary
+  balance_source: 'no_spendable_balance' | 'legacy_account_entitlements' | 'dedicated_and_legacy_entitlements'
+  token_quota_remaining: string
+  credit_balances: MoneyAmount[]
+  funding_status?: 'ready' | 'unavailable'
+  funding_message?: string | null
+  funding_diagnostic_id?: string | null
+  funding: Array<{
+    id: string
+    package_name: string
+    source: string
+    access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED'
+    dedicated_to_this_key: boolean
+    billing_mode: BillingMode
+    original_units: string
+    remaining_units: string
+    reserved_units: string
+    unit_label: string
+    currency: string | null
+    currency_exponent: number | null
+    allowed_model_aliases: string[]
+    activated_at: string | null
+    expires_at: string | null
+    days_remaining: number | null
+  }>
+  server_time: string
 }
 
 /**
- * `POST /me/api-keys` — the only response that may ever contain `secret`.
+ * Explicit secret-bearing response used only by create, rotate, or owner re-copy.
  * The frontend must not persist it anywhere after the reveal modal closes.
  */
 export interface ApiKeyCreated {
@@ -290,6 +381,21 @@ export interface UsageSummary {
     metered_units: string
     credit_charge: MoneyAmount
   }>
+}
+
+export interface ApiKeyUsageSummary extends UsageSummary {
+  key: {
+    id: string
+    label: string
+    prefix: string
+    last_four: string
+    status: ApiKeyStatus
+    created_at: string
+    last_used_at: string | null
+    expires_at: string | null
+    allowed_model_aliases: string[]
+    limits: ApiKeySummary['limits']
+  }
 }
 
 export type OrderStatus

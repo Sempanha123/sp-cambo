@@ -204,7 +204,7 @@ class InternalGatewayBillingTest extends TestCase
         $this->assertDatabaseHas('reservations', ['id' => $response->json('data.reservation_id'), 'api_key_id' => $created['key']->id]);
     }
 
-    public function test_playground_key_cannot_fall_through_to_paid_entitlements(): void
+    public function test_playground_key_defaults_to_daily_scope_and_cannot_silently_fall_through_to_paid_entitlements(): void
     {
         [$user, $alias, $created] = $this->customer();
         DB::table('playground_credentials')->insert([
@@ -224,6 +224,30 @@ class InternalGatewayBillingTest extends TestCase
         $this->assertDatabaseHas('entitlement_lots', ['id' => $paid->id, 'reserved_units' => 0, 'remaining_units' => 500]);
         $this->gateway()->postJson('/api/v1/internal/gateway/inspect', ['customer_key' => $created['secret']])
             ->assertOk()->assertJsonPath('data.balances.token_quota_remaining', '20');
+    }
+
+    public function test_playground_key_can_explicitly_use_customer_balance_without_touching_daily_quota(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        DB::table('playground_credentials')->insert([
+            'user_id' => $user->id,
+            'api_key_id' => $created['key']->id,
+            'secret_ciphertext' => 'test-only-not-read',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $free = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'PLAYGROUND_DAILY');
+        $redeem = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'REDEEM_CODE');
+        $paid = $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [], 'ORDER');
+
+        $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
+            'playground_funding_scope' => 'BALANCE',
+        ]))->assertOk()->assertJsonPath('data.reserved_units', '60');
+
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $free->id, 'reserved_units' => 0]);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $redeem->id, 'reserved_units' => 60]);
+        $this->assertDatabaseHas('entitlement_lots', ['id' => $paid->id, 'reserved_units' => 0]);
+        $this->assertDatabaseHas('reservations', ['id' => $response->json('data.reservation_id'), 'api_key_id' => $created['key']->id]);
     }
 
     public function test_invalid_key_model_protocol_size_and_depleted_balance_never_create_reservations(): void

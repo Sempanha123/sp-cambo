@@ -1,7 +1,7 @@
 <script setup lang="ts">
 useSeoMeta({
   title: 'Authentication',
-  description: 'How SP Cambo API keys work: scoping, the one-time secret reveal, rotation, revocation and safe storage.'
+  description: 'How SP Cambo API keys work: scoping, secure re-copy, rotation, revocation and safe storage.'
 })
 
 const { keyPlaceholder, inferenceRoot } = useCliSnippets()
@@ -15,7 +15,7 @@ const headerExamples = computed(() => [
 <template>
   <SpDocsShell
     title="Authentication"
-    description="One credential type for inference, scoped per key, revocable at any time, and never recoverable after creation."
+    description="One credential type for inference, scoped per key, revocable at any time, with an explicit authenticated re-copy flow for your own keys."
   >
     <h2 id="two-credential-types">
       Two credential types, kept apart
@@ -45,21 +45,23 @@ const headerExamples = computed(() => [
       error reports.
     </p>
 
-    <h2 id="one-time-reveal">
-      The secret is shown once
+    <h2 id="secret-recovery">
+      Re-copying your own key
     </h2>
     <p>
-      When you create or rotate a key, the full secret is returned exactly once and displayed in a
-      dialog. After that it is unrecoverable: SP Cambo stores only a hash, plus a display prefix and
-      the last four characters so you can tell your keys apart.
+      Normal key lists are always masked. For customer-owned inference keys, SP Cambo stores a lookup
+      hash for authentication plus an encrypted recovery copy. From <strong>API keys</strong>, choose
+      <strong>Copy key</strong> to explicitly retrieve the current secret through your authenticated
+      session. The reveal request is throttled and audited.
     </p>
     <p>
-      This is deliberate. A key list that could reveal secrets would mean one compromised browser
-      session leaks every credential you have ever created.
+      Do not treat this as ordinary display data: use it only on a trusted device and keep the secret
+      in an environment variable or secret manager. Rotate the key if you believe the secret or your
+      account session was exposed; rotation invalidates the previous secret immediately.
     </p>
     <p>
-      If you did not capture the secret, rotate the key. Rotation issues a new secret and invalidates
-      the old one immediately.
+      Keys created before secure recovery support cannot be reconstructed from their old hash. Rotate
+      one of those legacy keys once; the new secret becomes re-copyable from then on.
     </p>
 
     <h2 id="scoping">

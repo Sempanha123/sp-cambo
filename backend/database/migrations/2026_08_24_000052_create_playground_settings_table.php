@@ -20,17 +20,17 @@ return new class extends Migration
             });
         }
 
-        DB::table('playground_settings')->updateOrInsert(
-            ['id' => 1],
-            [
-                'enabled' => true,
-                'daily_token_quota' => 20000,
-                'max_output_tokens' => 2048,
-                'allowed_model_aliases' => json_encode([], JSON_THROW_ON_ERROR),
-                'updated_at' => now(),
-                'created_at' => now(),
-            ]
-        );
+        // Seed only when absent. A migration-history repair must never reset
+        // operator-configured production policy back to defaults.
+        DB::table('playground_settings')->insertOrIgnore([
+            'id' => 1,
+            'enabled' => true,
+            'daily_token_quota' => 20000,
+            'max_output_tokens' => 2048,
+            'allowed_model_aliases' => json_encode([], JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+            'created_at' => now(),
+        ]);
     }
 
     public function down(): void

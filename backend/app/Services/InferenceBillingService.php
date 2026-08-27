@@ -32,6 +32,7 @@ class InferenceBillingService
         int $requestedMaxOutputTokens,
         string $requestId,
         string $requestFingerprint,
+        ?string $playgroundFundingScope = null,
     ): array {
         $hardMaxOutput = $this->hardMaxOutput($apiKey, $alias);
         $boundedOutput = min($requestedMaxOutputTokens, $hardMaxOutput);
@@ -40,7 +41,8 @@ class InferenceBillingService
             if ((int) $existing->user_id !== (int) $user->id
                 || $existing->api_key_id !== $apiKey->id
                 || $existing->public_model_alias !== $alias->public_alias
-                || ($existing->billing_snapshot['request_fingerprint'] ?? null) !== $requestFingerprint) {
+                || ($existing->billing_snapshot['request_fingerprint'] ?? null) !== $requestFingerprint
+                || ($playgroundFundingScope !== null && ($existing->billing_snapshot['playground_funding_scope'] ?? null) !== $playgroundFundingScope)) {
                 throw new InferenceIdempotencyException;
             }
 
@@ -54,7 +56,7 @@ class InferenceBillingService
             ];
         }
 
-        return DB::transaction(function () use ($user, $apiKey, $alias, $estimatedInputTokens, $boundedOutput, $hardMaxOutput, $requestId, $requestFingerprint): array {
+        return DB::transaction(function () use ($user, $apiKey, $alias, $estimatedInputTokens, $boundedOutput, $hardMaxOutput, $requestId, $requestFingerprint, $playgroundFundingScope): array {
             $model = $alias->model()->with('provider.activeConnectionRevision')->firstOrFail();
             $provider = $model->provider;
             $revision = $provider?->activeConnectionRevision;
@@ -67,28 +69,69 @@ class InferenceBillingService
                 ->where('api_key_id', $apiKey->id)
                 ->exists();
 
-            $lots = EntitlementLot::query()
+            $playgroundScope = $isPlaygroundKey
+                ? ($playgroundFundingScope === 'BALANCE' ? 'BALANCE' : 'DAILY')
+                : null;
+
+            $lotsQuery = EntitlementLot::query()
                 ->where('user_id', $user->id)
                 ->where('status', 'ACTIVE')
                 ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-                ->whereJsonContains('allowed_model_aliases', $alias->public_alias)
-                // Hosted Playground credentials and ordinary customer credentials
-                // use disjoint pools. Free daily quota can never spend or expose a
-                // paid, redeemed, promotional, transferred, or admin-granted lot.
-                ->when(
-                    $isPlaygroundKey,
-                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-                )
+                ->whereJsonContains('allowed_model_aliases', $alias->public_alias);
+
+            if ($isPlaygroundKey) {
+                if ($playgroundScope === 'BALANCE') {
+                    $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                        ->where(function ($access): void {
+                            $access->whereNull('access_scope')
+                                ->orWhere('access_scope', 'ACCOUNT')
+                                ->orWhere('access_scope', 'PLAYGROUND');
+                        });
+                } else {
+                    $lotsQuery->where('source_type', 'PLAYGROUND_DAILY');
+                }
+            } else {
+                // A forged Playground header must never grant a customer API key
+                // access to the daily pool, Playground purchases, or another
+                // customer's dedicated-key lot.
+                $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                    ->where(function ($access) use ($apiKey): void {
+                        $access->whereNull('access_scope')
+                            ->orWhere('access_scope', 'ACCOUNT')
+                            ->orWhere(function ($dedicated) use ($apiKey): void {
+                                $dedicated->where('access_scope', 'API_KEY')
+                                    ->where('bound_api_key_id', $apiKey->id);
+                            });
+                    });
+            }
+
+            $lots = $lotsQuery
                 ->orderByRaw('expires_at IS NULL')
                 ->orderBy('expires_at')
                 ->orderBy('created_at')
                 ->lockForUpdate()
                 ->get();
 
-            foreach (['TOKEN_QUOTA', 'CREDIT_BALANCE'] as $billingMode) {
+            $buckets = $isPlaygroundKey && $playgroundScope === 'BALANCE'
+                ? [
+                    ['TOKEN_QUOTA', 'REDEEM_CODE'],
+                    ['CREDIT_BALANCE', 'REDEEM_CODE'],
+                    ['TOKEN_QUOTA', 'NON_REDEEM'],
+                    ['CREDIT_BALANCE', 'NON_REDEEM'],
+                ]
+                : [
+                    ['TOKEN_QUOTA', 'ANY'],
+                    ['CREDIT_BALANCE', 'ANY'],
+                ];
+
+            foreach ($buckets as [$billingMode, $sourceBucket]) {
                 /** @var Collection<int, EntitlementLot> $matching */
                 $matching = $lots->where('billing_mode', $billingMode);
+                if ($sourceBucket === 'REDEEM_CODE') {
+                    $matching = $matching->where('source_type', 'REDEEM_CODE');
+                } elseif ($sourceBucket === 'NON_REDEEM') {
+                    $matching = $matching->reject(fn (EntitlementLot $lot): bool => $lot->source_type === 'REDEEM_CODE');
+                }
                 if ($matching->isEmpty()) {
                     continue;
                 }
@@ -102,6 +145,9 @@ class InferenceBillingService
                     $snapshot['estimated_input_tokens'] = $estimatedInputTokens;
                     $snapshot['requested_max_output_tokens'] = $boundedOutput;
                     $snapshot['funding_source_type'] = (string) $group->firstOrFail()->source_type;
+                    if ($playgroundScope !== null) {
+                        $snapshot['playground_funding_scope'] = $playgroundScope;
+                    }
                     $reserveUnits = $this->reservationUnits($snapshot, $estimatedInputTokens, $boundedOutput);
                     $available = $group->sum(fn (EntitlementLot $lot): int => max(0, $lot->remaining_units - $lot->reserved_units));
                     if ($available < $reserveUnits) {
@@ -118,6 +164,7 @@ class InferenceBillingService
                         $group->pluck('id')->all(),
                         $snapshot,
                         (string) $revision->id,
+                        $playgroundScope,
                     );
 
                     return [

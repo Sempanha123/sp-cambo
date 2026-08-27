@@ -76,8 +76,12 @@ const DEFAULT_MESSAGES: Record<SpErrorCode, string> = {
   profitability_review_required: 'This needs a profitability review before it can be published.',
   payment_pending: 'This payment has not been confirmed yet.',
   payment_verification_failed: 'The payment could not be verified.',
+  provider_probe_failed: 'The provider connection could not be verified.',
   insufficient_tokens: 'This entitlement has no remaining token quota.',
   insufficient_credits: 'This account has no remaining credit balance.',
+  database_migration_required: 'SP Cambo needs the latest database update. Run php artisan migrate from the backend, then reload this page.',
+  inference_unavailable: 'The selected model route is temporarily unavailable. Check the Gateway/provider status and try again.',
+  playground_run_failed: 'The Playground request failed. Check the diagnostic reference in the error and backend log.',
   server_error: 'SP Cambo could not complete that request. Please try again.',
   network_unreachable: 'SP Cambo could not be reached. Check your connection and try again.',
   endpoint_unavailable: 'This part of the SP Cambo API is not available yet.',
@@ -100,15 +104,19 @@ const KNOWN_CODES = new Set<string>([
   'profitability_review_required',
   'payment_pending',
   'payment_verification_failed',
+  'provider_probe_failed',
   'insufficient_tokens',
   'insufficient_credits',
+  'database_migration_required',
+  'inference_unavailable',
+  'playground_run_failed',
   'server_error'
 ])
 
 /**
  * Backend spellings that mean the same thing as a canonical code.
  *
- * `docs/product/BILLING_AND_ENTITLEMENTS.md` suggests `token_quota_exhausted`
+ * The API may return `token_quota_exhausted`
  * for an exhausted token entitlement, so accept it rather than degrading a
  * perfectly clear 402 to `unknown_error` over a naming difference.
  */
@@ -116,7 +124,19 @@ const CODE_ALIASES: Record<string, SpErrorCode> = {
   token_quota_exhausted: 'insufficient_tokens',
   credit_balance_exhausted: 'insufficient_credits',
   unauthorized: 'unauthenticated',
-  too_many_requests: 'rate_limit_exceeded'
+  too_many_requests: 'rate_limit_exceeded',
+  upstream_unavailable: 'inference_unavailable',
+  upstream_rejected: 'inference_unavailable',
+  model_unavailable: 'inference_unavailable',
+  model_not_allowed: 'forbidden',
+  billing_settlement_pending: 'inference_unavailable',
+  playground_unavailable: 'inference_unavailable',
+  playground_stream_interrupted: 'inference_unavailable',
+  billing_unavailable: 'inference_unavailable',
+  invalid_api_key: 'inference_unavailable',
+  api_key_disabled: 'inference_unavailable',
+  api_key_revoked: 'inference_unavailable',
+  api_key_expired: 'inference_unavailable'
 }
 
 function codeForStatus(status: number, notFoundMeansUnavailable: boolean): SpErrorCode {

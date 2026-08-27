@@ -18,6 +18,7 @@ class FulfillmentClaim extends Model
         'expires_at',
         'status',
         'api_key_id',
+        'delivery_mode',
         'source_idempotency_key',
         'claimed_at',
     ];

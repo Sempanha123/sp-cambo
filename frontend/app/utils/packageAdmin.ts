@@ -80,6 +80,8 @@ export interface PackageFormState {
   currency_exponent: string
   duration_amount: string
   duration_unit: DurationUnit
+  /** Blank = unlimited; otherwise exact remaining package inventory. */
+  stock_quantity: string
   limits: Record<LimitKey, string>
   weights: Record<WeightKey, string>
   auto_creates_api_key: boolean
@@ -135,6 +137,7 @@ export function emptyPackageForm(): PackageFormState {
     currency_exponent: '2',
     duration_amount: '',
     duration_unit: 'day',
+    stock_quantity: '',
     limits: emptyLimits(),
     weights: emptyWeights(),
     auto_creates_api_key: true,
@@ -208,6 +211,7 @@ export function packageFormFrom(item: AdminPackage): PackageFormState {
     currency_exponent: String(item.currency_exponent),
     duration_amount: String(duration.amount),
     duration_unit: duration.unit,
+    stock_quantity: item.stock_quantity ?? '',
     limits,
     weights,
     auto_creates_api_key: item.auto_creates_api_key,
@@ -294,6 +298,7 @@ export function buildPackageInput(state: PackageFormState): AdminPackageInput {
     currency: state.currency.trim().toUpperCase(),
     currency_exponent: parseOptionalInteger(state.currency_exponent) ?? 0,
     duration_seconds: amount * DURATION_UNIT_SECONDS[state.duration_unit],
+    stock_quantity: parseOptionalInteger(state.stock_quantity) ?? null,
     // Always an object: the control plane validates `limits` as `present`.
     limits: collectIntegers([...PACKAGE_LIMIT_FIELDS], state.limits),
     // Null rather than `{}` when nothing is weighted, which is how a package with no
@@ -408,6 +413,7 @@ export function packageFormProblems(
 
   problems.push(integerProblem('currency_exponent', state.currency_exponent, { min: 0, max: 6, required: true }))
   problems.push(integerProblem('duration_amount', state.duration_amount, { min: 1, required: true }))
+  problems.push(integerProblem('stock_quantity', state.stock_quantity, { min: 0, max: 1_000_000_000, required: false }))
   problems.push(integerProblem('sort_order', state.sort_order, { min: 0, required: true }))
   problems.push(integerProblem('minimum_margin_bps', state.minimum_margin_bps, { min: 0, max: 10_000, required: true }))
 

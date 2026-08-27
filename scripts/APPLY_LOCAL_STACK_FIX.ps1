@@ -130,7 +130,7 @@ Set-DotEnvValue -Path $gatewayEnv -Name 'SP_CAMBO_INTERNAL_GATEWAY_SECRET' -Valu
 # Local inference gateway configuration.
 Set-DotEnvValue -Path $gatewayEnv -Name 'GATEWAY_HOST' -Value '127.0.0.1'
 Set-DotEnvValue -Path $gatewayEnv -Name 'GATEWAY_PORT' -Value '3010'
-Set-DotEnvValue -Path $gatewayEnv -Name 'CONTROL_PLANE_BASE_URL' -Value 'http://127.0.0.1:8000'
+Set-DotEnvValue -Path $gatewayEnv -Name 'CONTROL_PLANE_BASE_URL' -Value 'http://127.0.0.1:8001'
 Set-DotEnvValue -Path $gatewayEnv -Name 'GATEWAY_RATE_STORE' -Value 'memory'
 
 # Local gateway advertised by Laravel/frontend.
@@ -170,6 +170,7 @@ Write-Host "SP Cambo local environment repaired." -ForegroundColor Green
 Write-Host "Internal gateway secret synchronized between backend/.env and gateway/.env." -ForegroundColor Green
 Write-Host "Secret length: $($secret.Length) characters (value intentionally hidden)." -ForegroundColor DarkGray
 Write-Host "Gateway rate store: memory (Redis not required locally)." -ForegroundColor Green
+Write-Host "Gateway control plane: http://127.0.0.1:8001 (separate local Laravel worker; avoids Windows re-entrant deadlock)." -ForegroundColor Green
 Write-Host "KHQR generator secret synchronized and Laravel generator URL set to port 3011." -ForegroundColor Green
 
 # Clear Laravel cached configuration so it sees the synchronized secret.

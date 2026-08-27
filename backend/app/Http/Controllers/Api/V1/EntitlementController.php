@@ -13,7 +13,7 @@ class EntitlementController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $lots = $this->user($request)->entitlementLots()->orderByRaw('expires_at IS NULL')->orderBy('expires_at')->orderBy('created_at')->get();
+        $lots = $this->user($request)->entitlementLots()->with('boundApiKey:id,label,prefix,last_four')->orderByRaw('expires_at IS NULL')->orderBy('expires_at')->orderBy('created_at')->get();
 
         return response()->json(['data' => $lots->map(fn (EntitlementLot $lot) => $this->lot($lot))->values()]);
     }
@@ -21,7 +21,13 @@ class EntitlementController extends Controller
     public function balance(Request $request): JsonResponse
     {
         $user = $this->user($request);
-        $lots = $user->entitlementLots()->where('status', 'ACTIVE')->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))->get();
+        $lots = $user->entitlementLots()
+            ->where('status', 'ACTIVE')
+            ->where(function ($access): void {
+                $access->whereNull('access_scope')->orWhere('access_scope', '!=', 'UNASSIGNED');
+            })
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->get();
         $tokens = $lots->where('billing_mode', 'TOKEN_QUOTA');
         $credits = $lots->where('billing_mode', 'CREDIT_BALANCE');
         $currency = $credits->first()?->currency ?? 'USD';
@@ -34,7 +40,7 @@ class EntitlementController extends Controller
     {
         $remainingAmount = $lot->billing_mode === 'CREDIT_BALANCE' ? $this->money($lot->remaining_units, $lot->currency ?? 'USD', $lot->currency_exponent ?? 6) : null;
 
-        return ['id' => $lot->id, 'billing_mode' => $lot->billing_mode, 'package_name' => $lot->package_name, 'family_label' => $lot->family_label, 'original_units' => (string) $lot->original_units, 'remaining_units' => (string) $lot->remaining_units, 'reserved_units' => (string) $lot->reserved_units, 'unit_label' => $lot->unit_label, 'remaining_amount' => $remainingAmount, 'activated_at' => $lot->activated_at?->toAtomString(), 'expires_at' => $lot->expires_at?->toAtomString(), 'allowed_model_aliases' => $lot->allowed_model_aliases, 'status' => $lot->status, 'source' => $lot->source_type];
+        return ['id' => $lot->id, 'billing_mode' => $lot->billing_mode, 'package_name' => $lot->package_name, 'family_label' => $lot->family_label, 'original_units' => (string) $lot->original_units, 'remaining_units' => (string) $lot->remaining_units, 'reserved_units' => (string) $lot->reserved_units, 'unit_label' => $lot->unit_label, 'remaining_amount' => $remainingAmount, 'activated_at' => $lot->activated_at?->toAtomString(), 'expires_at' => $lot->expires_at?->toAtomString(), 'allowed_model_aliases' => $lot->allowed_model_aliases, 'status' => $lot->status, 'source' => $lot->source_type, 'access_scope' => $lot->access_scope ?? 'ACCOUNT', 'fulfillment_claim_id' => $lot->fulfillment_claim_id, 'bound_api_key' => $lot->boundApiKey ? ['id' => (string) $lot->boundApiKey->id, 'label' => $lot->boundApiKey->label, 'masked_key' => $lot->boundApiKey->prefix.'…'.$lot->boundApiKey->last_four] : null];
     }
 
     private function money(int|string $minor, string $currency, int $exponent): array

@@ -14,9 +14,13 @@ class PaymentController extends Controller
 {
     public function show(Request $request, string $order): JsonResponse
     {
-        $owned = Order::query()->where('user_id', $request->user()->id)->findOrFail($order);
+        $owned = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->findOrFail($order);
         $attempt = $owned->paymentAttempts()->latest()->firstOrFail();
-        if (in_array($attempt->status, ['PENDING', 'VERIFYING'], true) && $attempt->expires_at->isPast()) {
+        // A read must never cancel a verification worker that already owns a
+        // live lease. Only a plain PENDING attempt is expired here. VERIFYING is
+        // resolved by PaymentService/scheduler, which either settles it or restores
+        // PENDING/EXPIRED after the Bakong lookup completes.
+        if ($attempt->status === 'PENDING' && $attempt->expires_at->isPast()) {
             $attempt->update(['status' => 'EXPIRED']);
             CustomerStateChanged::dispatch((int) $owned->user_id, 'payment.updated', ['order_id' => $owned->id, 'payment_status' => 'EXPIRED', 'order_status' => $owned->status]);
         }
@@ -26,16 +30,31 @@ class PaymentController extends Controller
 
     public function store(Request $request, string $order, PaymentService $payments): JsonResponse
     {
-        $owned = Order::query()->where('user_id', $request->user()->id)->findOrFail($order);
+        $owned = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->findOrFail($order);
         $attempt = $payments->createAttempt($owned);
         CustomerStateChanged::dispatch((int) $owned->user_id, 'payment.updated', ['order_id' => $owned->id, 'payment_status' => $attempt->status, 'order_status' => $owned->status]);
 
         return response()->json(['data' => $this->resource($attempt)]);
     }
 
+    public function autoCheck(Request $request, string $order, PaymentService $payments): JsonResponse
+    {
+        $owned = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->findOrFail($order);
+        $attempt = $owned->paymentAttempts()->latest()->firstOrFail();
+
+        $verified = $payments->verifyIfDue($attempt);
+        CustomerStateChanged::dispatch((int) $owned->user_id, 'payment.updated', [
+            'order_id' => $owned->id,
+            'payment_status' => $verified->status,
+            'order_status' => $verified->order?->status ?? $owned->fresh()->status,
+        ]);
+
+        return response()->json(['data' => $this->resource($verified)]);
+    }
+
     public function verify(Request $request, string $order, PaymentService $payments): JsonResponse
     {
-        $owned = Order::query()->where('user_id', $request->user()->id)->findOrFail($order);
+        $owned = Order::query()->where('user_id', $request->user()->id)->whereNull('customer_hidden_at')->findOrFail($order);
         $attempt = $owned->paymentAttempts()->latest()->firstOrFail();
 
         $verified = $payments->verify($attempt);

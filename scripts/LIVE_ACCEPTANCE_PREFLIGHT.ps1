@@ -29,8 +29,8 @@ function Check([hashtable]$Env, [string]$Name, [bool]$Secret=$false) {
 $envMap = Read-DotEnv (Resolve-Path $BackendEnv)
 Write-Host "=== SP Cambo live acceptance preflight ===" -ForegroundColor Cyan
 Check $envMap 'APP_URL'
-Check $envMap 'OMNIROUTE_BASE_URL'
-Check $envMap 'OMNIROUTE_API_KEY' $true
+Check $envMap 'ANTHROPIC_BASE_URL'
+Check $envMap 'ANTHROPIC_AUTH_TOKEN' $true
 Check $envMap 'BAKONG_BASE_URL'
 Check $envMap 'BAKONG_TOKEN' $true
 Check $envMap 'BAKONG_ACCOUNT_ID'

@@ -447,8 +447,7 @@ const submitAllocation = async () => {
      *
      * A 409 is already handled here so the page improves the moment those
      * refusals are mapped: it is a definite answer, the backend's own sentence
-     * explains it, and nothing needs re-checking. Requested in
-     * `docs/ai/CLAUDE_TO_CODEX.md`.
+     * explains it, and nothing needs re-checking. A 409 response remains the authoritative safe conflict signal.
      */
     allocationUnconfirmed.value = error.code === 'server_error'
     allocationError.value = error.isValidation ? null : error.message

@@ -6,12 +6,10 @@ import { nextTick } from 'vue'
 import SpApiKeyRevealModal from '~/components/SpApiKeyRevealModal.vue'
 
 /**
- * One-time reveal is the strictest rule in the product: a full inference key is
- * rendered exactly once, at creation or rotation, and is never re-fetchable. The
- * tests below therefore assert on the *secret* rather than on the markup — that
- * it is visible when the customer needs to copy it, that it can be hidden, that
- * the dialog cannot be dismissed by accident before it is stored, and that it
- * never reaches storage or the address bar.
+ * Full secrets are rendered only inside this guarded dialog. Customer-owned
+ * inference keys may be explicitly re-copied from encrypted recovery storage,
+ * while reseller-managed credentials remain one-time. These tests make sure the
+ * plaintext stays contained to the dialog and never reaches storage or URLs.
  *
  * The value below is a test fixture. It is not, and must never be, a real key.
  */
@@ -73,11 +71,26 @@ describe('SpApiKeyRevealModal reveal', () => {
     expect(bodyText()).not.toContain(SECRET)
   })
 
-  it('states that the secret is shown once and stored only as a hash', async () => {
+  it('explains that an owner key can be securely re-copied from encrypted recovery storage', async () => {
     await mount()
 
+    expect(bodyText()).toContain('Sensitive secret')
+    expect(bodyText()).toContain('encrypted recovery copy')
+    expect(bodyText()).toContain('audited')
+  })
+
+  it('keeps managed customer credentials one-time', async () => {
+    await mount({ audience: 'managed', ownerLabel: 'Managed Customer' })
+
     expect(bodyText()).toContain('Shown once and never again')
-    expect(bodyText()).toContain('hash')
+    expect(bodyText()).toContain('cannot be recovered')
+  })
+
+  it('labels a recovered owner secret differently from a newly created one', async () => {
+    await mount({ context: 'recovered' })
+
+    expect(bodyText()).toContain('Your API key')
+    expect(bodyText()).toContain('securely re-opened')
   })
 
   it('explains a rotation differently from a creation, because the old key just died', async () => {

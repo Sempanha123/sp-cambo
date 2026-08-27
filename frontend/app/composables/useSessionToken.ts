@@ -6,8 +6,7 @@
  * JavaScript in this mode because it is sent as an `Authorization` header.
  *
  * In `cookie` mode nothing is stored here: the Laravel Sanctum session cookie is
- * HttpOnly and the browser sends it automatically. Migrating to that mode is a
- * backend dependency tracked in `docs/ai/CLAUDE_TO_CODEX.md`.
+ * HttpOnly and the browser sends it automatically. Only enable that mode when the backend exposes the matching first-party Sanctum session flow.
  */
 const SESSION_COOKIE = 'sp-cambo.session'
 

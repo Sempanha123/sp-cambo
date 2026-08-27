@@ -13,7 +13,18 @@ import type {
   PublicApiKeyStatus
 } from '~/types/api'
 import type {
+  AdminAuditLog,
+  AdminAccessApiKey,
+  AdminAccessModelAlias,
+  AdminAccessApiKeyCreated,
+  AdminAccessEntitlement,
+  AdminCustomerAccess,
+  AdminUsageRequest,
   AdminModelAlias,
+  AdminOperationsOverview,
+  AdminRecoveryAction,
+  AdminRecoveryResponse,
+  AdminReconciliationReservation,
   AdminOverview,
   AdminPackage,
   AdminPackageInput,
@@ -55,6 +66,7 @@ import type {
 } from '~/types/reseller'
 import type {
   ApiKeyCreated,
+  ApiKeyDetails, ApiKeyUsageSummary,
   ApiKeyStatusReport,
   ApiKeySummary,
   BalanceSummary,
@@ -70,7 +82,9 @@ import type {
   UsageSummary,
   TelegramAccountStatus,
   TelegramLinkToken,
-  PlaygroundQuota
+  PlaygroundQuota,
+  PlaygroundChat,
+  PlaygroundChatSummary
 } from '~/types/commerce'
 
 interface SpRequestOptions {
@@ -196,6 +210,136 @@ export function useSpApi() {
     }
   }
 
+
+  const streamPlayground = async (
+    input: {
+      model: string
+      protocol: 'messages' | 'responses' | 'chat_completions'
+      system_prompt?: string | null
+      prompt?: string | null
+      messages?: Array<{ role: 'user' | 'assistant', content: string }>
+      max_output_tokens: number
+      temperature?: number | null
+      funding_source?: 'daily' | 'balance'
+    },
+    handlers: {
+      onMeta?: (data: { request_id?: string, protocol?: string, streaming?: boolean }) => void
+      onDelta?: (text: string) => void
+      onDone?: (data: { request_id?: string, protocol?: string, event_count?: number, text_length?: number, response?: unknown }) => void
+    } = {},
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json'
+    }
+
+    if (cookieMode.value) {
+      await ensureCsrfCookie()
+      const xsrf = useCookie<string | null>('XSRF-TOKEN', { default: () => null }).value
+      if (xsrf) headers['X-XSRF-TOKEN'] = xsrf
+    } else if (token.value) {
+      headers.Authorization = `Bearer ${token.value}`
+    }
+
+    const url = `${String(baseURL).replace(/\/+$/, '')}/me/playground/stream`
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+        credentials: cookieMode.value ? 'include' : 'same-origin',
+        signal
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw toSpApiError({ status: 0, data: { code: 'network_unreachable' } })
+    }
+
+    if (!response.ok) {
+      let payload: Record<string, unknown> = {}
+      try { payload = await response.json() as Record<string, unknown> } catch { /* non-JSON failure */ }
+      const spError = toSpApiError({ status: response.status, data: payload })
+      if (cookieMode.value && spError.code === 'csrf_token_mismatch') csrfReady.value = false
+      if (spError.isSessionExpired && (cookieMode.value || token.value)) sessionExpiredAt.value = Date.now()
+      throw spError
+    }
+
+    if (!response.body) {
+      throw toSpApiError({ status: 503, data: { code: 'playground_unavailable', message: 'The Playground stream did not return a readable response.' } })
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    const handleFrame = (frame: string) => {
+      let event = 'message'
+      const dataLines: string[] = []
+      for (const rawLine of frame.replaceAll('\r\n', '\n').split('\n')) {
+        if (rawLine.startsWith('event:')) event = rawLine.slice(6).trim()
+        else if (rawLine.startsWith('data:')) dataLines.push(rawLine.slice(5).trimStart())
+      }
+      if (!dataLines.length) return
+
+      let data: Record<string, unknown>
+      try { data = JSON.parse(dataLines.join('\n')) as Record<string, unknown> } catch { return }
+
+      if (event === 'meta') {
+        handlers.onMeta?.(data as { request_id?: string, protocol?: string, streaming?: boolean })
+        return
+      }
+      if (event === 'delta') {
+        if (typeof data.text === 'string' && data.text !== '') handlers.onDelta?.(data.text)
+        return
+      }
+      if (event === 'done') {
+        handlers.onDone?.(data as { request_id?: string, protocol?: string, event_count?: number, text_length?: number, response?: unknown })
+        return
+      }
+      if (event === 'error') {
+        const code = typeof data.code === 'string' ? data.code : 'playground_run_failed'
+        const message = typeof data.message === 'string' ? data.message : 'The Playground stream was interrupted.'
+        throw toSpApiError({ status: 502, data: { code, message } })
+      }
+    }
+
+    const drainFrames = (flush = false) => {
+      while (true) {
+        const normalized = buffer.replaceAll('\r\n', '\n')
+        const boundary = normalized.indexOf('\n\n')
+        if (boundary === -1) break
+        const frame = normalized.slice(0, boundary + 2)
+        const consumedNormalized = boundary + 2
+
+        // CRLF is two bytes for each newline pair while the normalized copy uses
+        // one. Rebuild the remainder from the normalized representation because
+        // SSE payloads are UTF-8 text and the delimiter itself carries no data.
+        buffer = normalized.slice(consumedNormalized)
+        handleFrame(frame)
+      }
+      if (flush && buffer.trim()) {
+        const frame = buffer
+        buffer = ''
+        handleFrame(frame)
+      }
+    }
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        drainFrames()
+      }
+      buffer += decoder.decode()
+      drainFrames(true)
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
   return {
     request,
     ensureCsrfCookie,
@@ -284,12 +428,16 @@ export function useSpApi() {
       balance: () => request<BalanceSummary>('/me/balance'),
       entitlements: () => request<EntitlementLot[]>('/me/entitlements', { collection: true }),
       apiKeys: () => request<ApiKeySummary[]>('/me/api-keys', { collection: true }),
+      apiKeyDetails: (id: string) => request<ApiKeyDetails>(`/me/api-keys/${apiSegment(id)}`),
+      apiKeyUsageSummary: (id: string, query?: { from?: string, to?: string, bucket?: 'hour' | 'day' }) =>
+        request<ApiKeyUsageSummary>(`/me/usage/keys/${apiSegment(id)}/summary`, { query }),
       createApiKey: (input: {
         label: string
         allowed_model_aliases?: string[]
         expires_at?: string | null
       }) => request<ApiKeyCreated>('/me/api-keys', { method: 'POST', body: { ...input } }),
       testApiKey: (id: string) => request<ApiKeyStatusReport>(`/me/api-keys/${apiSegment(id)}/status`),
+      revealApiKey: (id: string) => request<ApiKeyCreated>(`/me/api-keys/${apiSegment(id)}/reveal`, { method: 'POST' }),
       rotateApiKey: (id: string) => request<ApiKeyCreated>(`/me/api-keys/${apiSegment(id)}/rotate`, { method: 'POST' }),
       setApiKeyStatus: (id: string, status: 'ACTIVE' | 'DISABLED' | 'REVOKED') =>
         request<ApiKeySummary>(`/me/api-keys/${apiSegment(id)}/status`, { method: 'PATCH', body: { status } }),
@@ -298,8 +446,21 @@ export function useSpApi() {
       usageSummary: (query?: { from?: string, to?: string, bucket?: 'hour' | 'day' }) =>
         request<UsageSummary>('/me/usage/summary', { query }),
       playgroundQuota: () => request<PlaygroundQuota>('/me/playground/quota'),
-      runPlayground: (input: { model: string, protocol: 'messages' | 'responses' | 'chat_completions', system_prompt?: string | null, prompt?: string | null, messages?: Array<{ role: 'user' | 'assistant', content: string }>, max_output_tokens: number, temperature?: number | null }) =>
+      runPlayground: (input: { model: string, protocol: 'messages' | 'responses' | 'chat_completions', system_prompt?: string | null, prompt?: string | null, messages?: Array<{ role: 'user' | 'assistant', content: string }>, max_output_tokens: number, temperature?: number | null, funding_source?: 'daily' | 'balance' }) =>
         request<{ response: unknown, message: string, request_id: string, quota: PlaygroundQuota }>('/me/playground/run', { method: 'POST', body: { ...input } }),
+      streamPlayground,
+      playgroundChats: (query?: { limit?: number }) =>
+        request<PlaygroundChatSummary[]>('/me/playground/chats', { collection: true, query }),
+      playgroundChat: (id: number | string) =>
+        request<PlaygroundChat>(`/me/playground/chats/${apiSegment(String(id))}`),
+      createPlaygroundChat: (input: { title?: string | null, model_alias?: string | null, system_prompt?: string | null, messages: Array<{ role: 'user' | 'assistant', content: string }> }) =>
+        request<PlaygroundChat>('/me/playground/chats', { method: 'POST', body: { ...input } }),
+      updatePlaygroundChat: (id: number | string, input: { title?: string | null, model_alias?: string | null, system_prompt?: string | null, messages?: Array<{ role: 'user' | 'assistant', content: string }> }) =>
+        request<PlaygroundChat>(`/me/playground/chats/${apiSegment(String(id))}`, { method: 'PUT', body: { ...input } }),
+      deletePlaygroundChat: (id: number | string) =>
+        request<{ deleted: boolean, id: number }>(`/me/playground/chats/${apiSegment(String(id))}`, { method: 'DELETE' }),
+      clearPlaygroundChats: () =>
+        request<{ deleted: number }>('/me/playground/chats', { method: 'DELETE' }),
       redeemCode: (input: { code: string, idempotency_key: string }) =>
         request<{ entitlement_id: string, package_name: string, billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE', units: string, expires_at: string | null, allowed_model_aliases: string[] }>('/redeem-codes/redeem', { method: 'POST', body: { ...input } }),
       telegram: () => request<TelegramAccountStatus>('/me/telegram'),
@@ -310,6 +471,8 @@ export function useSpApi() {
     /** Requested contract — orders, promotions and KHQR payment. */
     orders: {
       list: () => request<Order[]>('/orders', { collection: true }),
+      hide: (id: string) => request<{ hidden: boolean, order_id: string }>(`/orders/${apiSegment(id)}`, { method: 'DELETE' }),
+      clearHistory: () => request<{ hidden_count: number }>('/orders/history', { method: 'DELETE' }),
       get: (id: string) => request<Order>(`/orders/${apiSegment(id)}`),
       create: (input: { package_slug: string, quantity?: number, promotion_code?: string, idempotency_key: string }) =>
         request<Order>('/orders', { method: 'POST', body: { ...input } }),
@@ -318,6 +481,8 @@ export function useSpApi() {
       createPayment: (orderId: string) =>
         request<PaymentAttempt>(`/orders/${apiSegment(orderId)}/payment`, { method: 'POST' }),
       paymentStatus: (orderId: string) => request<PaymentAttempt>(`/orders/${apiSegment(orderId)}/payment`),
+      autoCheckPayment: (orderId: string) =>
+        request<PaymentAttempt>(`/orders/${apiSegment(orderId)}/payment/auto-check`, { method: 'POST' }),
       /**
        * "I paid" asks the backend to re-check Bakong immediately. It never
        * asserts that payment succeeded — only the backend can decide that.
@@ -362,9 +527,53 @@ export function useSpApi() {
     admin: {
       overview: () => request<AdminOverview>('/admin/overview'),
       systemHealth: () => request<AdminSystemHealth>('/admin/system-health'),
+      auditLogs: (query?: { action?: string, subject_type?: string, actor_user_id?: number, limit?: number }) =>
+        request<AdminAuditLog[]>('/admin/audit-logs', { collection: true, query }),
+      operations: () => request<AdminOperationsOverview>('/admin/operations'),
+      reconciliationReservations: (query?: { limit?: number }) =>
+        request<AdminReconciliationReservation[]>('/admin/operations/reconciliation-reservations', { collection: true, query }),
+      accessCustomers: (query?: { q?: string, limit?: number }) =>
+        request<AdminCustomerAccess[]>('/admin/access/customers', { collection: true, query }),
+      updateAccessCustomerStatus: (id: string, input: { status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED', reason: string }) =>
+        request<{ id: string, status: string }>(`/admin/access/customers/${apiSegment(id)}/status`, { method: 'PATCH', body: { ...input } }),
+      accessApiKeys: (query?: { q?: string, status?: string, limit?: number }) =>
+        request<AdminAccessApiKey[]>('/admin/access/api-keys', { collection: true, query }),
+      accessModelAliases: () => request<AdminAccessModelAlias[]>('/admin/access/model-aliases', { collection: true }),
+      issueAccessApiKey: (input: {
+        user_id: number
+        label: string
+        allowed_model_alias_ids: number[]
+        expires_at?: string | null
+        requests_per_minute?: number | null
+        tokens_per_minute?: number | null
+        concurrency_limit?: number | null
+        max_request_bytes?: number | null
+        max_output_tokens?: number | null
+        reason: string
+      }) => request<AdminAccessApiKeyCreated>('/admin/access/api-keys', { method: 'POST', body: { ...input } }),
+      updateAccessApiKeyStatus: (id: string, input: { status: 'ACTIVE' | 'DISABLED' | 'REVOKED', reason: string }) =>
+        request<AdminAccessApiKey>(`/admin/access/api-keys/${apiSegment(id)}/status`, { method: 'PATCH', body: { ...input } }),
+      accessEntitlements: (query?: { q?: string, status?: string, limit?: number }) =>
+        request<AdminAccessEntitlement[]>('/admin/access/entitlements', { collection: true, query }),
+      expireAccessEntitlement: (id: string, reason: string) =>
+        request<{ id: string, status: string, expires_at: string | null }>(`/admin/access/entitlements/${apiSegment(id)}/expire`, { method: 'POST', body: { reason } }),
+      accessUsage: (query?: { q?: string, state?: string, limit?: number }) =>
+        request<AdminUsageRequest[]>('/admin/access/usage', { collection: true, query }),
+      runRecovery: (input: { action: AdminRecoveryAction, batch?: number, reason: string }) =>
+        request<AdminRecoveryResponse>('/admin/operations/recover', { method: 'POST', body: { ...input } }),
+      verifyPaymentAttempt: (id: string, reason: string) =>
+        request<{ id: string, status: string, order_id: string }>(`/admin/operations/payments/${apiSegment(id)}/verify`, { method: 'POST', body: { reason } }),
+      retryTelegramPurchase: (id: string, reason: string) =>
+        request<{ id: string, status: string, delivered_at: string | null }>(`/admin/operations/telegram-purchases/${apiSegment(id)}/retry`, { method: 'POST', body: { reason } }),
+      releaseReconciliationReservation: (id: string, reason: string, confirmation: 'CONFIRMED NO UPSTREAM USAGE') =>
+        request<{ id: string, status: string, settled_units: string }>(`/admin/operations/reservations/${apiSegment(id)}/release-confirmed`, { method: 'POST', body: { reason, confirmation } }),
       telegramStore: () => request<AdminTelegramStoreOverview>('/admin/telegram-store'),
       sendTelegramAnnouncement: (input: { title: string, body: string, package_id?: string | null }) =>
         request<{ id: string, status: string, message: string }>('/admin/telegram-store/announcements', { method: 'POST', body: { ...input } }),
+      retryTelegramAnnouncementFailures: (id: string, reason: string) =>
+        request<{ id: string, requeued: number, message: string }>(`/admin/telegram-store/announcements/${apiSegment(id)}/retry-failed`, { method: 'POST', body: { reason } }),
+      retryTelegramPurchaseAlert: (id: string, reason: string) =>
+        request<{ id: string, requeued: boolean, message: string }>(`/admin/telegram-store/purchase-alerts/${apiSegment(id)}/retry`, { method: 'POST', body: { reason } }),
 
       /** Every package, including ones hidden from the public catalogue. */
       packages: () => request<AdminPackage[]>('/admin/packages', { collection: true }),
@@ -385,6 +594,8 @@ export function useSpApi() {
        */
       updatePackage: (id: string, input: AdminPackageInput) =>
         request<AdminPackage>(`/admin/packages/${apiSegment(id)}`, { method: 'PUT', body: { ...input } }),
+      addPackageStock: (id: string, quantity: number, reason: string) =>
+        request<AdminPackage>(`/admin/packages/${apiSegment(id)}/stock`, { method: 'POST', body: { quantity, reason } }),
       /**
        * Margin analysis for one package.
        *

@@ -3,7 +3,8 @@ import { once } from "node:events";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { customerKey } from "./auth.js";
 import { GatewayError, writeError } from "./errors.js";
-import { mergeUsage, prepare, upstreamBody, usageFromJson } from "./protocol.js";
+import { mergeUsage, prepare, upstreamBody, usageFromHeaders, usageFromJson } from "./protocol.js";
+import { buildToolNameMap, normalizeToolNames, rewriteSseToolNames, type ToolNameMap } from "./tool-names.js";
 import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore, Usage } from "./types.js";
 import { INFERENCE_PATHS } from "./types.js";
 
@@ -15,7 +16,24 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => done(null, body));
   app.addHook("onClose", async () => dependencies.rateStore.close());
-  app.get("/health", async () => ({ data: { status: "ok" } }));
+  app.get("/health", async () => ({ data: { status: "ok", model_routing: "database_internal_model_id", build: "fix28" } }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      const response = await fetchImpl(`${config.controlPlaneBaseUrl}/api/v1/health`, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(config.controlPlaneTimeoutMs),
+      });
+      if (!response.ok) {
+        reply.code(503);
+        return { data: { status: "not_ready", build: "fix28", control_plane: "unavailable" } };
+      }
+      return { data: { status: "ready", build: "fix28", control_plane: "ready", model_routing: "database_internal_model_id" } };
+    } catch {
+      reply.code(503);
+      return { data: { status: "not_ready", build: "fix28", control_plane: "unavailable" } };
+    }
+  });
   app.get("/v1/models", async (request) => {
     const key = customerKey(request); await dependencies.rateStore.admit(admissionIdentity(key), 60);
     return models(await dependencies.controlPlane.inspect(key));
@@ -31,6 +49,10 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 
   app.setErrorHandler((error, request, reply) => {
     if (reply.sent) return;
+    const correlation = request.headers["x-request-id"];
+    if (typeof correlation === "string" && /^[A-Za-z0-9._:-]{1,191}$/.test(correlation)) {
+      reply.header("x-request-id", correlation);
+    }
     const known = error instanceof GatewayError ? error : fastifyError(error as Error & { statusCode?: number; code?: string });
     writeError(reply, known, request.url.startsWith("/v1/messages"));
   });
@@ -42,6 +64,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const raw = typeof request.body === "string" ? request.body : JSON.stringify(request.body ?? {});
     const bytes = Buffer.byteLength(raw);
     const prepared = prepare(path, raw, config.defaultMaxOutputTokens);
+    const toolNames = buildToolNameMap(prepared.body);
     const inspection = await dependencies.controlPlane.inspect(key);
     const keyCap = inspection.limits.max_request_bytes;
     if (bytes > config.maxBodyBytes || (keyCap !== null && bytes > keyCap)) throw new GatewayError(413, "request_too_large", "The request exceeds the allowed size.");
@@ -51,10 +74,12 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const lease = await dependencies.rateStore.acquire(inspection.key_id, inspection.limits, estimatedTotal);
     let reservationId: string | null = null;
     try {
+      const playgroundFundingScope = fundingScope(request);
       const preflight = await dependencies.controlPlane.preflight({
         customer_key: key, public_model: prepared.publicModel, estimated_input_tokens: prepared.estimatedInput,
         requested_max_output_tokens: prepared.requestedMaxOutput, request_bytes: bytes, request_id: prepared.requestId,
         request_fingerprint: prepared.fingerprint, endpoint: path,
+        ...(playgroundFundingScope ? { playground_funding_scope: playgroundFundingScope } : {}),
       });
       reservationId = preflight.reservation_id;
       void markStateBestEffort(reservationId, "CONNECTING");
@@ -106,9 +131,9 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         }
         void markStateBestEffort(reservationId, "STREAMING");
         if (prepared.streaming && upstream.body) {
-          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal);
+          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal, toolNames);
         }
-        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal);
+        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal, toolNames);
       } finally {
         clearTimeout(timeout);
         request.raw.off("aborted", onRequestAborted);
@@ -117,7 +142,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal): Promise<unknown> {
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap): Promise<unknown> {
     let text: string;
     try {
       text = await abortable(upstream.text(), signal);
@@ -131,22 +156,23 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
       throw new GatewayError(502, "upstream_invalid_response", "The inference service returned an invalid response.");
     }
-    const usage = usageFromJson(parsed, path);
+    const usage = usageFromJson(parsed, path) ?? usageFromHeaders(upstream.headers, path);
     if (!usage) {
       await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
       throw new GatewayError(502, "billing_settlement_pending", "Usage settlement is pending reconciliation.");
     }
-    copyResponseHeaders(reply, upstream);
-    reply.status(upstream.status).send(parsed);
+    const publicResponse = normalizeToolNames(parsed, toolNames);
     try {
       await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - requestStartedAt });
     } catch {
       await reconcileBestEffort(reservationId, "settlement_failed");
     }
+    copyResponseHeaders(reply, upstream);
+    reply.status(upstream.status).send(publicResponse);
     return reply;
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap): Promise<void> {
     reply.hijack();
     reply.raw.statusCode = upstream.status;
     reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
@@ -154,21 +180,29 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     reply.raw.setHeader("x-request-id", requestId);
     let usage: Usage | null = null; let buffer = ""; let bytesSent = false;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
+    const writePublic = async (text: string): Promise<void> => {
+      if (text === "") return;
+      const publicText = rewriteSseToolNames(text, toolNames);
+      bytesSent = true;
+      if (!reply.raw.write(publicText)) await abortable(once(reply.raw, "drain"), signal);
+    };
     try {
       while (true) {
         const { value, done } = await abortable(reader.read(), signal); if (done) break;
-        bytesSent = true;
         buffer += decoder.decode(value, { stream: true });
-        const boundary = Math.max(buffer.lastIndexOf("\n\n"), buffer.lastIndexOf("\r\n\r\n"));
-        if (boundary !== -1) {
-          const delimiterLength = buffer.startsWith("\r\n\r\n", boundary) ? 4 : 2;
-          usage = parseSse(buffer.slice(0, boundary + delimiterLength), usage, path);
-          buffer = buffer.slice(boundary + delimiterLength);
+        while (true) {
+          const frame = takeSseFrame(buffer);
+          if (!frame) break;
+          usage = parseSse(frame.complete, usage, path);
+          await writePublic(frame.complete);
+          buffer = frame.remainder;
         }
-        if (!reply.raw.write(value)) await abortable(once(reply.raw, "drain"), signal);
       }
       buffer += decoder.decode();
-      if (buffer !== "") usage = parseSse(buffer, usage, path);
+      if (buffer !== "") {
+        usage = parseSse(buffer, usage, path);
+        await writePublic(buffer);
+      }
     } catch {
       void reader.cancel(signal.reason).catch(() => undefined);
       if (!reply.raw.destroyed) reply.raw.destroy();
@@ -177,9 +211,10 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       return;
     }
 
-    reply.raw.end();
+    usage = mergeUsage(usage, usageFromHeaders(upstream.headers, path));
     if (!usage) {
       await reconcileBestEffort(reservationId, bytesSent ? "usage_unavailable" : "upstream_disconnect");
+      reply.raw.end();
       return;
     }
     try {
@@ -187,6 +222,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } catch {
       await reconcileBestEffort(reservationId, "settlement_failed");
     }
+    reply.raw.end();
   }
 
   async function markStateBestEffort(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
@@ -199,6 +235,28 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
   }
 
   return app;
+}
+
+
+function takeSseFrame(buffer: string): { complete: string; remainder: string } | null {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+  let boundary = -1;
+  let delimiterLength = 0;
+  if (lf !== -1 && (crlf === -1 || lf < crlf)) { boundary = lf; delimiterLength = 2; }
+  else if (crlf !== -1) { boundary = crlf; delimiterLength = 4; }
+  if (boundary === -1) return null;
+  const end = boundary + delimiterLength;
+  return { complete: buffer.slice(0, end), remainder: buffer.slice(end) };
+}
+
+function fundingScope(request: FastifyRequest): "DAILY" | "BALANCE" | undefined {
+  const value = request.headers["x-sp-cambo-playground-funding"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new GatewayError(400, "invalid_request", "The Playground funding scope is invalid.");
+  const normalized = value.toUpperCase();
+  if (normalized !== "DAILY" && normalized !== "BALANCE") throw new GatewayError(400, "invalid_request", "The Playground funding scope is invalid.");
+  return normalized;
 }
 
 function abortReason(signal: AbortSignal): "client_disconnect" | "upstream_timeout" | undefined {

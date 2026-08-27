@@ -86,6 +86,8 @@ const PACKAGE: AdminPackage = {
   price: { minor: '49000', currency: 'USD', exponent: 2 },
   compare_at_price: { minor: '69000', currency: 'USD', exponent: 2 },
   duration_seconds: 2_592_000,
+  stock_quantity: '25',
+  stock_status: 'IN_STOCK',
   limits: {
     requests_per_minute: 60,
     tokens_per_minute: 120_000,
@@ -140,6 +142,7 @@ const ROUND_TRIP: AdminPackageInput = {
   currency: 'USD',
   currency_exponent: 2,
   duration_seconds: 2_592_000,
+  stock_quantity: 25,
   limits: {
     requests_per_minute: 60,
     tokens_per_minute: 120_000,
@@ -373,7 +376,7 @@ describe('package form refusals', () => {
 
     const wrapper = await mount({ initial: seed })
 
-    expect(bodyText()).toContain('Include API access activation after payment')
+    expect(bodyText()).toContain('Prepare API access automatically after payment')
     expect(bodyText()).not.toContain('Fulfilment does not issue keys yet')
 
     await submitForm()

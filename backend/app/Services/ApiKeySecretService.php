@@ -12,7 +12,7 @@ class ApiKeySecretService
     public const PREFIX = 'sk-spc-';
 
     /** @return array{key: ApiKey, secret: string} */
-    public function create(User $user, array $attributes, array $modelAliasIds): array
+    public function create(User $user, array $attributes, array $modelAliasIds, bool $recoverable = true): array
     {
         $secret = self::PREFIX.Str::lower(Str::random(48));
         $tenant = $user->requireTenant();
@@ -21,6 +21,7 @@ class ApiKeySecretService
             'prefix' => self::PREFIX,
             'last_four' => substr($secret, -4),
             'lookup_digest' => $this->digest($secret),
+            'secret_ciphertext' => $recoverable ? $secret : null,
             'status' => 'ACTIVE',
         ]);
         $key->user()->associate($user);
@@ -33,9 +34,21 @@ class ApiKeySecretService
     public function rotate(ApiKey $key): string
     {
         $secret = self::PREFIX.Str::lower(Str::random(48));
-        $key->forceFill(['lookup_digest' => $this->digest($secret), 'last_four' => substr($secret, -4), 'status' => 'ACTIVE'])->save();
+        $key->forceFill([
+            'lookup_digest' => $this->digest($secret),
+            'secret_ciphertext' => $secret,
+            'last_four' => substr($secret, -4),
+            'status' => 'ACTIVE',
+        ])->save();
 
         return $secret;
+    }
+
+    public function reveal(ApiKey $key): ?string
+    {
+        $secret = $key->secret_ciphertext;
+
+        return is_string($secret) && $secret !== '' ? $secret : null;
     }
 
     public function digest(string $secret): string

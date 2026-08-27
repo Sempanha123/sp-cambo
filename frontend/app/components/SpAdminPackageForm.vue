@@ -503,6 +503,19 @@ const submit = () => {
               />
             </div>
           </UFormField>
+
+          <UFormField
+            label="Package stock"
+            name="stock_quantity"
+            help="Optional. Leave blank for unlimited stock. Use 0 to mark sold out. Increasing finite stock automatically queues a Telegram Store update with a Buy now button."
+          >
+            <UInput
+              v-model="form.stock_quantity"
+              inputmode="numeric"
+              placeholder="Unlimited"
+              class="w-full sm:w-56"
+            />
+          </UFormField>
         </div>
 
         <!-- Models -->
@@ -665,8 +678,8 @@ const submit = () => {
             />
             <UCheckbox
               v-model="form.auto_creates_api_key"
-              label="Include API access activation after payment"
-              description="After payment, SP Cambo creates a secure activation claim. The customer can create a new key or attach the purchased model access to an existing active key."
+              label="Prepare API access automatically after payment"
+              description="Allows purchased access to be allocated to an API key. Website customers choose Playground, a new dedicated key, or one existing key after payment. Telegram Store purchases create a new dedicated key automatically so no follow-up prompt is required."
             />
           </div>
 

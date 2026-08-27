@@ -95,7 +95,7 @@ onMounted(async () => {
 
 <template>
   <div class="w-full max-w-md">
-    <UCard :ui="{ root: 'ring-default/80 shadow-xl shadow-black/5 dark:shadow-black/40' }">
+    <UCard :ui="{ root: 'ring-default/80 shadow-xl shadow-black/5 dark:shadow-black/40' }" class="sp-app-card">
       <template #header>
         <div class="space-y-2">
           <p class="text-xs font-medium tracking-wide text-primary uppercase">
@@ -110,8 +110,15 @@ onMounted(async () => {
         </div>
       </template>
 
-      <div aria-live="polite" role="status" class="space-y-3 py-6 text-center">
-        <UIcon name="i-lucide-loader-circle" class="mx-auto size-6 animate-spin text-primary" />
+      <div
+        aria-live="polite"
+        role="status"
+        class="space-y-3 py-6 text-center"
+      >
+        <UIcon
+          name="i-lucide-loader-circle"
+          class="mx-auto size-6 animate-spin text-primary"
+        />
         <p class="text-sm text-muted">
           Please wait…
         </p>

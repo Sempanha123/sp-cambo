@@ -13,6 +13,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class ProviderAliasController extends Controller
 {
@@ -32,6 +33,7 @@ class ProviderAliasController extends Controller
     {
         $provider = Provider::query()->findOrFail($provider);
         $data = $request->validate($this->rules($provider));
+        $this->ensureChatProtocol($data['capabilities']);
         $model = AiModel::query()->where('provider_id', $provider->id)->findOrFail($data['model_id']);
 
         $alias = DB::transaction(function () use ($request, $provider, $model, $data, $audit): ModelAlias {
@@ -61,6 +63,7 @@ class ProviderAliasController extends Controller
         $provider = Provider::query()->findOrFail($provider);
         $modelAlias = $this->aliasForProvider($provider, $alias);
         $data = $request->validate($this->rules($provider, $modelAlias));
+        $this->ensureChatProtocol($data['capabilities']);
         $model = AiModel::query()->where('provider_id', $provider->id)->findOrFail($data['model_id']);
         $before = $this->resource($modelAlias->load('model'), $provider);
 
@@ -111,6 +114,14 @@ class ProviderAliasController extends Controller
     {
         $provider = Provider::query()->findOrFail($provider);
         $modelAlias = $this->aliasForProvider($provider, $alias);
+
+        if (! $this->hasChatProtocol(is_array($modelAlias->capabilities) ? $modelAlias->capabilities : [])) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'Enable Anthropic Messages, Responses API, or Chat Completions before publishing this public model.',
+                'code' => 'provider_alias_protocol_required',
+            ], 409));
+        }
+
         $data = $request->validate([
             'confirm_commercial_resale' => ['required', 'accepted'],
         ]);
@@ -230,6 +241,24 @@ class ProviderAliasController extends Controller
         ];
     }
 
+    private function ensureChatProtocol(array $capabilities): void
+    {
+        if ($this->hasChatProtocol($capabilities)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'capabilities.messages_api' => ['Enable at least one customer chat protocol: Anthropic Messages, Responses API, or Chat Completions.'],
+        ]);
+    }
+
+    private function hasChatProtocol(array $capabilities): bool
+    {
+        return ($capabilities['messages_api'] ?? false) === true
+            || ($capabilities['responses_api'] ?? false) === true
+            || ($capabilities['chat_completions_api'] ?? false) === true;
+    }
+
     private function resource(ModelAlias $alias, Provider $provider): array
     {
         $provider->loadMissing('activeConnectionRevision');
@@ -253,6 +282,9 @@ class ProviderAliasController extends Controller
         }
         if (! $alias->customer_visible) {
             $blockers[] = 'Public alias is hidden from customers.';
+        }
+        if (! $this->hasChatProtocol(is_array($alias->capabilities) ? $alias->capabilities : [])) {
+            $blockers[] = 'Public alias has no enabled customer chat protocol.';
         }
         if (! in_array($alias->status, ['active', 'beta'], true)) {
             $blockers[] = 'Public alias lifecycle status is not publishable.';

@@ -16,13 +16,13 @@ use InvalidArgumentException;
 class ReservationService
 {
     /** @param array<int, string>|null $eligibleLotIds @param array<string, mixed>|null $billingSnapshot */
-    public function reserve(User $user, string $publicAlias, string $billingMode, int $units, string $idempotencyKey, ?string $apiKeyId = null, ?array $eligibleLotIds = null, ?array $billingSnapshot = null, ?string $providerConnectionRevisionId = null): Reservation
+    public function reserve(User $user, string $publicAlias, string $billingMode, int $units, string $idempotencyKey, ?string $apiKeyId = null, ?array $eligibleLotIds = null, ?array $billingSnapshot = null, ?string $providerConnectionRevisionId = null, ?string $playgroundFundingScope = null): Reservation
     {
         if ($units <= 0) {
             throw new InvalidArgumentException('Reservation units must be positive.');
         }
 
-        return DB::transaction(function () use ($user, $publicAlias, $billingMode, $units, $idempotencyKey, $apiKeyId, $eligibleLotIds, $billingSnapshot, $providerConnectionRevisionId): Reservation {
+        return DB::transaction(function () use ($user, $publicAlias, $billingMode, $units, $idempotencyKey, $apiKeyId, $eligibleLotIds, $billingSnapshot, $providerConnectionRevisionId, $playgroundFundingScope): Reservation {
             $existing = Reservation::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
                 if ((int) $existing->user_id !== (int) $user->id
@@ -46,11 +46,35 @@ class ReservationService
                     ->where('user_id', $user->id)
                     ->where('api_key_id', $apiKeyId)
                     ->exists();
-                $lotsQuery->when(
-                    $isPlaygroundKey,
-                    fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                    fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-                );
+
+                if ($isPlaygroundKey) {
+                    if ($playgroundFundingScope === 'BALANCE') {
+                        // Playground may spend only account-wide legacy/redeem lots
+                        // plus purchases explicitly allocated to Playground. It can
+                        // never consume a package dedicated to a customer API key.
+                        $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                            ->where(function ($access): void {
+                                $access->whereNull('access_scope')
+                                    ->orWhere('access_scope', 'ACCOUNT')
+                                    ->orWhere('access_scope', 'PLAYGROUND');
+                            });
+                    } else {
+                        $lotsQuery->where('source_type', 'PLAYGROUND_DAILY');
+                    }
+                } else {
+                    // A normal API key may spend legacy account-wide lots and lots
+                    // dedicated to that exact key. It can never spend Playground or
+                    // another key's purchased package.
+                    $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                        ->where(function ($access) use ($apiKeyId): void {
+                            $access->whereNull('access_scope')
+                                ->orWhere('access_scope', 'ACCOUNT')
+                                ->orWhere(function ($dedicated) use ($apiKeyId): void {
+                                    $dedicated->where('access_scope', 'API_KEY')
+                                        ->where('bound_api_key_id', $apiKeyId);
+                                });
+                        });
+                }
             }
 
             if ($eligibleLotIds !== null) {
@@ -93,7 +117,20 @@ class ReservationService
 
     public function expire(Reservation $reservation): Reservation
     {
-        return $this->finish($reservation, 0, 'EXPIRED', ['ACTIVE', 'RECONCILIATION_REQUIRED']);
+        // Only reservations whose upstream outcome is known to be unused may
+        // expire automatically. RECONCILIATION_REQUIRED reservations hold
+        // their allocation until authoritative usage arrives or an operator
+        // explicitly confirms that no upstream usage occurred.
+        return $this->finish($reservation, 0, 'EXPIRED');
+    }
+
+    public function releaseReconciliation(Reservation $reservation, string $confirmation): Reservation
+    {
+        if ($confirmation !== 'CONFIRMED NO UPSTREAM USAGE') {
+            throw new InvalidArgumentException('Explicit no-upstream-usage confirmation is required.');
+        }
+
+        return $this->finish($reservation, 0, 'RELEASED', ['RECONCILIATION_REQUIRED']);
     }
 
     public function markForReconciliation(Reservation $reservation, string $reason): Reservation
@@ -123,7 +160,7 @@ class ReservationService
         }
 
         $reservationIds = Reservation::query()
-            ->whereIn('status', ['ACTIVE', 'RECONCILIATION_REQUIRED'])
+            ->where('status', 'ACTIVE')
             ->where('expires_at', '<=', now())
             ->orderBy('expires_at')
             ->limit($batchSize)

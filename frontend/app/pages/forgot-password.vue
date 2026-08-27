@@ -60,7 +60,7 @@ const submit = async () => {
 
 <template>
   <div class="w-full max-w-md">
-    <UCard :ui="{ root: 'ring-default/80 shadow-xl shadow-black/5 dark:shadow-black/40' }">
+    <UCard :ui="{ root: 'ring-default/80 shadow-xl shadow-black/5 dark:shadow-black/40' }" class="sp-app-card">
       <template #header>
         <div class="space-y-2">
           <p class="text-xs font-medium tracking-wide text-primary uppercase">

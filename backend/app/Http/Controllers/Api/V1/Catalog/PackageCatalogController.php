@@ -25,9 +25,13 @@ class PackageCatalogController extends Controller
             'family_label' => $package->family_label,
             'advertised_units' => (string) $package->advertised_units,
             'unit_label' => $package->unit_label,
+            'credit_amount' => $package->billing_mode === 'CREDIT_BALANCE'
+                ? $this->money($package, (int) $package->advertised_units)
+                : null,
             'price' => $this->money($package, $package->price_minor),
             'compare_at_price' => $package->compare_at_price_minor === null ? null : $this->money($package, $package->compare_at_price_minor),
             'duration_seconds' => (int) $package->duration_seconds,
+            'stock_remaining' => $package->stock_quantity === null ? null : (string) $package->stock_quantity,
             'allowed_model_aliases' => $package->modelAliases->pluck('public_alias')->values(),
             'limits' => $package->limits,
             'auto_creates_api_key' => $package->auto_creates_api_key,

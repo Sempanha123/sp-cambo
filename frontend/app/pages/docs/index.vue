@@ -22,7 +22,7 @@ const { inferenceRoot } = useCliSnippets()
       </div>
 
       <div class="mt-10 grid gap-4 sm:grid-cols-3">
-        <UCard :ui="{ body: 'space-y-2' }">
+        <UCard :ui="{ body: 'space-y-2' }" class="sp-app-card">
           <p class="text-xs font-medium tracking-wide text-dimmed uppercase">
             Control plane
           </p>
@@ -37,7 +37,7 @@ const { inferenceRoot } = useCliSnippets()
           </NuxtLink>
         </UCard>
 
-        <UCard :ui="{ body: 'space-y-2' }">
+        <UCard :ui="{ body: 'space-y-2' }" class="sp-app-card">
           <p class="text-xs font-medium tracking-wide text-dimmed uppercase">
             Inference gateway
           </p>
@@ -50,7 +50,7 @@ const { inferenceRoot } = useCliSnippets()
           </NuxtLink>
         </UCard>
 
-        <UCard :ui="{ body: 'space-y-2' }">
+        <UCard :ui="{ body: 'space-y-2' }" class="sp-app-card">
           <p class="text-xs font-medium tracking-wide text-dimmed uppercase">
             In a hurry
           </p>

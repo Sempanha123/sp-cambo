@@ -66,7 +66,7 @@ const saveProfile = async () => {
     />
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-      <UCard>
+      <UCard class="sp-app-card">
         <template #header>
           <div>
             <h2 class="font-semibold text-highlighted">
@@ -112,7 +112,7 @@ const saveProfile = async () => {
         </form>
       </UCard>
 
-      <UCard>
+      <UCard class="sp-app-card">
         <template #header>
           <h2 class="font-semibold text-highlighted">
             Security

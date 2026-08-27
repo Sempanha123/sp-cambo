@@ -1,4 +1,4 @@
-﻿param([string]$ProjectRoot = "")
+param([string]$ProjectRoot = "")
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot = $PSScriptRoot
@@ -8,20 +8,26 @@ $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 
 try {
     $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:3000/" -TimeoutSec 5
-    Write-Host "[OK] Frontend is already running (HTTP $($r.StatusCode))." -ForegroundColor Green
-    exit 0
+    if ([int]$r.StatusCode -lt 500) {
+        Write-Host "[OK] Frontend is already running (HTTP $($r.StatusCode))." -ForegroundColor Green
+        exit 0
+    }
+    Write-Host "[WARN] Frontend answered HTTP $($r.StatusCode); restarting is recommended." -ForegroundColor Yellow
 } catch {
     if ($_.Exception.Response) {
-        Write-Host "[OK] Frontend port is already serving HTTP." -ForegroundColor Green
-        exit 0
+        try {
+            $s = [int]$_.Exception.Response.StatusCode
+            if ($s -lt 500) {
+                Write-Host "[OK] Frontend is already serving HTTP $s." -ForegroundColor Green
+                exit 0
+            }
+            Write-Host "[WARN] Frontend is reachable but unhealthy (HTTP $s)." -ForegroundColor Yellow
+        } catch {}
     }
 }
 
 $dir = Join-Path $ProjectRoot "frontend"
-if (-not (Test-Path -LiteralPath (Join-Path $dir "package.json"))) {
-    throw "Frontend package.json not found: $dir"
-}
-
+if (-not (Test-Path -LiteralPath (Join-Path $dir "package.json"))) { throw "Frontend package.json not found: $dir" }
 Set-Location -LiteralPath $dir
 
 Write-Host "==========================================" -ForegroundColor Magenta
@@ -30,8 +36,9 @@ Write-Host "http://127.0.0.1:3000" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Magenta
 
 if (-not (Test-Path -LiteralPath ".\node_modules")) {
-    npm install
-    if ($LASTEXITCODE -ne 0) { throw "Frontend npm install failed." }
+    if (-not (Test-Path -LiteralPath ".\package-lock.json")) { throw "frontend/package-lock.json is required for reproducible npm install." }
+    npm ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "Frontend npm ci failed." }
 }
 
 npm run dev -- --host 127.0.0.1 --port 3000

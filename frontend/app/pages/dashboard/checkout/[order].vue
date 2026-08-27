@@ -34,9 +34,11 @@ type PurchaseClaim = {
   allowed_model_aliases: string[]
   api_key_id: string | null
   masked_key: string | null
+  delivery_mode: 'PLAYGROUND' | 'NEW' | 'EXISTING' | null
 }
 
 const claims = ref<PurchaseClaim[]>([])
+const claimError = ref<SpApiError | null>(null)
 const currentClaim = computed(() => claims.value.find(claim => claim.order_id === orderId.value) ?? null)
 const pendingClaim = computed(() => currentClaim.value?.status === 'PENDING' ? currentClaim.value : null)
 const claimedAccess = computed(() => currentClaim.value?.status === 'CLAIMED' ? currentClaim.value : null)
@@ -45,8 +47,12 @@ const purchasedModel = computed(() => currentClaim.value?.allowed_model_aliases?
 const loadClaims = async () => {
   try {
     claims.value = await api.request<PurchaseClaim[]>('/me/api-key-claims', { collection: true })
-  } catch {
-    // The entitlement is already valid even when this optional activation UI is unavailable.
+    claimError.value = null
+  } catch (cause) {
+    // Allocation is required for new model-scoped purchases, so never hide this
+    // failure behind a successful payment screen. The paid entitlement remains
+    // safe/UNASSIGNED and can be retried without double granting it.
+    claimError.value = toSpApiError(cause)
   }
 }
 
@@ -168,18 +174,24 @@ const poll = async () => {
   }
 
   try {
-    // Automatic detection uses the exact same server-side Bakong verification
-    // as the manual button. The browser never declares a payment successful.
-    applyAttempt(await api.orders.requestVerification(orderId.value))
+    // Ask the control plane to auto-check this attempt. The backend owns the real
+    // Bakong rate limit/lease, so many browser polls or multiple tabs still cause
+    // at most one external verification per configured interval for this QR.
+    applyAttempt(await api.orders.autoCheckPayment(orderId.value))
+    await loadOrder()
 
-    // The order carries fulfilment, which lands after the payment is confirmed.
-    if (payment.value?.status === 'PAID' || payment.value?.status === 'VERIFYING') {
-      await loadOrder()
-      if (order.value?.status === 'FULFILLED') await loadClaims()
+    if (order.value?.status === 'FULFILLED') {
+      await loadClaims()
     }
   } catch {
-    // A failed poll is not worth surfacing: the next one may succeed and the
-    // customer can always press "I have paid".
+    // If Bakong is temporarily unavailable, keep the page useful by reading the
+    // stored state. A later automatic poll or the explicit button can retry.
+    try {
+      applyAttempt(await api.orders.paymentStatus(orderId.value))
+      await loadOrder()
+    } catch {
+      // The next poll may recover; avoid replacing a valid QR with a transient error.
+    }
   }
 
   schedulePoll()
@@ -213,10 +225,13 @@ const iHavePaid = async () => {
     await loadOrder()
 
     if (!isPaid.value) {
+      const stillVerifying = payment.value?.status === 'VERIFYING'
       toast.add({
-        title: 'Checking with Bakong',
-        description: 'SP Cambo is verifying the transfer. This page updates itself when it settles.',
-        icon: 'i-lucide-search',
+        title: stillVerifying ? 'Verification already in progress' : 'Payment not found yet',
+        description: stillVerifying
+          ? 'SP Cambo is already checking this KHQR. The page will update when the current check finishes.'
+          : 'Bakong has not returned a matching completed transfer yet. If you just paid, wait a few seconds and check again.',
+        icon: stillVerifying ? 'i-lucide-loader-circle' : 'i-lucide-clock-3',
         color: 'info'
       })
     }
@@ -328,7 +343,7 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
       >
         <!-- Payment -->
         <section class="space-y-4">
-          <div class="rounded-lg border border-default bg-elevated/30 p-6">
+          <div class="sp-checkout-card rounded-lg border border-default bg-elevated/30 p-6">
             <!-- Paid -->
             <div
               v-if="isPaid"
@@ -345,51 +360,88 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
                 </h2>
                 <p class="text-sm text-muted">
                   {{ isFulfilled
-                    ? 'Your entitlement is live. Requests can start immediately.'
+                    ? (pendingClaim ? 'Your purchased balance is secured. Choose where to allocate it before using it.' : 'Your selected access target is ready.')
                     : 'SP Cambo is activating your entitlement. This page updates itself — you do not need to pay again.' }}
                 </p>
               </div>
               <UAlert
-                v-if="isFulfilled && pendingClaim"
-                color="info"
+                v-if="isFulfilled && claimedAccess?.delivery_mode === 'PLAYGROUND'"
+                color="success"
                 variant="subtle"
-                icon="i-lucide-key-round"
-                title="API access is ready to activate"
-                description="Choose a new SP Cambo key or reuse one of your existing active keys. Reusing a key keeps Claude Code and SDK configuration unchanged."
+                icon="i-lucide-flask-conical"
+                title="Added to Playground balance"
+                description="This purchase is isolated to Playground. Normal API keys cannot spend it."
               />
 
               <UAlert
-                v-else-if="isFulfilled && claimedAccess"
+                v-else-if="isFulfilled && claimedAccess?.api_key_id"
                 color="success"
                 variant="subtle"
                 icon="i-lucide-key-round"
-                title="API access is active"
-                :description="claimedAccess.masked_key ? `Purchased model access is attached to ${claimedAccess.masked_key}.` : 'Your purchased model access is attached to an API key.'"
+                title="API-key balance ready"
+                :description="`This purchase is allocated to ${claimedAccess.masked_key ?? 'your selected API key'} and is not mixed into Playground or your other dedicated keys.`"
+              />
+
+              <UAlert
+                v-if="isFulfilled && claimError"
+                color="error"
+                variant="subtle"
+                icon="i-lucide-circle-alert"
+                title="Purchase is safe, but access choices could not be loaded"
+                :description="`${claimError.message} Your paid balance has not been assigned twice. Retry loading the access choices.`"
+              >
+                <template #actions>
+                  <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-refresh-cw" @click="loadClaims">Retry access choices</UButton>
+                </template>
+              </UAlert>
+
+              <UAlert
+                v-else-if="isFulfilled && pendingClaim"
+                color="info"
+                variant="subtle"
+                icon="i-lucide-route"
+                title="Choose where to use this purchase"
+                description="Your payment is fulfilled and the purchased balance is reserved for you. Choose Playground, create a separate API key, or add it to one existing key. Nothing is merged automatically."
               />
 
               <div class="flex flex-wrap justify-center gap-2">
                 <UButton
                   v-if="pendingClaim"
                   :to="`/dashboard/claim-key?claim=${pendingClaim.id}`"
+                  icon="i-lucide-route"
+                >
+                  Choose access
+                </UButton>
+                <UButton
+                  v-if="claimedAccess?.delivery_mode === 'PLAYGROUND'"
+                  to="/dashboard/playground"
+                  icon="i-lucide-flask-conical"
+                >
+                  Open Playground
+                </UButton>
+                <UButton
+                  v-if="claimedAccess?.api_key_id"
+                  :to="`/dashboard/api-keys/${claimedAccess.api_key_id}`"
                   icon="i-lucide-key-round"
                 >
-                  Activate API access
+                  View / copy API key
                 </UButton>
                 <UButton
                   to="/dashboard/entitlements"
-                  :color="pendingClaim ? 'neutral' : 'primary'"
-                  :variant="pendingClaim ? 'subtle' : 'solid'"
+                  color="neutral"
+                  variant="subtle"
                   icon="i-lucide-hourglass"
                 >
                   View entitlements
                 </UButton>
                 <UButton
+                  v-if="claimedAccess?.api_key_id"
                   :to="purchasedModel ? `/dashboard/cli-setup?model=${encodeURIComponent(purchasedModel)}` : '/dashboard/cli-setup'"
                   color="neutral"
                   variant="subtle"
                   icon="i-lucide-terminal"
                 >
-                  Setup Claude / CLI
+                  CLI setup
                 </UButton>
               </div>
             </div>
@@ -408,11 +460,20 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
                   This payment code expired
                 </h2>
                 <p class="text-sm text-muted">
-                  Nothing was charged. Do not pay an expired code — ask for a new one, which carries a fresh
-                  expiry for the same order.
+                  SP Cambo has not confirmed this code yet. If you already paid, do not pay again — re-check the
+                  payment first. Only request a new code when you are sure the expired code was not paid.
                 </p>
               </div>
               <div class="flex flex-wrap justify-center gap-2">
+                <UButton
+                  color="neutral"
+                  variant="subtle"
+                  icon="i-lucide-search"
+                  :loading="verifying"
+                  @click="iHavePaid"
+                >
+                  Re-check payment
+                </UButton>
                 <UButton
                   icon="i-lucide-refresh-cw"
                   :loading="newCode"
@@ -529,8 +590,8 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
                     I have paid — check now
                   </UButton>
                   <p class="text-center text-xs text-muted">
-                    SP Cambo checks Bakong automatically while this page is open. Keep this button for an immediate
-                    re-check after you pay; pressing it more than once is harmless.
+                    SP Cambo auto-checks Bakong while this page is open and the backend scheduler continues in the background.
+                    Use this button only when you want an immediate extra re-check after paying.
                   </p>
                 </div>
 
@@ -539,7 +600,7 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
                     name="i-lucide-radio"
                     class="size-3.5 animate-pulse"
                   />
-                  Auto-checking Bakong for payment
+                  Auto-checking Bakong for payment updates
                   <span v-if="payment.last_checked_at">· last checked {{ formatDateTime(payment.last_checked_at) }}</span>
                 </div>
               </template>

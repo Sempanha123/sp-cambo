@@ -11,13 +11,13 @@ class ApiKey extends Model
 {
     use HasUlids;
 
-    protected $fillable = ['tenant_id', 'user_id', 'label', 'prefix', 'last_four', 'lookup_digest', 'status', 'requests_per_minute', 'tokens_per_minute', 'concurrency_limit', 'max_request_bytes', 'max_output_tokens', 'last_used_at', 'expires_at', 'revoked_at'];
+    protected $fillable = ['tenant_id', 'user_id', 'label', 'prefix', 'last_four', 'lookup_digest', 'secret_ciphertext', 'status', 'requests_per_minute', 'tokens_per_minute', 'concurrency_limit', 'max_request_bytes', 'max_output_tokens', 'last_used_at', 'expires_at', 'revoked_at'];
 
-    protected $hidden = ['lookup_digest'];
+    protected $hidden = ['lookup_digest', 'secret_ciphertext'];
 
     protected function casts(): array
     {
-        return ['last_used_at' => 'immutable_datetime', 'expires_at' => 'immutable_datetime', 'revoked_at' => 'immutable_datetime'];
+        return ['secret_ciphertext' => 'encrypted', 'last_used_at' => 'immutable_datetime', 'expires_at' => 'immutable_datetime', 'revoked_at' => 'immutable_datetime'];
     }
 
     public function tenant(): BelongsTo

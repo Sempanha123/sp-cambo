@@ -23,6 +23,14 @@ class HttpKhqrGenerator implements KhqrGenerator
             throw new RuntimeException('KHQR generator returned an invalid response.');
         }
 
-        return ['qr_payload' => $payload, 'md5' => strtolower($md5)];
+        // The verification key must be the MD5 of the exact QR payload rendered
+        // to the customer. Cross-check the sidecar/SDK result so a generator
+        // regression can never create a payable QR that SP Cambo cannot verify.
+        $computedMd5 = md5($payload);
+        if (! hash_equals($computedMd5, strtolower($md5))) {
+            throw new RuntimeException('KHQR generator returned a digest that does not match the QR payload.');
+        }
+
+        return ['qr_payload' => $payload, 'md5' => $computedMd5];
     }
 }

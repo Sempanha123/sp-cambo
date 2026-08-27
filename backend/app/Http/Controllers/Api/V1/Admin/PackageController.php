@@ -52,6 +52,7 @@ class PackageController extends Controller
         $data['limits'] ??= [];
         $beforeAnnouncement = [
             ...$package->only(['enabled', 'customer_visible', 'auto_creates_api_key', 'price_minor', 'advertised_units', 'duration_seconds', 'name', 'subtitle']),
+            'stock_quantity' => $package->stock_quantity,
             'allowed_model_alias_ids' => $package->modelAliases()->pluck('model_aliases.id')->map(fn ($id): int => (int) $id)->sort()->values()->all(),
         ];
         DB::transaction(function () use ($request, $data, $package, $profitability, $audit): void {
@@ -69,11 +70,29 @@ class PackageController extends Controller
         $fresh = $package->fresh('modelAliases');
         $afterAnnouncement = [
             ...$fresh->only(['enabled', 'customer_visible', 'auto_creates_api_key', 'price_minor', 'advertised_units', 'duration_seconds', 'name', 'subtitle']),
+            'stock_quantity' => $fresh->stock_quantity,
             'allowed_model_alias_ids' => $fresh->modelAliases->pluck('id')->map(fn ($id): int => (int) $id)->sort()->values()->all(),
         ];
-        $wasSellable = (bool) ($beforeAnnouncement['enabled'] && $beforeAnnouncement['customer_visible'] && $beforeAnnouncement['auto_creates_api_key']);
-        if ($this->isTelegramSellable($fresh) && (! $wasSellable || $beforeAnnouncement !== $afterAnnouncement)) {
+        $wasStoreConfigured = (bool) ($beforeAnnouncement['enabled'] && $beforeAnnouncement['customer_visible'] && $beforeAnnouncement['auto_creates_api_key'])
+            && count($beforeAnnouncement['allowed_model_alias_ids']) > 0;
+        $wasSellable = $wasStoreConfigured
+            && ($beforeAnnouncement['stock_quantity'] === null || (int) $beforeAnnouncement['stock_quantity'] > 0);
+        $beforeCore = $beforeAnnouncement;
+        $afterCore = $afterAnnouncement;
+        unset($beforeCore['stock_quantity'], $afterCore['stock_quantity']);
+
+        if ($this->isTelegramSellable($fresh) && $beforeCore !== $afterCore) {
             $announcements->packagePublished($fresh, $wasSellable ? 'PACKAGE_UPDATE' : 'NEW_PACKAGE');
+        }
+
+        $beforeStock = $beforeAnnouncement['stock_quantity'];
+        $afterStock = $afterAnnouncement['stock_quantity'];
+        if ($wasStoreConfigured
+            && $this->isTelegramSellable($fresh)
+            && $beforeStock !== null
+            && $afterStock !== null
+            && (int) $afterStock > (int) $beforeStock) {
+            $announcements->packageStockAdded($fresh, (int) $beforeStock, (int) $afterStock);
         }
 
         return response()->json(['data' => $this->resource($fresh, $profitability)]);
@@ -82,7 +101,51 @@ class PackageController extends Controller
     private function isTelegramSellable(Package $package): bool
     {
         return (bool) ($package->enabled && $package->customer_visible && $package->auto_creates_api_key)
+            && ($package->stock_quantity === null || (int) $package->stock_quantity > 0)
             && $package->modelAliases->isNotEmpty();
+    }
+
+    public function addStock(Request $request, Package $package, AuditService $audit, TelegramAnnouncementService $announcements): JsonResponse
+    {
+        $input = $request->validate([
+            'quantity' => ['required', 'integer', 'min:1', 'max:1000000000'],
+            'reason' => ['required', 'string', 'min:10', 'max:1000'],
+        ]);
+
+        $fresh = DB::transaction(function () use ($request, $package, $input, $audit): Package {
+            $locked = Package::query()->with('modelAliases')->lockForUpdate()->findOrFail($package->id);
+            $before = $locked->stock_quantity;
+            if ($before === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'quantity' => ['This package has unlimited stock. Set a finite stock quantity in Edit package before using Add stock.'],
+                ]);
+            }
+
+            $next = (int) $before + (int) $input['quantity'];
+            if ($next > 1000000000) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'quantity' => ['Total finite stock cannot exceed 1,000,000,000 units.'],
+                ]);
+            }
+            $locked->forceFill(['stock_quantity' => $next])->save();
+            $audit->record(
+                $request->user(),
+                'package.stock_added',
+                'package',
+                $locked->id,
+                trim((string) $input['reason']),
+                ['before_stock' => (int) $before, 'added' => (int) $input['quantity'], 'after_stock' => $next],
+            );
+
+            return $locked->fresh('modelAliases');
+        });
+
+        $before = max(0, (int) $fresh->stock_quantity - (int) $input['quantity']);
+        if ($this->isTelegramSellable($fresh)) {
+            $announcements->packageStockAdded($fresh, $before, (int) $fresh->stock_quantity);
+        }
+
+        return response()->json(['data' => $this->resource($fresh, app(PackageProfitabilityService::class))]);
     }
 
     public function profitability(Package $package, PackageProfitabilityService $profitability): JsonResponse
@@ -108,6 +171,7 @@ class PackageController extends Controller
             'currency' => ['required', 'string', 'size:3'],
             'currency_exponent' => ['required', 'integer', 'between:0,6'],
             'duration_seconds' => ['required', 'integer', 'min:1'],
+            'stock_quantity' => ['nullable', 'integer', 'min:0', 'max:1000000000'],
             'limits' => ['present', 'array'],
             'limits.requests_per_minute' => ['sometimes', 'integer', 'min:1'],
             'limits.tokens_per_minute' => ['sometimes', 'integer', 'min:1'],
@@ -155,6 +219,8 @@ class PackageController extends Controller
             'price' => ['minor' => (string) $package->price_minor, 'currency' => $package->currency, 'exponent' => (int) $package->currency_exponent],
             'compare_at_price' => $package->compare_at_price_minor === null ? null : ['minor' => (string) $package->compare_at_price_minor, 'currency' => $package->currency, 'exponent' => (int) $package->currency_exponent],
             'duration_seconds' => (int) $package->duration_seconds,
+            'stock_quantity' => $package->stock_quantity === null ? null : (string) $package->stock_quantity,
+            'stock_status' => $package->stock_quantity === null ? 'UNLIMITED' : ((int) $package->stock_quantity > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK'),
             'limits' => $package->limits,
             'billing_rules' => $package->billing_rules,
             'auto_creates_api_key' => (bool) $package->auto_creates_api_key,

@@ -258,7 +258,7 @@ const languageTabs = computed(() => [
             Ready to issue your first key?
           </p>
           <p class="text-sm text-muted">
-            Keys are shown once, scoped to the models you choose, and revocable at any time.
+            Keys stay masked in normal lists, can be securely re-copied by the signed-in owner, and remain scoped and revocable at any time.
           </p>
         </div>
         <UButton

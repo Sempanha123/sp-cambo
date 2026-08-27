@@ -56,6 +56,8 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
 
+    'release' => env('SP_CAMBO_RELEASE', '2026.08.27-r13-fix23-database-model-routing-playground-diagnostics'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

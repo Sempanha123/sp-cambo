@@ -15,7 +15,7 @@ class Order extends Model
 
     protected function casts(): array
     {
-        return ['promotion_snapshot' => 'array', 'fulfilled_at' => 'immutable_datetime'];
+        return ['promotion_snapshot' => 'array', 'fulfilled_at' => 'immutable_datetime', 'customer_hidden_at' => 'immutable_datetime', 'stock_reserved_at' => 'immutable_datetime', 'stock_released_at' => 'immutable_datetime', 'stock_consumed_at' => 'immutable_datetime', 'stock_oversold_at' => 'immutable_datetime'];
     }
 
     public function items(): HasMany

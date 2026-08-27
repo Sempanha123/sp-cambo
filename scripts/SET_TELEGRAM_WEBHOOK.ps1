@@ -28,10 +28,12 @@ function Get-DotEnvValue([string]$Path, [string]$Name) {
   return (($line -split '=', 2)[1]).Trim().Trim('"').Trim("'")
 }
 
-$token = Get-DotEnvValue $envPath 'TELEGRAM_BOT_TOKEN'
-$secret = Get-DotEnvValue $envPath 'TELEGRAM_WEBHOOK_SECRET'
-if (-not $token) { throw "TELEGRAM_BOT_TOKEN is empty in backend/.env." }
-if (-not $secret) { throw "TELEGRAM_WEBHOOK_SECRET is empty. Run APPLY_LOCAL_STACK_FIX.ps1 first." }
+$token = Get-DotEnvValue $envPath 'TELEGRAM_STOREFRONT_BOT_TOKEN'
+if (-not $token) { $token = Get-DotEnvValue $envPath 'TELEGRAM_BOT_TOKEN' }
+$secret = Get-DotEnvValue $envPath 'TELEGRAM_STOREFRONT_WEBHOOK_SECRET'
+if (-not $secret) { $secret = Get-DotEnvValue $envPath 'TELEGRAM_WEBHOOK_SECRET' }
+if (-not $token) { throw "TELEGRAM_STOREFRONT_BOT_TOKEN is empty in backend/.env." }
+if (-not $secret) { throw "TELEGRAM_STOREFRONT_WEBHOOK_SECRET is empty in backend/.env." }
 
 $base = $PublicBackendBaseUrl.TrimEnd('/')
 if (-not $base.StartsWith('https://')) {
@@ -46,10 +48,10 @@ $body = @{
   drop_pending_updates = $false
 } | ConvertTo-Json -Depth 4
 
-Write-Host "Registering Telegram webhook: $webhook" -ForegroundColor Cyan
+Write-Host "Registering SP Cambo Store Bot webhook: $webhook" -ForegroundColor Cyan
 $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$token/setWebhook" -ContentType 'application/json' -Body $body -TimeoutSec 20
 if (-not $response.ok) { throw "Telegram rejected the webhook registration." }
-Write-Host "[OK] Telegram webhook registered. Bot token and webhook secret were not printed." -ForegroundColor Green
+Write-Host "[OK] SP Cambo Store Bot webhook registered. Website checkout remains Telegram-silent in Fix19." -ForegroundColor Green
 
 $info = Invoke-RestMethod -Method Get -Uri "https://api.telegram.org/bot$token/getWebhookInfo" -TimeoutSec 20
 Write-Host "Webhook URL: $($info.result.url)"

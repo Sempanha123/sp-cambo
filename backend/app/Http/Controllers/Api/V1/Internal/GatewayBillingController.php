@@ -38,12 +38,22 @@ class GatewayBillingController extends Controller
         $lotsQuery = EntitlementLot::query()
             ->where('user_id', $key->user_id)
             ->where('status', 'ACTIVE')
-            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-            ->when(
-                $isPlaygroundKey,
-                fn ($query) => $query->where('source_type', 'PLAYGROUND_DAILY'),
-                fn ($query) => $query->where('source_type', '!=', 'PLAYGROUND_DAILY'),
-            );
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()));
+
+        if ($isPlaygroundKey) {
+            $lotsQuery->where('source_type', 'PLAYGROUND_DAILY')
+                ->where('access_scope', 'PLAYGROUND');
+        } else {
+            $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                ->where(function ($access) use ($key): void {
+                    $access->whereNull('access_scope')
+                        ->orWhere('access_scope', 'ACCOUNT')
+                        ->orWhere(function ($dedicated) use ($key): void {
+                            $dedicated->where('access_scope', 'API_KEY')
+                                ->where('bound_api_key_id', $key->id);
+                        });
+                });
+        }
 
         if ($allowedAliases->isEmpty()) {
             $lotsQuery->whereRaw('1 = 0');
@@ -88,6 +98,7 @@ class GatewayBillingController extends Controller
             'request_id' => ['required', 'string', 'max:191'],
             'request_fingerprint' => ['required', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
             'endpoint' => ['required', 'string', 'in:/v1/messages,/v1/messages/count_tokens,/v1/responses,/v1/chat/completions'],
+            'playground_funding_scope' => ['nullable', 'string', 'in:DAILY,BALANCE'],
         ]);
         $key = $this->activeKey($input['customer_key'], $secrets);
         if ($key->max_request_bytes !== null && (int) $input['request_bytes'] > (int) $key->max_request_bytes) {
@@ -109,6 +120,7 @@ class GatewayBillingController extends Controller
                 $input['endpoint'] === '/v1/messages/count_tokens' ? 0 : (int) $input['requested_max_output_tokens'],
                 $input['request_id'],
                 $input['request_fingerprint'],
+                $input['playground_funding_scope'] ?? null,
             );
             $reservation = $result['reservation'];
             ApiRequestLog::query()->firstOrCreate(['reservation_id' => $reservation->id], [
@@ -215,7 +227,17 @@ class GatewayBillingController extends Controller
     public function release(Reservation $reservation, ReservationService $reservations): JsonResponse
     {
         $released = $reservations->release($reservation);
-        ApiRequestLog::query()->where('reservation_id', $released->id)->whereIn('state', ['RESERVED', 'CONNECTING', 'STREAMING'])->update(['state' => 'RELEASED', 'estimated_units' => null, 'finished_at' => now()]);
+        $finishedAt = now();
+        $log = ApiRequestLog::query()->where('reservation_id', $released->id)->first();
+        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING'], true)) {
+            $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
+            $log->forceFill([
+                'state' => 'RELEASED',
+                'estimated_units' => null,
+                'duration_ms' => $log->duration_ms ?? $durationMs,
+                'finished_at' => $finishedAt,
+            ])->save();
+        }
         CustomerStateChanged::dispatch((int) $released->user_id, 'api_request.failed', ['reservation_id' => $released->id, 'public_model' => $released->public_model_alias, 'state' => 'released']);
 
         return response()->json(['data' => ['reservation_id' => $released->id, 'status' => $released->status, 'settled_units' => '0']]);
@@ -225,7 +247,17 @@ class GatewayBillingController extends Controller
     {
         $input = $request->validate(['reason' => ['required', 'in:upstream_timeout,upstream_disconnect,client_disconnect,usage_unavailable,settlement_failed']]);
         $pending = $reservations->markForReconciliation($reservation, $input['reason']);
-        ApiRequestLog::query()->where('reservation_id', $pending->id)->whereIn('state', ['RESERVED', 'CONNECTING', 'STREAMING'])->update(['state' => 'RECONCILING', 'error_code' => 'billing_settlement_pending']);
+        $finishedAt = now();
+        $log = ApiRequestLog::query()->where('reservation_id', $pending->id)->first();
+        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING'], true)) {
+            $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
+            $log->forceFill([
+                'state' => 'RECONCILING',
+                'duration_ms' => $log->duration_ms ?? $durationMs,
+                'finished_at' => $finishedAt,
+                'error_code' => 'billing_settlement_pending',
+            ])->save();
+        }
         CustomerStateChanged::dispatch((int) $pending->user_id, 'api_request.failed', ['reservation_id' => $pending->id, 'public_model' => $pending->public_model_alias, 'state' => 'reconciling', 'error_code' => 'billing_settlement_pending']);
 
         return response()->json(['data' => ['reservation_id' => $pending->id, 'status' => $pending->status]], 202);

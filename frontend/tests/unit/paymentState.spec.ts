@@ -90,6 +90,11 @@ describe('paymentOutcome', () => {
     expect(outcome('PENDING', 'FULFILLED')).toBe('paid')
   })
 
+  it('waits for an in-flight server verification even when the countdown reaches zero', () => {
+    expect(outcome('VERIFYING', 'VERIFYING', true)).toBe('waiting')
+    expect(isAwaitingPayment(outcome('VERIFYING', 'VERIFYING', true))).toBe(true)
+  })
+
   it('never tells a customer to pay again for a transfer that settled at the deadline', () => {
     // A payment confirmed as the clock hits zero must read as paid, not expired.
     expect(outcome('PAID', 'PAID', true)).toBe('paid')

@@ -7,6 +7,7 @@ use App\Exceptions\PackagePublicationException;
 use App\Exceptions\PaymentException;
 use App\Exceptions\ProviderConnectionException;
 use App\Exceptions\ResellerCustomerStatusTransitionException;
+use App\Http\Middleware\AttachRequestId;
 use App\Http\Middleware\AuthenticateGateway;
 use App\Http\Middleware\AuthenticateResellerManagementKey;
 use App\Http\Middleware\AuthorizePrivateChannelTenant;
@@ -42,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
             );
         }
         $middleware->statefulApi();
+        $middleware->append(AttachRequestId::class);
         $middleware->alias([
             'account.active' => EnsureAccountIsActive::class,
             'channel.tenant' => AuthorizePrivateChannelTenant::class,
@@ -89,7 +91,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 default => [500, 'server_error', 'An unexpected server error occurred.', null],
             };
 
-            $payload = ['message' => $message, 'code' => $code];
+            $payload = [
+                'message' => $message,
+                'code' => $code,
+                'request_id' => $request->attributes->get('request_id'),
+            ];
             if ($errors !== null) {
                 $payload['errors'] = $errors;
             }

@@ -70,6 +70,14 @@ const showInactive = ref(false)
 
 /** Highlights a lot that is nearly out of time so it can be used before it lapses. */
 const expiringSoon = (lot: EntitlementLot) => isLotExpiringSoon(lot, now.value)
+const accessLabel = (lot: EntitlementLot) => {
+  if (lot.access_scope === 'PLAYGROUND') return 'Playground only'
+  if (lot.access_scope === 'API_KEY') return lot.bound_api_key ? `Key · ${lot.bound_api_key.masked_key}` : 'Dedicated API key'
+  if (lot.access_scope === 'UNASSIGNED') return 'Choose access'
+  return 'Legacy shared balance'
+}
+const accessTone = (lot: EntitlementLot) => lot.access_scope === 'UNASSIGNED' ? 'warning' : lot.access_scope === 'PLAYGROUND' ? 'info' : lot.access_scope === 'API_KEY' ? 'success' : 'neutral'
+
 
 const tokenPercent = computed(() => {
   const quota = balance.data.value?.token_quota
@@ -166,7 +174,10 @@ const refreshAll = () => {
         description="Codes are validated and consumed by the control plane. A successful redemption creates a normal entitlement lot with its own model scope and expiry."
       />
       <div class="rounded-xl border border-default bg-elevated/30 p-4 sm:p-5">
-        <form class="flex flex-col gap-3 sm:flex-row" @submit.prevent="submitRedeemCode">
+        <form
+          class="flex flex-col gap-3 sm:flex-row"
+          @submit.prevent="submitRedeemCode"
+        >
           <UInput
             v-model="redeemCode"
             class="flex-1"
@@ -175,12 +186,32 @@ const refreshAll = () => {
             placeholder="SPC-FREE-…"
             icon="i-lucide-ticket"
           />
-          <UButton type="submit" :loading="redeeming" :disabled="!redeemCode.trim() || redeeming">
+          <UButton
+            type="submit"
+            :loading="redeeming"
+            :disabled="!redeemCode.trim() || redeeming"
+          >
             Redeem code
           </UButton>
         </form>
-        <UAlert v-if="redeemError" class="mt-3" color="error" variant="subtle" icon="i-lucide-circle-alert" title="Code not redeemed" :description="redeemError" />
-        <UAlert v-if="redeemSuccess" class="mt-3" color="success" variant="subtle" icon="i-lucide-circle-check" title="Entitlement added" :description="redeemSuccess" />
+        <UAlert
+          v-if="redeemError"
+          class="mt-3"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          title="Code not redeemed"
+          :description="redeemError"
+        />
+        <UAlert
+          v-if="redeemSuccess"
+          class="mt-3"
+          color="success"
+          variant="subtle"
+          icon="i-lucide-circle-check"
+          title="Entitlement added"
+          :description="redeemSuccess"
+        />
       </div>
     </section>
 
@@ -227,6 +258,7 @@ const refreshAll = () => {
                     {{ lot.package_name }}
                   </h3>
                   <SpStatusBadge :status="lot.status.toLowerCase()" />
+                  <UBadge :color="accessTone(lot)" variant="subtle" size="sm">{{ accessLabel(lot) }}</UBadge>
                   <UBadge
                     v-if="index === 0"
                     color="primary"
@@ -347,8 +379,8 @@ const refreshAll = () => {
       class="space-y-4"
     >
       <SpSectionHeading
-        title="Not active yet"
-        description="Paid for, but waiting on activation. Nothing is consumed from a lot in this state."
+        title="Choose access"
+        description="These paid lots are secured but not spendable until you choose Playground, a new dedicated API key, or an existing API key."
         :level="3"
       />
 
@@ -366,7 +398,17 @@ const refreshAll = () => {
               {{ formatUnits(lot.original_units) }} {{ lot.unit_label }} · {{ lot.family_label }}
             </p>
           </div>
-          <SpStatusBadge :status="lot.status.toLowerCase()" />
+          <div class="flex items-center gap-2">
+            <UBadge color="warning" variant="subtle">Choose access</UBadge>
+            <UButton
+              v-if="lot.fulfillment_claim_id"
+              :to="`/dashboard/claim-key?claim=${lot.fulfillment_claim_id}`"
+              size="sm"
+              icon="i-lucide-route"
+            >
+              Allocate
+            </UButton>
+          </div>
         </li>
       </ul>
     </section>
@@ -429,7 +471,7 @@ const refreshAll = () => {
         How a lot is spent
       </p>
       <p class="mt-1">
-        A request reserves what it might use before any upstream call is made, then settles against the actual
+        Each new purchase is assigned to one access target. Playground-only lots are not spendable by normal API keys, and dedicated API-key lots cannot be consumed by another key. A request reserves what it might use before any upstream call is made, then settles against the actual
         amount when it finishes. Reserved quantity is not yet spent, and an aborted request releases its
         reservation. Quantity still sitting in a lot when its lifetime ends is forfeited, which is why the
         soonest-expiring lot is always drawn from first.

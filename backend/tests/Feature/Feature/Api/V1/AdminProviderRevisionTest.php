@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Feature\Api\V1;
 
+use App\Models\AiModel;
 use App\Models\AuditLog;
 use App\Models\Permission;
 use App\Models\Provider;
@@ -104,6 +105,86 @@ class AdminProviderRevisionTest extends TestCase
         $this->assertSame([['kind' => 'health', 'status' => 200]], $audit->metadata['attempts']);
         $this->assertArrayNotHasKey('credential', $audit->metadata);
         $this->assertArrayNotHasKey('origin', $audit->metadata);
+    }
+
+    public function test_health_success_alone_does_not_mark_a_configured_model_ready(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision();
+        AiModel::query()->create([
+            'provider_id' => $provider->id,
+            'internal_model_id' => 'OpenAI Codex',
+            'display_name' => 'OpenAI Codex',
+            'family' => 'codex',
+            'family_label' => 'OpenAI Codex',
+            'capabilities' => [],
+            'limits' => [],
+            'commercial_resale_verified_at' => now(),
+            'enabled' => true,
+        ]);
+        Http::fake([
+            'https://draft-one.example/health' => Http::response(['status' => 'ok'], 200),
+            'https://draft-one.example/v1/models' => Http::response(['data' => [['id' => 'Different Model']]], 200),
+            'https://draft-one.example/models' => Http::response(['data' => []], 200),
+            'https://draft-one.example/v1/messages' => Http::response([
+                'id' => 'msg_probe',
+                'type' => 'message',
+                'content' => [['type' => 'text', 'text' => 'OK']],
+                'usage' => ['input_tokens' => 2, 'output_tokens' => 1],
+            ], 200),
+        ]);
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}/probe")
+            ->assertOk()
+            ->assertJsonPath('data.lifecycle_status', ProviderConnectionRevision::STATUS_READY)
+            ->assertJsonPath('data.probe_endpoint_kind', 'messages');
+
+        Http::assertSent(fn ($request): bool =>
+            $request->url() === 'https://draft-one.example/v1/messages'
+            && $request['model'] === 'OpenAI Codex'
+        );
+    }
+
+    public function test_probe_falls_back_to_a_tiny_messages_request_when_local_router_has_no_health_or_models_endpoint(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision();
+        AiModel::query()->create([
+            'provider_id' => $provider->id,
+            'internal_model_id' => 'OpenAI Codex',
+            'display_name' => 'OpenAI Codex',
+            'family' => 'codex',
+            'family_label' => 'OpenAI Codex',
+            'capabilities' => [],
+            'limits' => [],
+            'commercial_resale_verified_at' => now(),
+            'enabled' => true,
+        ]);
+        Http::fake([
+            'https://draft-one.example/health' => Http::response(['error' => 'missing'], 404),
+            'https://draft-one.example/v1/models' => Http::response(['error' => 'missing'], 404),
+            'https://draft-one.example/models' => Http::response(['error' => 'missing'], 404),
+            'https://draft-one.example/v1/messages' => Http::response([
+                'id' => 'msg_probe',
+                'type' => 'message',
+                'content' => [['type' => 'text', 'text' => 'OK']],
+                'usage' => ['input_tokens' => 2, 'output_tokens' => 1],
+            ], 200),
+        ]);
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}/probe")
+            ->assertOk()
+            ->assertJsonPath('data.lifecycle_status', ProviderConnectionRevision::STATUS_READY)
+            ->assertJsonPath('data.probe_endpoint_kind', 'messages')
+            ->assertJsonPath('data.auto_activated', true);
+
+        Http::assertSent(fn ($request): bool =>
+            $request->url() === 'https://draft-one.example/v1/messages'
+            && $request['model'] === 'OpenAI Codex'
+            && $request->hasHeader('x-api-key', 'initial-secret')
+        );
     }
 
     public function test_failed_probe_does_not_promote_or_activate_revision(): void

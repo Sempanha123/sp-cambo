@@ -7,13 +7,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
 use App\Services\AuditService;
-use App\Services\ProviderEndpointService;
-use Illuminate\Http\Client\Response;
+use App\Services\ProviderProbeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -226,7 +224,7 @@ class ProviderConnectionRevisionController extends Controller
         string $provider,
         string $revision,
         AuditService $audit,
-        ProviderEndpointService $endpoints
+        ProviderProbeService $probeService
     ): JsonResponse {
         $provider = Provider::query()->findOrFail($provider);
         $revision = ProviderConnectionRevision::query()
@@ -234,36 +232,11 @@ class ProviderConnectionRevisionController extends Controller
             ->findOrFail($revision);
 
         $probeFingerprint = $this->probeFingerprint($revision);
-        $response = null;
-        $successfulCandidate = null;
-        $attempts = [];
-
-        foreach ($endpoints->probeCandidates($revision) as $candidate) {
-            try {
-                $response = Http::timeout(max(1, $revision->timeout_ms / 1000))
-                    ->acceptJson()
-                    ->withToken($revision->credential)
-                    ->get($candidate['url']);
-
-                $attempts[] = [
-                    'kind' => $candidate['kind'],
-                    'status' => $response->status(),
-                ];
-
-                if ($response->successful()) {
-                    $successfulCandidate = $candidate;
-                    break;
-                }
-            } catch (\Throwable $exception) {
-                report($exception);
-                $attempts[] = [
-                    'kind' => $candidate['kind'],
-                    'status' => null,
-                ];
-            }
-        }
-
-        $success = $response instanceof Response && $response->successful();
+        $internalModel = $provider->models()->where('enabled', true)->orderBy('created_at')->value('internal_model_id');
+        $probe = $probeService->probe($revision, is_string($internalModel) ? $internalModel : null);
+        $attempts = $probe['attempts'];
+        $success = $probe['success'];
+        $successfulEndpointKind = $probe['endpoint_kind'];
         [$revision, $canPromote, $autoActivated] = DB::transaction(function () use (
             $request,
             $provider,
@@ -348,7 +321,10 @@ class ProviderConnectionRevisionController extends Controller
         });
 
         if (! $success) {
-            $message = 'Provider connection probe failed. Verify the origin, credential, and provider availability.';
+            $attemptSummary = collect($attempts)
+                ->map(fn (array $attempt): string => $attempt['kind'].' '.($attempt['status'] === null ? 'connection error' : 'HTTP '.$attempt['status']))
+                ->implode(', ');
+            $message = 'Provider connection probe failed'.($attemptSummary !== '' ? ' ('.$attemptSummary.')' : '').'. Verify the local upstream, origin, and credential.';
 
             return response()->json([
                 'message' => $message,
@@ -370,7 +346,7 @@ class ProviderConnectionRevisionController extends Controller
             'data' => $this->resource($revision) + [
                 'probe_success' => true,
                 'probe_message' => $message,
-                'probe_endpoint_kind' => $successfulCandidate['kind'] ?? null,
+                'probe_endpoint_kind' => $successfulEndpointKind,
                 'auto_activated' => $autoActivated,
                 'active_connection_revision_id' => $autoActivated ? (string) $revision->id : ($provider->active_connection_revision_id ? (string) $provider->active_connection_revision_id : null),
             ],

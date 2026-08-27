@@ -53,7 +53,7 @@ export default defineNuxtConfig({
       // 'bearer' matches the control plane as implemented today.
       // 'cookie' switches to first-party Sanctum SPA session auth and must only
       // be enabled once the backend exposes /sanctum/csrf-cookie and lists this
-      // origin as a stateful domain. See docs/ai/CLAUDE_TO_CODEX.md.
+      // origin as a stateful domain.
       sessionMode: (process.env.NUXT_PUBLIC_SESSION_MODE || 'bearer') as 'bearer' | 'cookie'
     }
   },
@@ -132,6 +132,11 @@ export default defineNuxtConfig({
 
   icon: {
     clientBundle: {
+      // Admin/dashboard routes are client-rendered. Scan literal UIcon/icon names so
+      // icons used only on those pages (for example radio/wrench/image/brain) are
+      // bundled instead of depending on a runtime icon fetch. Keep the explicit
+      // list below for names that can be selected dynamically.
+      scan: true,
       icons: [
         'lucide:activity',
         'lucide:arrow-left',

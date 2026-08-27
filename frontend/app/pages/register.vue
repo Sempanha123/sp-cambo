@@ -50,6 +50,9 @@ const signUp = async (input: AuthFormState) => {
       </div>
     </div>
 
-    <GoogleLoginButton mode="register" redirect-to="/dashboard" />
+    <GoogleLoginButton
+      mode="register"
+      redirect-to="/dashboard"
+    />
   </div>
 </template>

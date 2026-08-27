@@ -168,6 +168,14 @@ const placeOrder = async () => {
   }
 }
 
+const packageGrantLabel = (item: PublicPackage): string => {
+  if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
+    return `${formatMoney(item.credit_amount)} credit`
+  }
+
+  return `${formatUnits(item.advertised_units)} ${item.unit_label}`
+}
+
 const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, value }))
 </script>
 
@@ -213,7 +221,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                 type="button"
                 role="radio"
                 :aria-checked="item.slug === selectedSlug"
-                class="w-full rounded-lg border p-4 text-left transition-colors"
+                class="sp-catalog-option w-full rounded-lg border p-4 text-left transition-colors"
                 :class="item.slug === selectedSlug
                   ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
                   : 'border-default bg-elevated/30 hover:border-accented'"
@@ -253,7 +261,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                   <div class="flex justify-between gap-2">
                     <dt>Quantity</dt>
                     <dd class="sp-numeric text-default">
-                      {{ formatUnits(item.advertised_units) }} {{ item.unit_label }}
+                      {{ packageGrantLabel(item) }}
                     </dd>
                   </div>
                   <div class="flex justify-between gap-2">
@@ -275,7 +283,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
         </section>
 
         <aside class="space-y-4 lg:sticky lg:top-4 lg:self-start">
-          <div class="space-y-4 rounded-lg border border-default bg-elevated/40 p-5">
+          <div class="sp-buy-package-card space-y-4 rounded-lg border border-default bg-elevated/40 p-5">
             <h2 class="font-medium text-highlighted">
               Order summary
             </h2>
@@ -303,7 +311,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                     Includes
                   </dt>
                   <dd class="sp-numeric text-right text-default">
-                    {{ formatUnits(selected.advertised_units) }} {{ selected.unit_label }}
+                    {{ packageGrantLabel(selected) }}
                   </dd>
                 </div>
                 <div class="flex justify-between gap-3">
@@ -457,8 +465,8 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
               <p class="text-xs text-dimmed">
                 You will be shown a Bakong KHQR code with the exact amount and a real expiry.
                 {{ selected.auto_creates_api_key
-                  ? 'After payment, choose a new SP Cambo key or attach the plan to an existing active key.'
-                  : 'Create an API key from the keys page once payment is confirmed.' }}
+                  ? 'After verified payment, the purchased models become available in Playground and SP Cambo prepares or updates your default API key automatically.'
+                  : 'After verified payment, the purchased models become available in Playground immediately. You can create a scoped API key later if you need external API/CLI access.' }}
               </p>
             </template>
 
@@ -470,7 +478,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
             </p>
           </div>
 
-          <div class="space-y-2 rounded-lg border border-default p-4 text-xs text-muted">
+          <div class="sp-dashboard-section space-y-2 rounded-lg border border-default p-4 text-xs text-muted">
             <p class="font-medium text-default">
               How consumption works
             </p>

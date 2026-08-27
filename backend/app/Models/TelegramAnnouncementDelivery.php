@@ -11,7 +11,7 @@ class TelegramAnnouncementDelivery extends Model
 
     protected function casts(): array
     {
-        return ['attempted_at' => 'immutable_datetime'];
+        return ['attempted_at' => 'immutable_datetime', 'delivery_lease_expires_at' => 'immutable_datetime'];
     }
 
     public function announcement(): BelongsTo

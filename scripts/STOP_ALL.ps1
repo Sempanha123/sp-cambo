@@ -6,7 +6,7 @@ if ([string]::IsNullOrWhiteSpace($ScriptRoot)) { $ScriptRoot=Split-Path -Parent 
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) { $ProjectRoot=Split-Path -Parent $ScriptRoot }
 $ProjectRoot=(Resolve-Path -LiteralPath $ProjectRoot).Path
 
-foreach ($port in @(3000,8000,3010,3011)) {
+foreach ($port in @(3000,8000,8001,3010,3011)) {
     $lines=@(netstat -ano | Select-String ":$port\s+.*LISTENING\s+(\d+)\s*$")
     foreach ($line in $lines) {
         $m=[regex]::Match($line.Line,"LISTENING\s+(\d+)\s*$")

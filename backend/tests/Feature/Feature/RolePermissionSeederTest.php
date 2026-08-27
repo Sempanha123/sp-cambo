@@ -24,7 +24,7 @@ class RolePermissionSeederTest extends TestCase
             Role::query()->orderBy('name')->pluck('name')->all(),
         );
         $this->assertSame(
-            ['admin.view', 'catalog.manage', 'reseller.manage'],
+            ['access.manage', 'admin.view', 'catalog.manage', 'reseller.manage'],
             Permission::query()->orderBy('name')->pluck('name')->all(),
         );
         $this->assertSame(['admin.view'], $this->permissionsFor('ADMIN'));
@@ -32,11 +32,11 @@ class RolePermissionSeederTest extends TestCase
         $this->assertSame([], $this->permissionsFor('FINANCE'));
         $this->assertSame(['reseller.manage'], $this->permissionsFor('RESELLER'));
         $this->assertSame(
-            ['admin.view', 'catalog.manage', 'reseller.manage'],
+            ['access.manage', 'admin.view', 'catalog.manage', 'reseller.manage'],
             $this->permissionsFor('SUPER_ADMIN'),
         );
         $this->assertSame([], $this->permissionsFor('SUPPORT'));
-        $this->assertDatabaseCount('permission_role', 5);
+        $this->assertDatabaseCount('permission_role', 6);
     }
 
     public function test_reseeding_repairs_missing_canonical_grants_without_removing_explicit_extra_grants(): void

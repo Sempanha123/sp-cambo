@@ -14,7 +14,7 @@ class PaymentAttempt extends Model
 
     protected function casts(): array
     {
-        return ['expires_at' => 'immutable_datetime', 'last_checked_at' => 'immutable_datetime', 'paid_at' => 'immutable_datetime'];
+        return ['expires_at' => 'immutable_datetime', 'last_checked_at' => 'immutable_datetime', 'verification_lease_expires_at' => 'immutable_datetime', 'paid_at' => 'immutable_datetime'];
     }
 
     public function order(): BelongsTo

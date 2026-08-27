@@ -40,6 +40,9 @@ const lot = (overrides: Partial<EntitlementLot> & { id: string }): EntitlementLo
   allowed_model_aliases: ['sp-fast'],
   status: 'ACTIVE',
   source: 'ORDER',
+  access_scope: 'ACCOUNT',
+  fulfillment_claim_id: null,
+  bound_api_key: null,
   ...overrides
 })
 
