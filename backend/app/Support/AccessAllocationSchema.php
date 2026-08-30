@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Schema;
 
 final class AccessAllocationSchema
 {
+    private static ?bool $readyCache = null;
+
     /** @var array<string,array<int,string>> */
     private const REQUIRED_COLUMNS = [
         'entitlement_lots' => ['access_scope', 'bound_api_key_id', 'fulfillment_claim_id'],
@@ -14,19 +16,23 @@ final class AccessAllocationSchema
 
     public static function ready(): bool
     {
+        if (self::$readyCache !== null) {
+            return self::$readyCache;
+        }
+
         foreach (self::REQUIRED_COLUMNS as $table => $columns) {
             if (! Schema::hasTable($table)) {
-                return false;
+                return self::$readyCache = false;
             }
 
             foreach ($columns as $column) {
                 if (! Schema::hasColumn($table, $column)) {
-                    return false;
+                    return self::$readyCache = false;
                 }
             }
         }
 
-        return true;
+        return self::$readyCache = true;
     }
 
     /** @return array<int,string> */

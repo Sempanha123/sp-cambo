@@ -13,16 +13,24 @@ useSeoMeta({
 })
 
 const auth = useAuthStore()
+const route = useRoute()
+const referral = useReferralAttribution()
+
+const capturedReferral = typeof route.query.ref === 'string' ? referral.capture(route.query.ref) : null
+const referralCode = computed(() => capturedReferral ?? referral.code.value)
 
 const signUp = async (input: AuthFormState) => {
   const success = await auth.register({
     name: input.name,
     email: input.email,
     password: input.password,
-    password_confirmation: input.password_confirmation
+    password_confirmation: input.password_confirmation,
+    verification_code: input.verification_code,
+    referral_code: referralCode.value
   })
 
   if (success) {
+    referral.clear()
     await navigateTo('/dashboard')
   }
 }
@@ -34,6 +42,14 @@ const signUp = async (input: AuthFormState) => {
       <span class="sp-khmer-chip">កម្ពុជា</span>
       <span class="text-xs text-muted">Secure managed AI access</span>
     </div>
+    <UAlert
+      v-if="referralCode"
+      color="success"
+      variant="subtle"
+      icon="i-lucide-users-round"
+      title="Referral invitation applied"
+      :description="`Code ${referralCode} will be attached to this account. Eligible first purchases can receive the configured welcome credit.`"
+    />
     <AuthCard
       mode="register"
       @submit="signUp"

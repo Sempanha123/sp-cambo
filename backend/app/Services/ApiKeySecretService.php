@@ -9,7 +9,7 @@ use RuntimeException;
 
 class ApiKeySecretService
 {
-    public const PREFIX = 'sk-spc-';
+    public const PREFIX = 'sk-';
 
     /** @return array{key: ApiKey, secret: string} */
     public function create(User $user, array $attributes, array $modelAliasIds, bool $recoverable = true): array

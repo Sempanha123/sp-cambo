@@ -12,16 +12,16 @@ return [
         'public_gateway_base_url' => env('SP_CAMBO_PUBLIC_GATEWAY_BASE_URL', env('SP_CAMBO_GATEWAY_BASE_URL', 'http://127.0.0.1:3010')),
         'playground_daily_token_quota' => (int) env('SP_CAMBO_PLAYGROUND_DAILY_TOKEN_QUOTA', 20000),
         'playground_timeout_seconds' => (int) env('SP_CAMBO_PLAYGROUND_TIMEOUT_SECONDS', 90),
+        'playground_connect_timeout_seconds' => (int) env('SP_CAMBO_PLAYGROUND_CONNECT_TIMEOUT_SECONDS', 30),
         'package_stock_reservation_ttl_seconds' => max(300, (int) env('SP_CAMBO_PACKAGE_STOCK_RESERVATION_TTL_SECONDS', 900)),
+        // Optional one-time/fresh-seed local bootstrap file. It is ignored by Git
+        // and only seeds an encrypted PENDING database revision; runtime routing
+        // never reads the provider origin or credential from this file.
+        'omniroute_bootstrap_file' => storage_path('app/private/omniroute-bootstrap.json'),
 
-        // Explicit database-driven sell catalog seed. These two values identify
-        // the private OmniRoute connection only. Runtime model selection NEVER
-        // comes from a global ANTHROPIC_MODEL setting: each public alias resolves
-        // through ModelAlias -> AiModel.internal_model_id in the database. The
-        // exact private OmniRoute IDs are seeded as "OpenAI Codex" and
-        // "Gemini Google AI Studio" and may also be managed in Admin.
-        'sell_catalog_base_url' => env('ANTHROPIC_BASE_URL'),
-        'sell_catalog_token' => env('ANTHROPIC_AUTH_TOKEN'),
+        // Provider origin + credential are intentionally NOT read from .env.
+        // Admin > Providers stores encrypted connection revisions in the database;
+        // the control plane supplies the active route privately to the gateway.
     ],
 
     'telegram' => [

@@ -33,3 +33,6 @@ infra/backups/
 infra/backend-public/
 .DS_Store
 Thumbs.db
+
+# Local-only bootstrap credentials
+backend/storage/app/private/omniroute-bootstrap.json

@@ -48,7 +48,12 @@ class PackageCatalogTest extends TestCase
             ->assertJsonPath('data.0.advertised_units', '20000000')
             ->assertJsonPath('data.0.price.minor', '150')
             ->assertJsonPath('data.0.duration_seconds', 86400)
-            ->assertJsonPath('data.0.allowed_model_aliases.0', 'claude-coding');
+            ->assertJsonPath('data.0.package_kind', 'SP_TOKENS')
+            ->assertJsonPath('data.0.allowed_model_aliases.0', 'claude-coding')
+            ->assertJsonMissingPath('data.0.minimum_margin_bps')
+            ->assertJsonMissingPath('data.0.profitability')
+            ->assertJsonMissingPath('data.0.profitability_override_reason')
+            ->assertJsonMissingPath('data.0.upstream_cost');
     }
 
     private function publishedAlias(): ModelAlias

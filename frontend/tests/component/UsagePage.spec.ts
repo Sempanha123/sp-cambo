@@ -9,7 +9,7 @@ import UsagePage from '~/pages/dashboard/usage.vue'
 
 const key = (overrides: Partial<ApiKeySummary> & { id: string }): ApiKeySummary => ({
   label: `Key ${overrides.id}`,
-  prefix: 'sk-spc-',
+  prefix: 'sk-',
   last_four: 'ab12',
   status: 'ACTIVE',
   created_at: '2026-08-22T10:00:00.000Z',
@@ -37,7 +37,7 @@ const request = (overrides: Partial<RequestActivity> = {}): RequestActivity => (
   route_version: 1,
   api_key_id: 'key-1',
   api_key_label: 'Production',
-  api_key_prefix: 'sk-spc-',
+  api_key_prefix: 'sk-',
   state: 'settled',
   endpoint: '/v1/messages',
   started_at: '2026-08-22T10:00:00.000Z',

@@ -190,7 +190,7 @@ const gatewayCodes: ErrorRow[] = [
     code: 'invalid_api_key',
     status: '401',
     meaning: 'No key was sent, or it is malformed, or SP Cambo does not recognise it.',
-    action: 'Check the key. An SP Cambo key starts with sk-spc-.',
+    action: 'Check the key. An SP Cambo key starts with sk-.',
     retryable: false
   },
   {

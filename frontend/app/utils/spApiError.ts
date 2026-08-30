@@ -68,7 +68,9 @@ const DEFAULT_MESSAGES: Record<SpErrorCode, string> = {
   forbidden: 'You do not have permission to perform this action.',
   account_suspended: 'This account is suspended. Contact SP Cambo support.',
   not_found: 'That resource could not be found.',
-  rate_limit_exceeded: 'Too many attempts. Please wait a moment and try again.',
+  rate_limit_exceeded: 'Too many requests in a short time. Your daily token balance is not necessarily exhausted; wait a moment and try again.',
+  playground_quota_exhausted: 'Daily free token limit reached. Wait for the daily reset, or use Tokens or Credits to continue.',
+  playground_balance_exhausted: 'No Tokens or Credits are available for this model. Add a package or wait for free access to reset.',
   conflict: 'That request conflicts with the current state of this record.',
   idempotency_conflict: 'This safety key has already been used for a different request.',
   already_claimed: 'This purchased access has already been attached to an API key.',
@@ -82,6 +84,7 @@ const DEFAULT_MESSAGES: Record<SpErrorCode, string> = {
   database_migration_required: 'SP Cambo needs the latest database update. Run php artisan migrate from the backend, then reload this page.',
   inference_unavailable: 'The selected model route is temporarily unavailable. Check the Gateway/provider status and try again.',
   playground_run_failed: 'The Playground request failed. Check the diagnostic reference in the error and backend log.',
+  playground_history_unavailable: 'Chat history storage is temporarily unavailable. Run the Playground history check and restart SP Cambo.',
   server_error: 'SP Cambo could not complete that request. Please try again.',
   network_unreachable: 'SP Cambo could not be reached. Check your connection and try again.',
   endpoint_unavailable: 'This part of the SP Cambo API is not available yet.',
@@ -98,6 +101,8 @@ const KNOWN_CODES = new Set<string>([
   'account_suspended',
   'not_found',
   'rate_limit_exceeded',
+  'playground_quota_exhausted',
+  'playground_balance_exhausted',
   'idempotency_conflict',
   'already_claimed',
   'invalid_status_transition',
@@ -110,6 +115,7 @@ const KNOWN_CODES = new Set<string>([
   'database_migration_required',
   'inference_unavailable',
   'playground_run_failed',
+  'playground_history_unavailable',
   'server_error'
 ])
 
@@ -125,6 +131,7 @@ const CODE_ALIASES: Record<string, SpErrorCode> = {
   credit_balance_exhausted: 'insufficient_credits',
   unauthorized: 'unauthenticated',
   too_many_requests: 'rate_limit_exceeded',
+  playground_rate_limited: 'rate_limit_exceeded',
   upstream_unavailable: 'inference_unavailable',
   upstream_rejected: 'inference_unavailable',
   model_unavailable: 'inference_unavailable',
@@ -215,10 +222,15 @@ export function toSpApiError(error: unknown, notFoundMeansUnavailable = false): 
   const errors = body?.errors
   const resolvedCode = errors && Object.keys(errors).length > 0 ? 'validation_failed' : code
 
-  // Never surface a raw framework/stack message for server faults.
+  const firstValidationMessage = resolvedCode === 'validation_failed'
+    ? Object.values(errors ?? {}).flat().find(message => typeof message === 'string' && message.trim().length > 0)
+    : undefined
+
+  // Never surface a raw framework/stack message for server faults. For validation,
+  // prefer the concrete field reason over Laravel's generic 'given data was invalid'.
   const safeMessage = resolvedCode === 'server_error' || resolvedCode === 'unknown_error'
     ? DEFAULT_MESSAGES[resolvedCode]
-    : body?.message?.trim() || DEFAULT_MESSAGES[resolvedCode]
+    : firstValidationMessage?.trim() || body?.message?.trim() || DEFAULT_MESSAGES[resolvedCode]
 
   return new SpApiError({
     code: resolvedCode,

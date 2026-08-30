@@ -112,7 +112,7 @@ describe('request bodies', () => {
 describe('snippets', () => {
   it('never contains a credential', () => {
     for (const snippet of everySnippet(build({ streaming: true }))) {
-      expect(snippet).not.toMatch(/sk-spc-(?!your-key)/)
+      expect(snippet).not.toMatch(/sk-(?!your-key)/)
     }
   })
 

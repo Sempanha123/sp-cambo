@@ -14,7 +14,7 @@ enableAutoUnmount(afterEach)
 
 const activeResponse = (): PublicApiKeyStatus => ({
   valid: true,
-  masked_key: 'sk-spc-...1234',
+  masked_key: 'sk-...1234',
   status: 'ACTIVE',
   package: 'Token Test, Credit Test',
   allowed_models: ['claude-coding'],
@@ -35,10 +35,6 @@ const activeResponse = (): PublicApiKeyStatus => ({
     finished_at: '2026-08-24T10:30:00.420Z',
     endpoint: '/v1/messages',
     model: 'claude-coding',
-    internal_model: 'provider/claude-coding',
-    provider: 'Provider A',
-    provider_slug: 'provider-a',
-    route_version: 1,
     state: 'settled',
     status: 'success',
     duration_ms: 420,
@@ -67,7 +63,7 @@ const submitKey = async (response: PublicApiKeyStatus) => {
   checkApiKey.mockResolvedValueOnce(response)
   const page = await mountSuspended(PublicKeyCheckerPage)
   const input = page.find('input[placeholder="spc_..."]')
-  await input.setValue('sk-spc-real-secret')
+  await input.setValue('sk-real-secret')
   await page.find('form').trigger('submit')
   await settle()
   return page
@@ -81,7 +77,7 @@ describe('public API key checker contract', () => {
       status: 'DISABLED'
     })
 
-    expect(checkApiKey).toHaveBeenCalledWith({ api_key: 'sk-spc-real-secret' })
+    expect(checkApiKey).toHaveBeenCalledWith({ api_key: 'sk-real-secret' })
     expect(page.text()).toContain('Key is disabled')
     expect(page.text()).toContain('DISABLED')
     expect(page.text()).not.toContain('This key could not be verified')

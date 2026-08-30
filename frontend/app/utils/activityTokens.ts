@@ -10,8 +10,8 @@ import type { RequestActivity } from '~/types/commerce'
  * decides whether to render it and never derives or repairs it from components.
  */
 export interface ActivityTokenRow {
-  label: 'Input' | 'Output' | 'Cache read' | 'Cache write' | 'Reasoning' | 'Total'
-  value: number | null
+  label: 'Input' | 'Output' | 'Reused input' | 'Saved' | 'Cache write' | 'Reasoning' | 'Total'
+  value: string | number | null
 }
 
 type ActivityTokenMetadata = Pick<
@@ -19,12 +19,13 @@ type ActivityTokenMetadata = Pick<
   | 'input_tokens'
   | 'output_tokens'
   | 'cache_read_tokens'
+  | 'saved_tokens'
   | 'cache_write_tokens'
   | 'reasoning_tokens'
   | 'total_tokens'
 >
 
-const isNonZero = (value: number | null) => value !== null && value !== 0
+const isNonZero = (value: string | number | null) => value !== null && value !== 0 && value !== '0'
 
 export function activityTokenRows(activity: ActivityTokenMetadata): ActivityTokenRow[] {
   const rows: ActivityTokenRow[] = [
@@ -33,7 +34,8 @@ export function activityTokenRows(activity: ActivityTokenMetadata): ActivityToke
   ]
 
   for (const row of [
-    { label: 'Cache read' as const, value: activity.cache_read_tokens },
+    { label: 'Reused input' as const, value: activity.cache_read_tokens },
+    { label: 'Saved' as const, value: activity.saved_tokens },
     { label: 'Cache write' as const, value: activity.cache_write_tokens },
     { label: 'Reasoning' as const, value: activity.reasoning_tokens },
     { label: 'Total' as const, value: activity.total_tokens }

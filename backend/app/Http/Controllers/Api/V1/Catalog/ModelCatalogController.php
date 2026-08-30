@@ -17,7 +17,7 @@ class ModelCatalogController extends Controller
             'public_alias' => $alias->public_alias,
             'display_name' => $alias->display_name,
             'family' => $alias->model->family,
-            'family_label' => $alias->model->family_label,
+            'family_label' => $alias->display_name,
             'description' => $alias->description,
             'capabilities' => $alias->capabilities,
             'credit_pricing' => $alias->pricing ? $this->pricing($alias->pricing) : null,

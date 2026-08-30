@@ -12,6 +12,7 @@ export class HttpControlPlane implements ControlPlane {
     customer_key: string;
     public_model: string;
     estimated_input_tokens: number;
+    estimated_cache_read_tokens: number;
     requested_max_output_tokens: number;
     request_bytes: number;
     request_id: string;
@@ -34,8 +35,11 @@ export class HttpControlPlane implements ControlPlane {
     await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/release`, {});
   }
 
-  async reconcile(reservationId: string, reason: string): Promise<void> {
-    await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/reconcile`, { reason });
+  async reconcile(reservationId: string, reason: string, localUsage?: Usage & { duration_ms: number }): Promise<void> {
+    await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/reconcile`, {
+      reason,
+      ...(localUsage ? { local_usage: localUsage } : {}),
+    });
   }
 
   private async call<T>(path: string, body: unknown): Promise<T> {

@@ -7,13 +7,13 @@ import type { ApiKeyCreated, ApiKeyDetails, ApiKeyUsageSummary, RequestActivity 
 import ApiKeyDetailsPage from '~/pages/dashboard/api-keys/[id].vue'
 
 const KEY_ID = 'key-details-1'
-const SECRET = 'sk-spc-details-000000000000000000000000'
+const SECRET = 'sk-details-000000000000000000000000'
 
 const details = (recopy = true): ApiKeyDetails => ({
   key: {
     id: KEY_ID,
     label: 'SP Cambo Default',
-    prefix: 'sk-spc-',
+    prefix: 'sk-',
     last_four: 'abcd',
     status: 'ACTIVE',
     created_at: '2026-08-26T00:00:00Z',
@@ -83,7 +83,7 @@ const activity: RequestActivity[] = [{
   route_version: null,
   api_key_id: KEY_ID,
   api_key_label: 'SP Cambo Default',
-  api_key_prefix: 'sk-spc-',
+  api_key_prefix: 'sk-',
   state: 'settled',
   endpoint: '/v1/messages',
   started_at: '2026-08-26T12:00:00Z',

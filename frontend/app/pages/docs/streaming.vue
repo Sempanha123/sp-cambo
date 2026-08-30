@@ -39,7 +39,7 @@ const nodeStream = computed(() => [
   '  }',
   '}',
   '',
-  '// Usage totals are on the final message, not the deltas.',
+  '// Provider usage fields may appear for client compatibility; SP Cambo billing uses its own local meter.',
   'const final = await stream.finalMessage()',
   'console.log(final.usage)'
 ].join('\n'))

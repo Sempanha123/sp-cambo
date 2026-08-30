@@ -69,6 +69,7 @@ onMounted(async () => {
 
     const response = await api.google.callback({ code, state })
     auth.applySession(response)
+    await useReferralAttribution().claimIfPossible()
 
     toast.add({ title: 'Signed in with Google', color: 'success', icon: 'i-lucide-circle-check' })
     await router.replace(destination)

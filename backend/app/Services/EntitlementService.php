@@ -19,18 +19,60 @@ class EntitlementService
             if ($existing) {
                 return EntitlementLot::query()->findOrFail($existing->entitlement_lot_id);
             }
+
+            /*
+             * `reason` belongs to credit_ledger, not entitlement_lots.
+             *
+             * Referral grants intentionally include a human-readable reason so the
+             * immutable ledger explains why the credit was created. Passing the
+             * complete snapshot directly to EntitlementLot::create() used to make
+             * Eloquent attempt to INSERT a non-existent `reason` column into
+             * entitlement_lots, which caused every referral signup reward to roll
+             * back with SQLSTATE[42S22]. Keep ledger-only data separate from the
+             * entitlement lot before persistence.
+             */
+            $ledgerReason = $snapshot['reason'] ?? null;
+            unset($snapshot['reason']);
+
             $activatedAt = $snapshot['activated_at'] ?? now();
             $billingSnapshot = $snapshot['billing_snapshot'] ?? [];
-            $snapshot['billing_snapshot_hash'] = hash('sha256', json_encode($billingSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
-            $lot = EntitlementLot::query()->create($snapshot + ['tenant_id' => $tenant->id, 'user_id' => $user->id, 'remaining_units' => $snapshot['original_units'], 'reserved_units' => 0, 'status' => 'ACTIVE', 'activated_at' => $activatedAt]);
+            $snapshot['billing_snapshot_hash'] = hash(
+                'sha256',
+                json_encode($billingSnapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            );
+
+            // These fields are server-owned invariants. array_merge intentionally
+            // places them last so a caller cannot override tenant/user/balance/status.
+            $lotAttributes = array_merge($snapshot, [
+                'tenant_id' => $tenant->id,
+                'user_id' => $user->id,
+                'remaining_units' => (int) $snapshot['original_units'],
+                'reserved_units' => 0,
+                'status' => 'ACTIVE',
+                'activated_at' => $activatedAt,
+            ]);
+
+            $lot = EntitlementLot::query()->create($lotAttributes);
+
             $ledgerType = match ($snapshot['source_type']) {
                 'ORDER' => 'PURCHASE',
                 'PROMOTION' => 'PROMOTION',
                 'REDEEM_CODE' => 'PROMOTION',
                 'PLAYGROUND_DAILY' => 'PROMOTION',
+                'REFERRAL' => 'REFERRAL_REWARD',
                 default => 'ADMIN_ADJUSTMENT',
             };
-            CreditLedger::query()->create(['user_id' => $user->id, 'entitlement_lot_id' => $lot->id, 'type' => $ledgerType, 'amount' => $snapshot['original_units'], 'idempotency_key' => $idempotencyKey, 'source_type' => $snapshot['source_type'], 'source_id' => $snapshot['source_id'] ?? null, 'reason' => $snapshot['reason'] ?? null]);
+
+            CreditLedger::query()->create([
+                'user_id' => $user->id,
+                'entitlement_lot_id' => $lot->id,
+                'type' => $ledgerType,
+                'amount' => (int) $snapshot['original_units'],
+                'idempotency_key' => $idempotencyKey,
+                'source_type' => $snapshot['source_type'],
+                'source_id' => $snapshot['source_id'] ?? null,
+                'reason' => $ledgerReason,
+            ]);
 
             return $lot;
         });

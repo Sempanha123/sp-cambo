@@ -2150,7 +2150,7 @@ useSeoMeta({
             label="Timeout (ms)"
             name="timeout_ms"
             required
-            help="The timeout in milliseconds for API requests (1000-60000)."
+            help="Connection/first-response timeout in milliseconds (1000-60000). Once a streaming response starts, it may continue until the model finishes or the client stops it."
           >
             <UInput
               v-model="createForm.timeout_ms"
@@ -2274,6 +2274,7 @@ useSeoMeta({
             label="Timeout (ms)"
             name="timeout_ms"
             required
+            help="Connection/first-response timeout in milliseconds. Established streams are not cut off by this timer."
           >
             <UInput
               v-model="editRevisionForm.timeout_ms"

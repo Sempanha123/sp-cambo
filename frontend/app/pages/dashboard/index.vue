@@ -28,6 +28,14 @@ const expiryHint = computed(() => {
   return next ? `Next expiry ${formatDateTime(next)}` : undefined
 })
 
+const formatSpCreditBalance = (value: string | null | undefined) => {
+  if (value == null) return '$0'
+  const amount = Number(value)
+  return Number.isFinite(amount)
+    ? `$${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 5 })}`
+    : value
+}
+
 const quickStart = [
   {
     title: 'Buy packages',
@@ -166,22 +174,26 @@ const quickStart = [
           class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
         >
           <SpMetric
-            label="Tokens remaining"
+            label="Total Tokens"
             icon="i-lucide-layers-3"
             :value="formatUnits(balance.data.value.token_quota.remaining_units)"
-            :hint="tokenPercent === null ? undefined : `${tokenPercent}% of purchased quota`"
+            :hint="tokenPercent === null ? undefined : `${tokenPercent}% of purchased quota · purchased Token quota`"
             :tone="isUnitsDepleted(balance.data.value.token_quota.remaining_units) ? 'warning' : 'default'"
           />
           <SpMetric
-            label="Tokens reserved"
-            icon="i-lucide-zap"
-            :value="formatUnits(balance.data.value.token_quota.reserved_units)"
-            hint="Held for in-flight requests"
+            label="Credits"
+            icon="i-lucide-wallet-cards"
+            :value="formatSpCreditBalance(balance.data.value.sp_credit_quota?.remaining)"
+            :hint="balance.data.value.sp_credit_quota
+              ? `$1 Credit = ${formatUnits(balance.data.value.sp_credit_quota.billable_units_per_credit)} Tokens`
+              : 'Dollar-denominated platform Credits'"
+            :tone="Number(balance.data.value.sp_credit_quota?.remaining ?? 0) <= 0 ? 'warning' : 'default'"
           />
           <SpMetric
-            label="Credit balance"
-            icon="i-lucide-wallet-cards"
+            label="Wallet credit"
+            icon="i-lucide-circle-dollar-sign"
             :value="formatMoney(balance.data.value.credit_balance.remaining)"
+            hint="Account money credit, separate from package Credits"
             :tone="isZeroMoney(balance.data.value.credit_balance.remaining) ? 'warning' : 'default'"
           />
           <SpMetric

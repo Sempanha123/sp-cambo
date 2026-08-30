@@ -36,6 +36,34 @@ const parseInline = (value: string): InlineSegment[] => {
 const splitTableRow = (line: string) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
 const isTableSeparator = (line: string) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
 
+// Some model continuations correctly continue the file but forget to reopen the
+// markdown fence. Without this recovery, valid JavaScript/CSS/HTML is rendered as
+// normal prose after the first code editor block. We only promote paragraphs that
+// immediately follow code and contain strong code syntax signals, which avoids
+// turning ordinary explanations into code.
+const looksLikeCodeLine = (line: string) => {
+  const value = line.trim()
+  if (!value) return false
+  if (/^(?:const|let|var|function|async\s+function|class|interface|type|enum|import|export|return|throw|new|if\s*\(|else\b|for\s*\(|while\s*\(|switch\s*\(|case\b|default:|try\b|catch\s*\(|finally\b|document\.|window\.|console\.)/.test(value)) return true
+  if (/^(?:[{}()[\];,]|\}\)?;?|\);?|\],?|\);?)$/.test(value)) return true
+  if (/(?:=>|===|!==|==|!=|&&|\|\||\+=|-=|\*=|\/=|\?\.|\.addEventListener\b|\.classList\b|\.querySelector\b)/.test(value)) return true
+  if (/^[A-Za-z_$][\w$.[\]'"?]*\s*=\s*[^=]/.test(value)) return true
+  if (/^<\/?[A-Za-z][^>]*>/.test(value)) return true
+  if (/^(?:[.#][A-Za-z_-][\w-]*|[A-Za-z][\w-]*(?:\s+[.#A-Za-z][^{]*)?)\s*\{\s*$/.test(value)) return true
+  if (/^(?:--[\w-]+|[A-Za-z-]+)\s*:\s*[^;]+;?$/.test(value)) return true
+  if (/[;{}]$/.test(value)) return true
+  return false
+}
+
+const paragraphLooksLikeCodeContinuation = (lines: string[]) => {
+  const meaningful = lines.map(line => line.trim()).filter(Boolean)
+  if (meaningful.length === 0) return false
+  const hits = meaningful.filter(looksLikeCodeLine).length
+  // One very obvious line (e.g. `const x = ...;`) is enough; otherwise require
+  // a majority so natural-language paragraphs remain prose.
+  return (meaningful.length === 1 && hits === 1) || hits >= Math.max(2, Math.ceil(meaningful.length * 0.55))
+}
+
 const blocks = computed<Block[]>(() => {
   const source = props.content.replace(/\r\n/g, '\n')
   const lines = source.split('\n')
@@ -111,7 +139,14 @@ const blocks = computed<Block[]>(() => {
       paragraph.push(next)
       i++
     }
-    out.push({ kind: 'paragraph', lines: paragraph })
+    const previous = out[out.length - 1]
+    if (previous?.kind === 'code' && paragraphLooksLikeCodeContinuation(paragraph)) {
+      // Keep one continuous editor block for a model that closed its markdown
+      // fence too early and then continued emitting code as plain text.
+      previous.code = `${previous.code}\n\n${paragraph.join('\n')}`
+    } else {
+      out.push({ kind: 'paragraph', lines: paragraph })
+    }
   }
   return out
 })
@@ -156,8 +191,8 @@ const copy = async (text: string, label: string) => {
 
     <div class="space-y-4 pl-0 md:pl-9">
       <template v-for="(block, blockIndex) in blocks" :key="blockIndex">
-        <div v-if="block.kind === 'code'" class="overflow-hidden rounded-xl border border-default bg-[#080d16] shadow-sm">
-          <div class="flex min-h-10 items-center justify-between gap-3 border-b border-white/8 bg-white/[0.035] px-3 py-2">
+        <div v-if="block.kind === 'code'" class="sp-playground-code sp-code-block shadow-sm">
+          <div class="sp-code-block__header flex min-h-10 items-center justify-between gap-3 px-3 py-2">
             <div class="flex min-w-0 items-center gap-2">
               <UIcon name="i-lucide-code-2" class="size-3.5 shrink-0 text-primary" />
               <span class="truncate font-mono text-[11px] uppercase tracking-wide text-muted">{{ block.language }}</span>
@@ -174,8 +209,8 @@ const copy = async (text: string, label: string) => {
               <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-copy" aria-label="Copy code" @click="copy(block.code, 'Code')"><span class="hidden sm:inline">Copy</span></UButton>
             </div>
           </div>
-          <pre v-if="!collapsed[block.id]" class="max-h-[30rem] overflow-auto p-4 text-[13px] leading-6 text-slate-200"><code>{{ block.code }}</code></pre>
-          <div v-else class="px-4 py-3 text-xs text-muted">Code collapsed · {{ block.code.split('\n').length }} lines</div>
+          <pre v-if="!collapsed[block.id]" class="sp-code-block__content max-h-[30rem] overflow-auto p-4 text-[13px] leading-6"><code>{{ block.code }}</code></pre>
+          <div v-else class="sp-code-block__content px-4 py-3 text-xs text-muted">Code collapsed · {{ block.code.split('\n').length }} lines</div>
         </div>
 
         <component

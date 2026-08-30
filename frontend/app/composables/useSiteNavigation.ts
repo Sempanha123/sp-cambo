@@ -6,7 +6,7 @@ import type { NavigationMenuItem } from '@nuxt/ui'
  */
 export function useSiteNavigation() {
   const route = useRoute()
-  const { canViewAdmin, canManageCatalog, canManageReseller } = useSpPermissions()
+  const { canViewAdmin, canManageCatalog, canManageAccess, canManageReseller } = useSpPermissions()
 
   const publicLinks = computed<NavigationMenuItem[]>(() => [
     {
@@ -66,6 +66,12 @@ export function useSiteNavigation() {
         icon: 'i-lucide-gift',
         to: '/dashboard/entitlements',
         active: route.path.startsWith('/dashboard/entitlements')
+      },
+      {
+        label: 'Refer & earn',
+        icon: 'i-lucide-users-round',
+        to: '/dashboard/referrals',
+        active: route.path.startsWith('/dashboard/referrals')
       },
       {
         label: 'Usage & activity',
@@ -149,6 +155,15 @@ export function useSiteNavigation() {
         icon: 'i-lucide-settings',
         to: '/admin/settings',
         active: route.path.startsWith('/admin/settings')
+      })
+    }
+
+    if (canManageAccess.value) {
+      links.push({
+        label: 'Referral program',
+        icon: 'i-lucide-badge-dollar-sign',
+        to: '/admin/referrals',
+        active: route.path.startsWith('/admin/referrals')
       })
     }
 

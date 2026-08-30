@@ -119,6 +119,44 @@ describe('customer chat Playground', () => {
     expect(page.text()).toContain('Hello from the model')
   })
 
+  it('uses the same 64K Auto ceiling for daily-free users', async () => {
+    plane.models = [model({ public_alias: 'sp-sonnet', capabilities: capabilities({ messages_api: true, max_output_tokens: 65536 }) })]
+    getPlaygroundQuota.mockResolvedValue(quota({ max_output_tokens: 65536 }))
+    const page = await mountPlayground()
+    const vm = page.vm as unknown as { composer: string, send: () => Promise<void> }
+    vm.composer = 'Generate a long answer'
+    await vm.send()
+
+    expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
+      max_output_tokens: 65536,
+      funding_source: 'daily'
+    }), expect.any(Object))
+    expect(page.text()).toContain('Auto')
+  })
+
+  it('lets Auto use the larger ceiling for a purchased-only model', async () => {
+    plane.models = [model({ public_alias: 'sp-premium', capabilities: capabilities({ messages_api: true, max_output_tokens: 65536 }) })]
+    getPlaygroundQuota.mockResolvedValue(quota({
+      remaining: 0,
+      max_output_tokens: 65536,
+      free_model_aliases: [],
+      fallback_available: true,
+      fallback_model_aliases: ['sp-premium'],
+      available_model_aliases: ['sp-premium'],
+      model_balances: [{ alias: 'sp-premium', free_eligible: false, balance_available: true, token_remaining: 500000, credit_remaining: 0, next_expires_at: null }],
+      default_model_alias: 'sp-premium'
+    }))
+    const page = await mountPlayground()
+    const vm = page.vm as unknown as { composer: string, send: () => Promise<void> }
+    vm.composer = 'Generate a complete project file'
+    await vm.send()
+
+    expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
+      max_output_tokens: 65536,
+      funding_source: 'balance'
+    }), expect.any(Object))
+  })
+
   it('requires explicit opt-in before spending redeemed or purchased balance after daily quota is exhausted', async () => {
     getPlaygroundQuota.mockResolvedValue(quota({
       remaining: 0,
@@ -168,7 +206,7 @@ describe('customer chat Playground', () => {
     }))
 
     const page = await mountPlayground()
-    expect(page.text()).toContain('Purchased model · Purchased')
+    expect(page.text()).toContain('sp-premium')
     expect(page.text()).toContain('5,000')
 
     const vm = page.vm as unknown as { selectedAlias: string | undefined, composer: string, send: () => Promise<void> }
@@ -200,8 +238,8 @@ describe('customer chat Playground', () => {
 
     const page = await mountPlayground()
 
-    expect(page.text()).toContain('Working model')
-    expect(page.text()).not.toContain('Protocol-less model')
+    expect(page.text()).toContain('sp-sonnet')
+    expect(page.text()).not.toContain('sp-broken')
     expect(page.text()).toContain('Anthropic Messages')
   })
 

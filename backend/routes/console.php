@@ -2,6 +2,7 @@
 
 use App\Exceptions\PaymentException;
 use App\Models\PaymentAttempt;
+use App\Models\PlaygroundChat;
 use App\Models\Role;
 use App\Models\SystemHeartbeat;
 use App\Models\User;
@@ -10,6 +11,7 @@ use App\Services\EntitlementService;
 use App\Services\PaymentService;
 use App\Services\PackageStockService;
 use App\Services\ReservationService;
+use App\Services\ReferralService;
 use App\Services\TelegramCommerceService;
 use App\Services\TelegramAnnouncementService;
 use App\Services\TelegramPurchaseAlertService;
@@ -18,6 +20,8 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -236,19 +240,116 @@ Artisan::command('system:check-access-allocation-schema', function (): int {
     return 1;
 })->purpose('Verify the Fix 7 access-allocation database columns required by Playground and API key details');
 
+
+Artisan::command('system:check-referral-schema', function (): int {
+    $missing = [];
+    foreach (['referral_settings', 'referral_rewards', 'referral_registration_rewards'] as $table) {
+        if (! Schema::hasTable($table)) $missing[] = $table.' table';
+    }
+    if (Schema::hasTable('users')) {
+        foreach (['referral_code', 'referred_by_user_id', 'referred_at'] as $column) {
+            if (! Schema::hasColumn('users', $column)) $missing[] = 'users.'.$column;
+        }
+    }
+    if (Schema::hasTable('referral_settings')) {
+        foreach (['registration_reward_enabled', 'registration_reward_started_at', 'registration_reward_mode', 'registration_credit_minor', 'registration_token_units', 'registration_reward_model_aliases'] as $column) {
+            if (! Schema::hasColumn('referral_settings', $column)) $missing[] = 'referral_settings.'.$column;
+        }
+    }
+    if ($missing !== []) {
+        $this->error('Referral schema is incomplete: '.implode(', ', $missing));
+        $this->line('Run: php artisan migrate --force');
+        return 1;
+    }
+    app(ReferralService::class)->settings();
+    $this->info('Referral schema is ready.');
+    return 0;
+})->purpose('Verify the referral attribution, settings and reward-ledger schema');
+
+Artisan::command('system:check-playground-history-schema', function (): int {
+    $missing = [];
+    if (! Schema::hasTable('playground_chats')) {
+        $missing[] = 'playground_chats table';
+    } else {
+        foreach (['user_id', 'client_key', 'title', 'messages', 'message_count', 'last_message_at', 'expires_at'] as $column) {
+            if (! Schema::hasColumn('playground_chats', $column)) $missing[] = "playground_chats.{$column}";
+        }
+    }
+
+    if ($missing === []) {
+        $this->info('Playground history schema is ready.');
+        return 0;
+    }
+
+    $this->error('Playground history schema is incomplete. Missing: '.implode(', ', $missing));
+    $this->line('Run: php artisan migrate --force');
+    return 1;
+})->purpose('Verify the server-side Playground chat history schema required by Fix31');
+
+
+Artisan::command('system:check-playground-history-runtime', function (): int {
+    if (! Schema::hasTable('playground_chats')) {
+        $this->error('Playground history runtime check failed: playground_chats does not exist.');
+        return 1;
+    }
+
+    $userId = User::query()->value('id');
+    if (! $userId) {
+        $this->info('Playground history runtime check skipped: no user exists yet. Schema is ready.');
+        return 0;
+    }
+
+    DB::beginTransaction();
+    try {
+        $clientKey = 'history_probe_'.Str::lower(Str::random(20));
+        $chat = PlaygroundChat::query()->create([
+            'user_id' => (int) $userId,
+            'client_key' => $clientKey,
+            'title' => 'History storage probe',
+            'model_alias' => 'openai-codex',
+            'system_prompt' => null,
+            'messages' => [['role' => 'user', 'content' => 'history storage probe']],
+            'message_count' => 1,
+            'last_message_at' => now(),
+            'expires_at' => now()->addMinute(),
+        ]);
+
+        $roundTrip = PlaygroundChat::query()
+            ->whereKey($chat->id)
+            ->where('user_id', (int) $userId)
+            ->where('client_key', $clientKey)
+            ->first();
+
+        if (! $roundTrip || ($roundTrip->messages[0]['content'] ?? null) !== 'history storage probe') {
+            throw new RuntimeException('A chat row was written but could not be read back correctly.');
+        }
+
+        DB::rollBack();
+        $this->info('Playground history runtime write/read check passed.');
+        return 0;
+    } catch (Throwable $e) {
+        if (DB::transactionLevel() > 0) DB::rollBack();
+        $this->error('Playground history runtime check failed: '.$e->getMessage());
+        return 1;
+    }
+})->purpose('Verify that the active database can actually write and read Playground chat history');
+
 Artisan::command('catalog:sell-status', function (): int {
     $provider = \App\Models\Provider::query()->where('slug', 'omniroute-primary')->with('activeConnectionRevision')->first();
     $expectedAliases = ['openai-codex', 'gemini-google-ai-studio'];
-    $expectedInternalModels = [
-        'openai-codex' => 'OpenAI Codex',
-        'gemini-google-ai-studio' => 'Gemini Google AI Studio',
-    ];
     $packageSlugs = [
+        'openai-codex-1m',
+        'openai-codex-5m',
         'openai-codex-10m',
         'openai-codex-50m',
+        'gemini-google-ai-studio-1m',
+        'gemini-google-ai-studio-5m',
         'gemini-google-ai-studio-10m',
         'gemini-google-ai-studio-50m',
+        'multi-model-credit-5usd',
         'multi-model-credit-10usd',
+        'multi-model-credit-25usd',
+        'multi-model-credit-50usd',
         'multi-model-credit-100usd',
     ];
     $aliases = \App\Models\ModelAlias::query()->with('model')->whereIn('public_alias', $expectedAliases)->get()->keyBy('public_alias');
@@ -261,10 +362,12 @@ Artisan::command('catalog:sell-status', function (): int {
     });
     $publishedPackages = \App\Models\Package::query()->published()->whereIn('slug', $packageSlugs)->count();
 
-    $this->line('ANTHROPIC_BASE_URL: '.(filled(config('services.spcambo.sell_catalog_base_url')) ? 'configured' : 'MISSING'));
-    $this->line('ANTHROPIC_AUTH_TOKEN: '.(filled(config('services.spcambo.sell_catalog_token')) ? 'configured (redacted)' : 'MISSING'));
+    $this->line('Provider configuration source: ADMIN UI / DATABASE');
+    $this->line('Provider origin/credential: encrypted connection revision (not read from OMNIROUTE_* env)');
+    $this->line('Gateway routing source: CONTROL-PLANE PREFLIGHT');
     $this->line('Model routing source: DATABASE (public alias -> exact AiModel.internal_model_id)');
     $this->line('Provider route: '.($routeReady ? 'READY' : 'NOT READY'));
+
     $protocolsValid = true;
     $modelMappingsValid = true;
     foreach ($expectedAliases as $aliasName) {
@@ -279,21 +382,47 @@ Artisan::command('catalog:sell-status', function (): int {
         $playgroundProtocol = is_string($alias?->capabilities['playground_protocol'] ?? null)
             ? $alias->capabilities['playground_protocol']
             : ($protocols->first() ?: 'NONE');
-        $internalModel = $alias?->model?->internal_model_id ?: 'MISSING';
-        $mappingExact = hash_equals($expectedInternalModels[$aliasName], (string) $internalModel);
-        $modelMappingsValid = $modelMappingsValid && $mappingExact;
-        $this->line('Model '.$aliasName.' -> '.$internalModel.': '.($alias !== null && $published->contains($aliasName) ? 'PUBLISHED' : 'BLOCKED').' · verified '.$protocolLabel.' · Playground '.$playgroundProtocol.($mappingExact ? '' : ' · WRONG INTERNAL MODEL ID'));
+        $internalModel = trim((string) ($alias?->model?->internal_model_id ?? ''));
+        $mappingPresent = $internalModel !== '';
+        $modelMappingsValid = $modelMappingsValid && $mappingPresent;
+        $this->line('Model '.$aliasName.' -> '.($mappingPresent ? $internalModel : 'MISSING').': '.($alias !== null && $published->contains($aliasName) ? 'PUBLISHED' : 'BLOCKED').' · gateway '.$protocolLabel.' · Playground '.$playgroundProtocol.($mappingPresent ? '' : ' · NO PRIVATE MODEL MAPPING'));
     }
+
     $configuredFreeModels = array_values(array_intersect($expectedAliases, $setting->allowed_model_aliases ?? []));
     $this->line('Daily Playground quota: '.number_format((int) $setting->daily_token_quota).' · '.count($configuredFreeModels).'/2 models configured');
-    $this->line("Sell products published: {$publishedPackages}/6");
+    $this->line("Sell products published: {$publishedPackages}/13");
 
-    if (! $routeReady || $published->count() !== 2 || $publishedPackages !== 6 || ! $protocolsValid || ! $modelMappingsValid) {
-        $this->warn('Run php artisan db:seed --class=SellCatalogSeeder --force after confirming ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN and both exact OmniRoute custom model IDs are available.');
+    if (! $routeReady) {
+        $this->warn('Open Admin > Providers > OmniRoute and Probe the PENDING bootstrap revision. If the seeded private model labels are not real IDs in this OmniRoute build, use Discover upstream and remap the public aliases to the exact returned model IDs. No OMNIROUTE_BASE_URL or OMNIROUTE_API_KEY runtime env values are used.');
+    } elseif ($published->count() !== 2 || $publishedPackages !== 13 || ! $protocolsValid || ! $modelMappingsValid) {
+        $this->warn('The provider route is READY, but the two-model sale catalog is not fully sellable. Check the real upstream model mappings/aliases in Admin.');
     }
 
-    return $routeReady && $published->count() === 2 && $publishedPackages === 6 && $protocolsValid && $modelMappingsValid ? 0 : 1;
-})->purpose('Show safe two-model sell catalog readiness without printing credentials');
+    return $routeReady && $published->count() === 2 && $publishedPackages === 13 && $protocolsValid && $modelMappingsValid ? 0 : 1;
+})->purpose('Show two-model sale readiness using the Admin-managed database route and real mapped upstream model IDs');
+
+Artisan::command('referrals:reconcile-registrations {--batch=100} {--include-before-start}', function (): int {
+    $result = app(ReferralService::class)->reconcileRegistrations(
+        (int) $this->option('batch'),
+        (bool) $this->option('include-before-start'),
+    );
+
+    $this->info(
+        "Checked {$result['checked']} referred registration(s); rewarded {$result['rewarded']}; skipped {$result['skipped']}; failed {$result['failed']}; repaired model scopes {$result['repaired']}."
+    );
+
+    if ((bool) $this->option('include-before-start')) {
+        $this->warn('Historical backfill was enabled for this run; the normal scheduler still respects the configured reward start boundary.');
+    }
+
+    return $result['failed'] > 0 ? 1 : 0;
+})->purpose('Idempotently grant missing immediate referral registration rewards');
+
+Artisan::command('referrals:reconcile {--batch=100}', function (): int {
+    $result = app(ReferralService::class)->reconcileFulfilled((int) $this->option('batch'));
+    $this->info("Checked {$result['checked']} eligible fulfilled order(s); rewarded {$result['rewarded']}; skipped {$result['skipped']}.");
+    return 0;
+})->purpose('Idempotently grant missing referral credits for fulfilled referred orders');
 
 Artisan::command('system:heartbeat', function (): int {
     SystemHeartbeat::query()->updateOrCreate(['component' => 'scheduler'], ['recorded_at' => now()]);
@@ -314,6 +443,9 @@ Artisan::command('playground:prune-chats', function (): int {
     $this->info('Expired Playground chats removed: '.$expired);
     return 0;
 })->purpose('Delete Playground chats after their rolling retention window');
+
+Schedule::command('referrals:reconcile-registrations --batch=100')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('referrals:reconcile --batch=100')->everyFiveMinutes()->withoutOverlapping();
 
 Schedule::command('playground:prune-chats')
     ->dailyAt('03:20')
@@ -385,7 +517,7 @@ Artisan::command('system:diagnose-customer-access {email} {--key=}', function ()
     }
 
     $keyId = trim((string) $this->option('key'));
-    if ($keyId !== '' && str_starts_with($keyId, 'sk-spc-')) {
+    if ($keyId !== '' && str_starts_with($keyId, 'sk-')) {
         $this->error('The --key option expects the API key ID shown in the dashboard URL, not the secret key. Rotate any secret pasted into a terminal/chat transcript.');
         return 1;
     }

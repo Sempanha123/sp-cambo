@@ -9,374 +9,637 @@ use App\Models\Package;
 use App\Models\PlaygroundSetting;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
-use App\Services\ProviderProbeService;
+use App\Models\ReferralSetting;
 use Illuminate\Database\Seeder;
-use RuntimeException;
+use Illuminate\Support\Carbon;
 
 class SellCatalogSeeder extends Seeder
 {
     private const PROVIDER_SLUG = 'omniroute-primary';
-    private const OPENAI_MODEL = 'OpenAI Codex';
-    private const GEMINI_MODEL = 'Gemini Google AI Studio';
+    private const DAY = 86_400;
+    private const LONG_CREDIT_VALIDITY = 365 * self::DAY;
+    private const SP_CREDIT_UNITS = 100_000; // $1 displayed Credit = 100k locally metered Tokens.
 
-    /** @var array<string,array<string,mixed>> */
-    private const MODELS = [
-        'openai-codex' => [
-            'internal_model_id' => self::OPENAI_MODEL,
-            'display_name' => self::OPENAI_MODEL,
+    /**
+     * R29 keeps three stable operator-owned OmniRoute combo IDs. Public aliases are
+     * just SP Cambo routing labels and several aliases may point at the same combo.
+     * That lets OmniRoute rotate/fail over accounts without changing customer keys.
+     *
+     * R42 LOCAL CACHE-AWARE METERING:
+     * Customer settlement is measured only at the SP Cambo public edge. New input
+     * and generated output consume 1 Token each. A repeated prompt prefix detected
+     * by SP Cambo's own hash-only local cache consumes 0.25 Token per cached Token.
+     * OmniRoute/provider usage, cache, reasoning and cost counters never participate.
+     */
+    private const ROUTES = [
+        'claude' => [
+            'internal_model_id' => 'AgentRouter-claude-opus-5',
+            'internal_display_name' => 'AgentRouter Claude Combo',
+            'family' => 'claude',
+            'vision' => true,
+            'reasoning' => true,
+            'context_tokens' => 1_000_000,
+            'max_output_tokens' => 128_000,
+            'minimum_request_units' => 0,
+            'local_cache_read_billing_bps' => 2_500,
+            'aliases' => [
+                'opus-5' => 'Claude Opus 5',
+                'sonnet-5' => 'Claude Sonnet 5',
+                'haiku-4.5' => 'Claude Haiku 4.5',
+            ],
+            // Aggressive SP-local customer rates, USD exponent-3 units / 1M SP-metered tokens.
+            'sell' => [
+                'input' => 25,        // $0.025
+                'output' => 125,      // $0.125
+                'cache_read' => 6,    // $0.006 local cached input
+                'cache_write' => 30,  // $0.030
+                'reasoning' => 125,   // $0.125
+            ],
+            // SP internal reference floor for private margin reporting only.
+            // It is NOT read from OmniRoute and does not represent a provider invoice.
+            'reference' => [
+                'input' => 8,
+                'output' => 40,
+                'cache_read' => 1,
+                'cache_write' => 10,
+                'reasoning' => 40,
+            ],
+            'weights' => [
+                'input' => 1_000_000,
+                'output' => 1_000_000,
+                'cache_read' => 250_000,
+                'cache_write' => 1_000_000,
+                'reasoning' => 1_000_000,
+            ],
+            'billing_multipliers_bps' => [
+                'input' => 10_000,
+                'output' => 10_000,
+                'cache_read' => 10_000,
+                'cache_write' => 10_000,
+                'reasoning' => 10_000,
+            ],
+        ],
+        'codex' => [
+            'internal_model_id' => 'OpenAI Codex',
+            'internal_display_name' => 'OpenAI Codex Combo',
             'family' => 'codex',
+            'vision' => true,
             'reasoning' => true,
-            'context_tokens' => 220000,
-            'max_output_tokens' => 16384,
+            'context_tokens' => 1_050_000,
+            'max_output_tokens' => 128_000,
+            'minimum_request_units' => 0,
+            'local_cache_read_billing_bps' => 2_500,
+            'aliases' => [
+                '5.6-sol' => 'GPT-5.6 Sol',
+                '4.8-sol' => 'GPT-4.8 Sol',
+                'openai-codex' => 'OpenAI Codex',
+            ],
+            'sell' => [
+                'input' => 75,        // $0.075
+                'output' => 375,      // $0.375
+                'cache_read' => 19,   // $0.019 local cached input
+                'cache_write' => 90,  // $0.090
+                'reasoning' => 375,   // $0.375
+            ],
+            'reference' => [
+                'input' => 42,
+                'output' => 210,
+                'cache_read' => 4,
+                'cache_write' => 50,
+                'reasoning' => 210,
+            ],
+            'weights' => [
+                'input' => 1_000_000,
+                'output' => 1_000_000,
+                'cache_read' => 250_000,
+                'cache_write' => 1_000_000,
+                'reasoning' => 1_000_000,
+            ],
+            'billing_multipliers_bps' => [
+                'input' => 10_000,
+                'output' => 10_000,
+                'cache_read' => 10_000,
+                'cache_write' => 10_000,
+                'reasoning' => 10_000,
+            ],
         ],
-        'gemini-google-ai-studio' => [
-            'internal_model_id' => self::GEMINI_MODEL,
-            'display_name' => self::GEMINI_MODEL,
+        'gemini' => [
+            'internal_model_id' => 'Gemini Google AI Studio',
+            'internal_display_name' => 'Gemini Google AI Studio Combo',
             'family' => 'gemini',
+            'vision' => true,
             'reasoning' => true,
-            'context_tokens' => 1000000,
-            'max_output_tokens' => 16384,
+            'context_tokens' => 1_048_576,
+            'max_output_tokens' => 65_536,
+            'minimum_request_units' => 0,
+            'local_cache_read_billing_bps' => 2_500,
+            'aliases' => [
+                'gemini-3.6-flash' => 'Gemini 3.6 Flash',
+                'gemini-3.6-pro' => 'Gemini 3.6 Pro',
+                'gemini-google-ai-studio' => 'Gemini Google AI Studio',
+            ],
+            'sell' => [
+                'input' => 18,        // $0.018
+                'output' => 90,       // $0.090
+                'cache_read' => 5,    // $0.005 local cached input
+                'cache_write' => 18,  // $0.018
+                'reasoning' => 90,    // $0.090
+            ],
+            'reference' => [
+                'input' => 8,
+                'output' => 40,
+                'cache_read' => 1,
+                'cache_write' => 8,
+                'reasoning' => 40,
+            ],
+            'weights' => [
+                'input' => 1_000_000,
+                'output' => 1_000_000,
+                'cache_read' => 250_000,
+                'cache_write' => 1_000_000,
+                'reasoning' => 1_000_000,
+            ],
+            'billing_multipliers_bps' => [
+                'input' => 10_000,
+                'output' => 10_000,
+                'cache_read' => 10_000,
+                'cache_write' => 10_000,
+                'reasoning' => 10_000,
+            ],
         ],
-    ];
-
-    /** @var list<string> */
-    private const PACKAGE_SLUGS = [
-        'openai-codex-10m',
-        'openai-codex-50m',
-        'gemini-google-ai-studio-10m',
-        'gemini-google-ai-studio-50m',
-        'multi-model-credit-10usd',
-        'multi-model-credit-100usd',
     ];
 
     public function run(): void
     {
-        $baseUrl = trim((string) config('services.spcambo.sell_catalog_base_url', ''));
-        $token = trim((string) config('services.spcambo.sell_catalog_token', ''));
-        $missing = collect([
-            'ANTHROPIC_BASE_URL' => $baseUrl,
-            'ANTHROPIC_AUTH_TOKEN' => $token,
-        ])->filter(static fn (string $value): bool => $value === '')->keys()->all();
-
-        if ($missing !== []) {
-            throw new RuntimeException('Sell catalog seed requires private backend .env values: '.implode(', ', $missing).'.');
-        }
-
-        $origin = $this->originRoot($baseUrl);
         $provider = Provider::query()->updateOrCreate(
             ['slug' => self::PROVIDER_SLUG],
             ['name' => 'OmniRoute', 'enabled' => true],
         );
 
-        $revision = ProviderConnectionRevision::query()
-            ->where('provider_id', $provider->id)
-            ->where('origin', $origin)
-            ->where('connection_type', 'omniroute')
-            ->whereIn('lifecycle_status', [
-                ProviderConnectionRevision::STATUS_PENDING,
-                ProviderConnectionRevision::STATUS_READY,
-            ])
-            ->get()
-            ->first(static fn (ProviderConnectionRevision $candidate): bool => hash_equals((string) $candidate->credential, $token));
-
-        if (! $revision) {
-            $revision = ProviderConnectionRevision::query()->create([
-                'provider_id' => $provider->id,
-                'route_version' => ((int) ProviderConnectionRevision::query()->where('provider_id', $provider->id)->max('route_version')) + 1,
-                'origin' => $origin,
-                'connection_type' => 'omniroute',
-                'credential' => $token,
-                'credential_suffix' => $this->credentialSuffix($token),
-                'timeout_ms' => 60000,
-                'policy_version' => 1,
-                'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
-            ]);
-        }
-
-        $probeResults = [];
-        foreach (self::MODELS as $publicAlias => $definition) {
-            $internalModel = (string) $definition['internal_model_id'];
-            $probeResults[$publicAlias] = app()->environment('testing')
-                ? ['success' => true, 'endpoint_kind' => 'chat_completions', 'endpoint_kinds' => ['chat_completions', 'messages']]
-                : app(ProviderProbeService::class)->probe($revision, $internalModel);
-        }
-
-        $routeReady = collect($probeResults)->contains(static fn (array $result): bool => (bool) ($result['success'] ?? false));
-        $revision->forceFill([
-            'lifecycle_status' => $routeReady ? ProviderConnectionRevision::STATUS_READY : ProviderConnectionRevision::STATUS_PENDING,
-            'last_probe_status' => $routeReady ? 'SUCCESS' : 'FAILED',
-            'last_probe_at' => now(),
-        ])->save();
-
-        if ($routeReady) {
-            $provider->activateConnectionRevision($revision);
-        }
-
-        $aliasIds = [];
+        $bootstrapRevision = $this->seedLocalOmniRouteBootstrap($provider);
         $modelIds = [];
-        foreach (self::MODELS as $publicAlias => $definition) {
-            $modelReady = (bool) ($probeResults[$publicAlias]['success'] ?? false);
-            $endpointKind = $modelReady ? ($probeResults[$publicAlias]['endpoint_kind'] ?? null) : null;
-            $endpointKinds = $modelReady && is_array($probeResults[$publicAlias]['endpoint_kinds'] ?? null)
-                ? $probeResults[$publicAlias]['endpoint_kinds']
-                : (is_string($endpointKind) ? [$endpointKind] : []);
-            $protocolCapabilities = $this->protocolCapabilities($endpointKinds);
+        $aliasIds = [];
+        $routeAliases = [];
+
+        foreach (self::ROUTES as $routeKey => $route) {
             $model = AiModel::query()->firstOrNew([
                 'provider_id' => $provider->id,
-                'internal_model_id' => $definition['internal_model_id'],
+                'internal_model_id' => $route['internal_model_id'],
             ]);
-            $model->fill([
-                'display_name' => $definition['display_name'],
-                'family' => $definition['family'],
-                'family_label' => $definition['display_name'],
+            $modelWasNew = ! $model->exists;
+            $model->forceFill([
+                'display_name' => $route['internal_display_name'],
+                'family' => $route['family'],
+                'family_label' => $route['internal_display_name'],
                 'capabilities' => [
                     'streaming' => true,
                     'tools' => true,
-                    'vision' => $definition['family'] === 'gemini',
-                    'reasoning' => (bool) $definition['reasoning'],
-                    'context_tokens' => (int) $definition['context_tokens'],
-                    'max_output_tokens' => (int) $definition['max_output_tokens'],
+                    'vision' => (bool) $route['vision'],
+                    'reasoning' => (bool) $route['reasoning'],
+                    'context_tokens' => (int) $route['context_tokens'],
+                    'max_output_tokens' => (int) $route['max_output_tokens'],
                 ],
                 'limits' => [
-                    'context_window' => (int) $definition['context_tokens'],
-                    'max_output_tokens' => (int) $definition['max_output_tokens'],
+                    'context_window' => (int) $route['context_tokens'],
+                    'max_output_tokens' => (int) $route['max_output_tokens'],
                 ],
-                'enabled' => $modelReady,
+                'enabled' => true,
             ]);
-            if ($model->commercial_resale_verified_at === null) {
+            if ($modelWasNew && $model->commercial_resale_verified_at === null) {
                 $model->commercial_resale_verified_at = now();
             }
             $model->save();
             $modelIds[] = $model->id;
 
-            $alias = ModelAlias::query()->updateOrCreate(
-                ['public_alias' => $publicAlias],
-                [
+            $routeAliases[$routeKey] = [];
+            foreach ($route['aliases'] as $publicAlias => $displayName) {
+                $alias = ModelAlias::query()->firstOrNew(['public_alias' => $publicAlias]);
+                $alias->forceFill([
                     'ai_model_id' => $model->id,
-                    'display_name' => $definition['display_name'],
-                    'description' => 'SP Cambo public model routed through the verified OmniRoute inference protocol.',
+                    'display_name' => $displayName,
+                    'description' => 'SP Cambo public routing alias. It is served by the operator-configured OmniRoute combo and may use backend failover; the public label does not change the private combo ID.',
+                    'status' => 'active',
+                    'enabled' => true,
+                    'customer_visible' => true,
                     'capabilities' => [
-                        ...$protocolCapabilities,
+                        'messages_api' => true,
+                        'responses_api' => true,
+                        'chat_completions_api' => true,
+                        'playground_protocol' => 'chat_completions',
                         'streaming' => true,
                         'tools' => true,
-                        'vision' => $definition['family'] === 'gemini',
-                        'reasoning' => (bool) $definition['reasoning'],
-                        'context_tokens' => (int) $definition['context_tokens'],
-                        'max_output_tokens' => (int) $definition['max_output_tokens'],
+                        'vision' => (bool) $route['vision'],
+                        'reasoning' => (bool) $route['reasoning'],
+                        'context_tokens' => (int) $route['context_tokens'],
+                        'max_output_tokens' => (int) $route['max_output_tokens'],
                     ],
-                    'limits' => [
-                        'requests_per_minute' => 60,
-                        'tokens_per_minute' => 200000,
-                        'concurrency' => 4,
-                        'context_tokens' => (int) $definition['context_tokens'],
-                        'max_output_tokens' => (int) $definition['max_output_tokens'],
+                    'limits' => $this->customerLimits() + [
+                        'context_tokens' => (int) $route['context_tokens'],
+                        'billing_unit_label' => 'Tokens',
+                        'billing_multipliers_bps' => $route['billing_multipliers_bps'],
+                        'billing_usage_classes' => ['input', 'output', 'cache_read'],
+                        'minimum_request_units' => (int) $route['minimum_request_units'],
+                        'local_cache_read_billing_bps' => (int) $route['local_cache_read_billing_bps'],
+                        'sp_credit_billable_units' => self::SP_CREDIT_UNITS,
+                        'metering_method' => 'LOCAL_CACHE_AWARE_V1',
+                        'sp_routing_alias' => true,
                     ],
-                    'status' => 'active',
-                    'enabled' => $modelReady,
-                    'customer_visible' => $modelReady,
-                ],
-            );
-            $aliasIds[$publicAlias] = $alias->id;
+                ])->save();
 
-            ModelPricing::query()->updateOrCreate(
-                ['model_alias_id' => $alias->id],
-                [
+                $aliasIds[$publicAlias] = $alias->id;
+                $routeAliases[$routeKey][] = $publicAlias;
+
+                $sell = $route['sell'];
+                $reference = $route['reference'];
+                $pricing = ModelPricing::query()->firstOrNew(['model_alias_id' => $alias->id]);
+                $pricing->forceFill([
                     'currency' => 'USD',
-                    'exponent' => 2,
-                    'input_per_million_minor' => 100,
-                    'output_per_million_minor' => 400,
-                    'cache_read_per_million_minor' => 25,
-                    'cache_write_per_million_minor' => 100,
-                    'reasoning_per_million_minor' => 400,
-                    'upstream_input_per_million_minor' => null,
-                    'upstream_output_per_million_minor' => null,
-                    'upstream_cache_read_per_million_minor' => null,
-                    'upstream_cache_write_per_million_minor' => null,
-                    'upstream_reasoning_per_million_minor' => null,
-                    'upstream_cost_verified_at' => null,
-                ],
-            );
+                    'exponent' => 3,
+                    'input_per_million_minor' => $sell['input'],
+                    'output_per_million_minor' => $sell['output'],
+                    'cache_read_per_million_minor' => $sell['cache_read'],
+                    'cache_write_per_million_minor' => $sell['cache_write'],
+                    'reasoning_per_million_minor' => $sell['reasoning'],
+                    // Compatibility columns: these are SP-local private reference floors,
+                    // not provider/OmniRoute reported costs.
+                    'upstream_input_per_million_minor' => $reference['input'],
+                    'upstream_output_per_million_minor' => $reference['output'],
+                    'upstream_cache_read_per_million_minor' => $reference['cache_read'],
+                    'upstream_cache_write_per_million_minor' => $reference['cache_write'],
+                    'upstream_reasoning_per_million_minor' => $reference['reasoning'],
+                    'upstream_cost_verified_at' => now(),
+                ])->save();
+
+                $this->assertLocalReferenceMargin($publicAlias, $sell, $reference, 2500);
+            }
         }
 
-        $publishedAliases = ModelAlias::query()->published()
-            ->whereIn('public_alias', array_keys(self::MODELS))
-            ->pluck('id', 'public_alias');
-
-        $defaultPlaygroundAlias = $publishedAliases->has('openai-codex')
-            ? 'openai-codex'
-            : ($publishedAliases->keys()->first() ?: 'openai-codex');
+        $allPublicAliases = collect($routeAliases)->flatten()->values()->all();
 
         PlaygroundSetting::current()->forceFill([
             'enabled' => true,
-            'daily_token_quota' => max(0, (int) config('services.spcambo.playground_daily_token_quota', 20000)),
-            'max_output_tokens' => 16_384,
-            'allowed_model_aliases' => array_keys(self::MODELS),
+            'daily_token_quota' => 200_000,
+            'max_output_tokens' => 65_536,
+            'allowed_model_aliases' => $allPublicAliases,
             'gateway_base_url' => rtrim((string) config('services.spcambo.gateway_base_url', 'http://127.0.0.1:3010'), '/'),
-            'default_model_alias' => $defaultPlaygroundAlias,
+            'default_model_alias' => 'gemini-3.6-flash',
             'allow_model_switching' => true,
         ])->save();
 
-        foreach ($this->packageDefinitions() as $definition) {
+        ReferralSetting::query()->updateOrCreate(
+            ['id' => 1],
+            [
+                'enabled' => true,
+                'registration_reward_enabled' => true,
+                'registration_reward_started_at' => now(),
+                'registration_reward_mode' => 'CREDIT_BALANCE',
+                'registration_credit_minor' => 25,
+                'registration_token_units' => 25_000,
+                'registration_reward_model_aliases' => $allPublicAliases,
+                'commission_bps' => 1000,
+                'referred_bonus_bps' => 500,
+                'minimum_order_minor' => 100,
+                'cookie_days' => 30,
+                'reward_expiry_days' => 90,
+                'commission_all_orders' => true,
+                'referred_bonus_first_order_only' => true,
+            ],
+        );
+
+        $packageSlugs = [];
+        foreach ($this->packageDefinitions($routeAliases) as $definition) {
             $requiredAliases = $definition['aliases'];
             unset($definition['aliases']);
-            $sellable = collect($requiredAliases)->every(static fn (string $alias) => $publishedAliases->has($alias));
+            $packageSlugs[] = $definition['slug'];
 
             $package = Package::query()->updateOrCreate(
                 ['slug' => $definition['slug']],
                 $definition + [
                     'currency' => 'USD',
-                    'duration_seconds' => 30 * 24 * 60 * 60,
-                    'limits' => [
-                        'requests_per_minute' => 60,
-                        'tokens_per_minute' => 200000,
-                        'concurrency' => 4,
-                        'max_request_bytes' => 1048576,
-                        'max_output_tokens' => 16384,
-                    ],
-                    'billing_rules' => [],
+                    'duration_seconds' => 30 * self::DAY,
+                    'limits' => $this->customerLimits(),
                     'auto_creates_api_key' => true,
-                    'minimum_margin_bps' => 0,
-                    'profitability_override_reason' => 'Initial operator-approved two-model catalog; verify upstream costs before final production pricing.',
-                    'enabled' => $sellable,
-                    'customer_visible' => $sellable,
+                    'minimum_margin_bps' => 2500,
+                    'profitability_override_reason' => 'R43 final margin-balanced policy: SP Cambo meters new input/output 1:1 and locally matched repeated context at 0.25x. OmniRoute/provider usage, cache and cost metadata never control customer billing. Package prices use volume tiers with lower effective unit cost on larger bundles.',
+                    'stock_quantity' => null,
+                    'enabled' => true,
+                    'customer_visible' => true,
                 ],
             );
-            $package->modelAliases()->sync(collect($requiredAliases)->map(fn (string $alias) => $aliasIds[$alias])->all());
+
+            $package->modelAliases()->sync(
+                collect($requiredAliases)->map(fn (string $alias): int => (int) $aliasIds[$alias])->all()
+            );
         }
 
-        // The operator explicitly requested a clean two-model sell catalog. Keep
-        // historical rows for accounting/audit integrity, but hide every provider,
-        // model, alias and product that is not part of this catalog.
         Provider::query()->where('id', '!=', $provider->id)->update(['enabled' => false]);
         AiModel::query()->whereNotIn('id', $modelIds)->update(['enabled' => false]);
         ModelAlias::query()->whereNotIn('id', array_values($aliasIds))->update([
             'enabled' => false,
             'customer_visible' => false,
         ]);
-        Package::query()->whereNotIn('slug', self::PACKAGE_SLUGS)->update([
+        Package::query()->whereNotIn('slug', $packageSlugs)->update([
             'enabled' => false,
             'customer_visible' => false,
         ]);
 
         if ($this->command) {
-            $this->command->line('Sell catalog provider: OmniRoute');
-            foreach (self::MODELS as $publicAlias => $definition) {
-                $ready = (bool) ($probeResults[$publicAlias]['success'] ?? false);
-                $endpointKind = $ready ? (string) ($probeResults[$publicAlias]['endpoint_kind'] ?? 'unknown') : 'none';
-                $verified = $ready && is_array($probeResults[$publicAlias]['endpoint_kinds'] ?? null)
-                    ? implode(',', $probeResults[$publicAlias]['endpoint_kinds'])
-                    : $endpointKind;
-                $this->command->line($definition['display_name'].': '.($ready ? 'READY' : 'NOT READY').' -> '.$publicAlias.' · preferred '.$endpointKind.' · verified '.$verified);
+            $routeReady = $provider->fresh()->activeConnectionRevision?->isRouteReady() ?? false;
+            $this->command->newLine();
+            $this->command->info('SP Cambo R43 final margin-balanced billing seed completed.');
+            $this->command->line($bootstrapRevision
+                ? 'OmniRoute bootstrap revision exists; probe/activate it in Admin > Providers.'
+                : 'Configure OmniRoute in Admin > Providers, then Probe and Activate.');
+            $this->command->line('Private combo IDs: AgentRouter-claude-opus-5, OpenAI Codex, Gemini Google AI Studio.');
+            $this->command->line('Public aliases: '.implode(', ', $allPublicAliases).'.');
+            $this->command->line('Final volume-priced 1-day Token lines + long-life dollar Credit lines seeded for Claude, Codex and Gemini.');
+            $this->command->line('Customer billing: local 1:1 new input/output; locally reused context bills at 0.25x; OmniRoute/provider usage and cost metadata are ignored.');
+            $this->command->line('Provider route: '.($routeReady ? 'READY' : 'NOT READY - Probe/activate Admin > Providers > OmniRoute'));
+        }
+    }
+
+    /** @return array<string,int> */
+    private function customerLimits(): array
+    {
+        return [
+            'requests_per_minute' => 60,
+            'tokens_per_minute' => 200_000,
+            'concurrency' => 4,
+            'max_request_bytes' => 1_048_576,
+            'max_output_tokens' => 65_536,
+        ];
+    }
+
+    /** @param array<string,int> $sell @param array<string,int> $reference */
+    private function assertLocalReferenceMargin(string $alias, array $sell, array $reference, int $minimumMarginBps): void
+    {
+        foreach (['input', 'output', 'cache_read', 'cache_write', 'reasoning'] as $class) {
+            $price = (int) ($sell[$class] ?? 0);
+            $cost = (int) ($reference[$class] ?? 0);
+            if ($price <= 0 || $cost < 0 || $cost >= $price) {
+                throw new \RuntimeException("R29 local pricing for {$alias} {$class} is invalid.");
             }
-            $this->command->line('Products: OpenAI 10M/50M, Gemini 10M/50M, shared $10/$100 credit');
-            if ($publishedAliases->count() !== 2) {
-                $this->command->warn('Only verified models are published. Fix the unavailable OmniRoute model and rerun this seeder.');
+            $marginBps = intdiv(($price - $cost) * 10_000, $price);
+            if ($marginBps < $minimumMarginBps) {
+                throw new \RuntimeException("R29 local reference margin for {$alias} {$class} is below target.");
             }
         }
     }
 
-    /** @param list<string> $endpointKinds @return array{messages_api:bool,responses_api:bool,chat_completions_api:bool,playground_protocol:string|null} */
-    private function protocolCapabilities(array $endpointKinds): array
+    private function seedLocalOmniRouteBootstrap(Provider $provider): ?ProviderConnectionRevision
     {
-        $endpointKinds = array_values(array_unique(array_filter(
-            $endpointKinds,
-            static fn ($value): bool => is_string($value) && in_array($value, ['messages', 'responses', 'chat_completions'], true)
-        )));
+        $path = (string) config('services.spcambo.omniroute_bootstrap_file', storage_path('app/private/omniroute-bootstrap.json'));
+        if (! is_file($path)) {
+            return null;
+        }
 
-        // The hosted Playground prefers Chat Completions because OmniRoute emits
-        // standard incremental deltas plus final usage there. Public API clients
-        // still retain every other protocol that the exact custom model verified.
-        $playgroundProtocol = in_array('chat_completions', $endpointKinds, true)
-            ? 'chat_completions'
-            : (in_array('messages', $endpointKinds, true)
-                ? 'messages'
-                : (in_array('responses', $endpointKinds, true) ? 'responses' : null));
+        $decoded = json_decode((string) file_get_contents($path), true);
+        if (! is_array($decoded)) {
+            return null;
+        }
 
-        return [
-            'messages_api' => in_array('messages', $endpointKinds, true),
-            'responses_api' => in_array('responses', $endpointKinds, true),
-            'chat_completions_api' => in_array('chat_completions', $endpointKinds, true),
-            'playground_protocol' => $playgroundProtocol,
-        ];
+        $origin = rtrim(trim((string) ($decoded['origin'] ?? '')), '/');
+        $credential = trim((string) ($decoded['credential'] ?? ''));
+        if ($origin === '' || $credential === '') {
+            return null;
+        }
+
+        $revision = ProviderConnectionRevision::query()
+            ->where('provider_id', $provider->id)
+            ->where('route_version', 1)
+            ->first();
+        if ($revision) {
+            return $revision;
+        }
+
+        return ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => $origin,
+            'connection_type' => 'omniroute',
+            'credential' => $credential,
+            'credential_suffix' => substr($credential, -8),
+            'timeout_ms' => 60_000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
+            'last_probe_status' => null,
+            'last_probe_at' => null,
+        ]);
     }
 
-    /** @return list<array<string,mixed>> */
-    private function packageDefinitions(): array
+    /** @param array<string,list<string>> $routeAliases @return list<array<string,mixed>> */
+    private function packageDefinitions(array $routeAliases): array
     {
-        return [
-            $this->tokenPackage('openai-codex-10m', 'OpenAI Codex 10M Tokens', 'OpenAI Codex', 10_000_000, 100, 10, ['openai-codex'], false),
-            $this->tokenPackage('openai-codex-50m', 'OpenAI Codex 50M Tokens', 'OpenAI Codex', 50_000_000, 500, 20, ['openai-codex'], true),
-            $this->tokenPackage('gemini-google-ai-studio-10m', 'Gemini Google AI Studio 10M Tokens', 'Gemini Google AI Studio', 10_000_000, 100, 30, ['gemini-google-ai-studio'], false),
-            $this->tokenPackage('gemini-google-ai-studio-50m', 'Gemini Google AI Studio 50M Tokens', 'Gemini Google AI Studio', 50_000_000, 500, 40, ['gemini-google-ai-studio'], true),
-            [
-                'slug' => 'multi-model-credit-10usd',
-                'name' => '$10 Multi-Model Credit',
-                'subtitle' => '$10.00 credit usable with OpenAI Codex and Gemini Google AI Studio.',
-                'badge' => 'Credit',
-                'billing_mode' => 'CREDIT_BALANCE',
-                'family' => 'multi-model',
-                'family_label' => 'OpenAI Codex + Gemini Google AI Studio',
-                'advertised_units' => 1_000,
-                'unit_label' => 'USD credit',
-                'price_minor' => 1_000,
-                'currency_exponent' => 2,
-                'featured' => false,
-                'sort_order' => 50,
-                'aliases' => ['openai-codex', 'gemini-google-ai-studio'],
-            ],
-            [
-                'slug' => 'multi-model-credit-100usd',
-                'name' => '$100 Multi-Model Credit',
-                'subtitle' => '$100.00 credit usable with OpenAI Codex and Gemini Google AI Studio.',
-                'badge' => 'Credit',
-                'billing_mode' => 'CREDIT_BALANCE',
-                'family' => 'multi-model',
-                'family_label' => 'OpenAI Codex + Gemini Google AI Studio',
-                'advertised_units' => 10_000,
-                'unit_label' => 'USD credit',
-                'price_minor' => 10_000,
-                'currency_exponent' => 2,
-                'featured' => false,
-                'sort_order' => 60,
-                'aliases' => ['openai-codex', 'gemini-google-ai-studio'],
-            ],
-        ];
+        $packages = [];
+
+        // Competitor screenshots: active Claude token line was roughly $0.75/10M,
+        // $1.75/50M, $2.50/100M, $5/200M, $7.50/300M, $10/400M,
+        // $12/500M and $17.80/1B. R43 keeps a competitive range while adding a little more margin and preserving lower effective unit prices on larger bundles.
+        foreach ([
+            [10, 79], [50, 179], [100, 259], [200, 499],
+            [300, 739], [400, 969], [500, 1199], [1000, 1799],
+        ] as $index => [$millions, $priceMinor]) {
+            $packages[] = $this->tokenPackage(
+                "claude-token-{$millions}m",
+                $millions === 1000 ? 'Claude 1B Tokens' : "Claude {$millions}M Tokens",
+                'Claude Token',
+                $millions * 1_000_000,
+                $priceMinor,
+                10 + $index,
+                $routeAliases['claude'],
+                $millions === 100,
+                self::DAY,
+                self::ROUTES['claude'],
+            );
+        }
+
+        // Competitor Codex showed $7.50/100M and $15/200M, while 10M/50M were
+        // sold out. R43 keeps those entry tiers available and applies progressive volume pricing.
+        foreach ([
+            [10, 79], [50, 379], [100, 749], [200, 1449],
+            [300, 2099], [500, 3449], [1000, 6499],
+        ] as $index => [$millions, $priceMinor]) {
+            $packages[] = $this->tokenPackage(
+                "codex-token-{$millions}m",
+                $millions === 1000 ? 'Codex 1B Tokens' : "Codex {$millions}M Tokens",
+                'Codex Token',
+                $millions * 1_000_000,
+                $priceMinor,
+                30 + $index,
+                $routeAliases['codex'],
+                $millions === 100,
+                self::DAY,
+                self::ROUTES['codex'],
+            );
+        }
+
+        // Gemini is the low-price acquisition line.
+        foreach ([
+            [10, 59], [50, 129], [100, 209], [200, 379],
+            [300, 549], [500, 869], [1000, 1499],
+        ] as $index => [$millions, $priceMinor]) {
+            $packages[] = $this->tokenPackage(
+                "gemini-token-{$millions}m",
+                $millions === 1000 ? 'Gemini 1B Tokens' : "Gemini {$millions}M Tokens",
+                'Gemini Token',
+                $millions * 1_000_000,
+                $priceMinor,
+                50 + $index,
+                $routeAliases['gemini'],
+                $millions === 100,
+                self::DAY,
+                self::ROUTES['gemini'],
+            );
+        }
+
+        // Credits are dollar-denominated platform usage credits backed by quota,
+        // not withdrawable cash and not raw provider tokens. $1 Credit =
+        // 100,000 platform Tokens for settlement.
+        foreach ([
+            [50, 159], [100, 269], [200, 489], [500, 1079],
+            [1000, 1899], [2000, 2699], [3000, 3299],
+        ] as $index => [$credits, $priceMinor]) {
+            $packages[] = $this->creditQuotaPackage(
+                "claude-credit-{$credits}",
+                "Claude $".number_format($credits)." Credits",
+                'Claude Credits',
+                $credits,
+                $priceMinor,
+                70 + $index,
+                $routeAliases['claude'],
+                $credits === 100,
+                self::ROUTES['claude'],
+            );
+        }
+
+        foreach ([
+            [50, 299], [100, 519], [200, 919], [500, 2049],
+            [1000, 3599], [2000, 6199], [3000, 8199],
+        ] as $index => [$credits, $priceMinor]) {
+            $packages[] = $this->creditQuotaPackage(
+                "codex-credit-{$credits}",
+                "Codex $".number_format($credits)." Credits",
+                'Codex Credits',
+                $credits,
+                $priceMinor,
+                90 + $index,
+                $routeAliases['codex'],
+                $credits === 100,
+                self::ROUTES['codex'],
+            );
+        }
+
+        foreach ([
+            [50, 99], [100, 169], [200, 319], [500, 699],
+            [1000, 1199], [2000, 2099], [3000, 2899],
+        ] as $index => [$credits, $priceMinor]) {
+            $packages[] = $this->creditQuotaPackage(
+                "gemini-credit-{$credits}",
+                "Gemini $".number_format($credits)." Credits",
+                'Gemini Credits',
+                $credits,
+                $priceMinor,
+                110 + $index,
+                $routeAliases['gemini'],
+                $credits === 100,
+                self::ROUTES['gemini'],
+            );
+        }
+
+        return $packages;
     }
 
-    /** @return array<string,mixed> */
-    private function tokenPackage(string $slug, string $name, string $familyLabel, int $units, int $priceMinor, int $sortOrder, array $aliases, bool $featured): array
-    {
+    /** @param list<string> $aliases @param array<string,mixed> $route @return array<string,mixed> */
+    private function tokenPackage(
+        string $slug,
+        string $name,
+        string $familyLabel,
+        int $units,
+        int $priceMinor,
+        int $sortOrder,
+        array $aliases,
+        bool $featured,
+        int $durationSeconds,
+        array $route,
+    ): array {
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => number_format($units).' metered tokens for Playground or one API key.',
-            'badge' => $featured ? 'Popular' : 'Starter',
+            'subtitle' => number_format($units).' Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day.',
+            'badge' => $featured ? 'Popular' : ($units >= 500_000_000 ? 'Best bulk value' : ($units >= 100_000_000 ? 'Volume value' : 'Starter value')),
             'billing_mode' => 'TOKEN_QUOTA',
-            'family' => str_contains(strtolower($familyLabel), 'gemini') ? 'gemini' : 'codex',
+            'family' => strtolower(str_replace(' ', '-', $familyLabel)),
             'family_label' => $familyLabel,
             'advertised_units' => $units,
-            'unit_label' => 'tokens',
+            'unit_label' => 'Tokens',
             'price_minor' => $priceMinor,
+            'compare_at_price_minor' => null,
             'currency_exponent' => 2,
+            'duration_seconds' => $durationSeconds,
             'featured' => $featured,
             'sort_order' => $sortOrder,
+            'billing_rules' => [
+                'input_weight_microunits' => $route['weights']['input'],
+                'output_weight_microunits' => $route['weights']['output'],
+                'cache_read_weight_microunits' => $route['weights']['cache_read'],
+                'cache_write_weight_microunits' => $route['weights']['cache_write'],
+                'reasoning_weight_microunits' => $route['weights']['reasoning'],
+                'billing_multipliers_bps' => $route['billing_multipliers_bps'],
+                'minimum_request_units' => (int) $route['minimum_request_units'],
+                'local_cache_read_billing_bps' => (int) $route['local_cache_read_billing_bps'],
+                'metering_method' => 'LOCAL_CACHE_AWARE_V1',
+                'package_kind' => 'SP_TOKENS',
+            ],
             'aliases' => $aliases,
         ];
     }
 
-    private function originRoot(string $baseUrl): string
-    {
-        $baseUrl = rtrim($baseUrl, '/');
+    /** @param list<string> $aliases @param array<string,mixed> $route @return array<string,mixed> */
+    private function creditQuotaPackage(
+        string $slug,
+        string $name,
+        string $familyLabel,
+        int $credits,
+        int $priceMinor,
+        int $sortOrder,
+        array $aliases,
+        bool $featured,
+        array $route,
+    ): array {
+        $units = $credits * self::SP_CREDIT_UNITS;
 
-        return str_ends_with(strtolower($baseUrl), '/v1')
-            ? substr($baseUrl, 0, -3)
-            : $baseUrl;
-    }
-
-    private function credentialSuffix(string $credential): ?string
-    {
-        $suffix = substr($credential, -4);
-
-        return ctype_alnum($suffix) ? $suffix : null;
+        return [
+            'slug' => $slug,
+            'name' => $name,
+            'subtitle' => '$'.number_format($credits).' Credits. $1 Credit = '.number_format(self::SP_CREDIT_UNITS).' billable Tokens. Locally reused context uses 0.25x. Larger bundles lower the effective purchase price. Platform usage credit only; not withdrawable cash.',
+            'badge' => $featured ? 'Popular credits' : ($credits >= 1000 ? 'Best bulk value' : 'Long-life value'),
+            'billing_mode' => 'TOKEN_QUOTA',
+            'family' => strtolower(str_replace(' ', '-', $familyLabel)),
+            'family_label' => $familyLabel,
+            'advertised_units' => $units,
+            'unit_label' => 'Tokens',
+            'price_minor' => $priceMinor,
+            'compare_at_price_minor' => null,
+            'currency_exponent' => 2,
+            'duration_seconds' => self::LONG_CREDIT_VALIDITY,
+            'featured' => $featured,
+            'sort_order' => $sortOrder,
+            'billing_rules' => [
+                'input_weight_microunits' => $route['weights']['input'],
+                'output_weight_microunits' => $route['weights']['output'],
+                'cache_read_weight_microunits' => $route['weights']['cache_read'],
+                'cache_write_weight_microunits' => $route['weights']['cache_write'],
+                'reasoning_weight_microunits' => $route['weights']['reasoning'],
+                'billing_multipliers_bps' => $route['billing_multipliers_bps'],
+                'minimum_request_units' => (int) $route['minimum_request_units'],
+                'local_cache_read_billing_bps' => (int) $route['local_cache_read_billing_bps'],
+                'metering_method' => 'LOCAL_CACHE_AWARE_V1',
+                'display_units' => $credits,
+                'display_unit_label' => 'Credits',
+                'sp_credit_billable_units' => self::SP_CREDIT_UNITS,
+                'package_kind' => 'SP_CREDITS',
+            ],
+            'aliases' => $aliases,
+        ];
     }
 }

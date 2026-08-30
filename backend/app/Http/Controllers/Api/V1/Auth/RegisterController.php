@@ -8,6 +8,8 @@ use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Support\SafeUserData;
+use App\Services\ReferralService;
+use App\Services\Auth\RegistrationEmailVerificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -18,14 +20,28 @@ class RegisterController extends Controller
     /**
      * Create a local user and issue a Sanctum API token.
      */
-    public function __invoke(RegisterRequest $request): JsonResponse
-    {
-        $user = DB::transaction(function () use ($request): User {
-            $name = $request->string('name')->trim()->value();
+    public function __invoke(
+        RegisterRequest $request,
+        ReferralService $referrals,
+        RegistrationEmailVerificationService $verification,
+    ): JsonResponse {
+        $name = $request->string('name')->trim()->value();
+        $email = $request->string('email')->lower()->value();
+
+        // Verification is committed before account creation so incorrect-attempt
+        // counters cannot be rolled back with the registration transaction.
+        $verification->verifyOrFail($email, $request->string('verification_code')->value());
+
+        $user = DB::transaction(function () use ($request, $referrals, $verification, $name, $email): User {
+            // Consumption stays in the same transaction as user creation: if
+            // creation fails, the verified code remains retryable; if it succeeds,
+            // concurrent reuse is impossible.
+            $verification->consumeVerifiedOrFail($email);
             $tenant = Tenant::query()->create(['name' => $name.' workspace']);
             $user = User::query()->create([
                 'name' => $name,
-                'email' => $request->string('email')->lower()->value(),
+                'email' => $email,
+                'email_verified_at' => now(),
                 'password' => Hash::make($request->string('password')->value()),
                 'tenant_id' => $tenant->id,
             ]);
@@ -37,6 +53,11 @@ class RegisterController extends Controller
                 ['label' => 'Customer'],
             );
             $user->roles()->syncWithoutDetaching([$customerRole->id]);
+
+            $referralCode = strtoupper($request->string('referral_code')->trim()->value());
+            if ($referralCode !== '' && $referrals->settings()->enabled && User::query()->where('referral_code', $referralCode)->exists()) {
+                $user = $referrals->claim($user, $referralCode);
+            }
 
             return $user;
         });

@@ -70,7 +70,6 @@ services:
     environment:
       GATEWAY_HOST: 0.0.0.0
       CONTROL_PLANE_BASE_URL: http://nginx:8081
-      OMNIROUTE_BASE_URL: http://omniroute:20128
       REDIS_URL: redis://redis:6379
     depends_on:
       mysql: { condition: service_healthy }

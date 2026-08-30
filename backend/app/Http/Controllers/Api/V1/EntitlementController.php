@@ -30,10 +30,39 @@ class EntitlementController extends Controller
             ->get();
         $tokens = $lots->where('billing_mode', 'TOKEN_QUOTA');
         $credits = $lots->where('billing_mode', 'CREDIT_BALANCE');
+        $spCreditLots = $tokens->filter(function (EntitlementLot $lot): bool {
+            $rules = is_array($lot->billing_snapshot['billing_rules'] ?? null)
+                ? $lot->billing_snapshot['billing_rules']
+                : [];
+
+            return ($rules['package_kind'] ?? null) === 'SP_CREDITS'
+                || in_array(($rules['display_unit_label'] ?? null), ['Credits', 'SP Credits'], true);
+        });
+        $tokenOnlyLots = $tokens->reject(fn (EntitlementLot $lot): bool => $spCreditLots->contains('id', $lot->id));
+        $spCreditUnitSize = max(1, (int) ($spCreditLots->first()?->billing_snapshot['billing_rules']['sp_credit_billable_units'] ?? 100_000));
         $currency = $credits->first()?->currency ?? 'USD';
         $exponent = $credits->first()?->currency_exponent ?? 6;
 
-        return response()->json(['data' => ['token_quota' => ['remaining_units' => (string) $tokens->sum('remaining_units'), 'reserved_units' => (string) $tokens->sum('reserved_units'), 'original_units' => (string) $tokens->sum('original_units')], 'credit_balance' => ['remaining' => $this->money($credits->sum('remaining_units'), $currency, $exponent), 'reserved' => $this->money($credits->sum('reserved_units'), $currency, $exponent)], 'next_expires_at' => $lots->whereNotNull('expires_at')->min('expires_at')?->toAtomString(), 'active_lot_count' => $lots->count(), 'version' => (int) CreditLedger::query()->where('user_id', $user->id)->max('id')]]);
+        return response()->json(['data' => [
+            'token_quota' => [
+                'remaining_units' => (string) $tokenOnlyLots->sum('remaining_units'),
+                'reserved_units' => (string) $tokenOnlyLots->sum('reserved_units'),
+                'original_units' => (string) $tokenOnlyLots->sum('original_units'),
+            ],
+            'credit_balance' => [
+                'remaining' => $this->money($credits->sum('remaining_units'), $currency, $exponent),
+                'reserved' => $this->money($credits->sum('reserved_units'), $currency, $exponent),
+            ],
+            'sp_credit_quota' => [
+                'remaining' => $this->decimalCredits((int) $spCreditLots->sum('remaining_units'), $spCreditUnitSize),
+                'reserved' => $this->decimalCredits((int) $spCreditLots->sum('reserved_units'), $spCreditUnitSize),
+                'original' => $this->decimalCredits((int) $spCreditLots->sum('original_units'), $spCreditUnitSize),
+                'billable_units_per_credit' => (string) $spCreditUnitSize,
+            ],
+            'next_expires_at' => $lots->whereNotNull('expires_at')->min('expires_at')?->toAtomString(),
+            'active_lot_count' => $lots->count(),
+            'version' => (int) CreditLedger::query()->where('user_id', $user->id)->max('id'),
+        ]]);
     }
 
     private function lot(EntitlementLot $lot): array
@@ -46,6 +75,18 @@ class EntitlementController extends Controller
     private function money(int|string $minor, string $currency, int $exponent): array
     {
         return ['minor' => (string) $minor, 'currency' => $currency, 'exponent' => $exponent];
+    }
+
+    private function decimalCredits(int $units, int $unitSize): string
+    {
+        $unitSize = max(1, $unitSize);
+        $whole = intdiv(max(0, $units), $unitSize);
+        $fraction = max(0, $units) % $unitSize;
+        if ($fraction === 0) {
+            return (string) $whole;
+        }
+
+        return rtrim(rtrim($whole.'.'.str_pad((string) $fraction, strlen((string) $unitSize) - 1, '0', STR_PAD_LEFT), '0'), '.');
     }
 
     private function user(Request $request): User

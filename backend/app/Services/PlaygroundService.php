@@ -54,17 +54,21 @@ class PlaygroundService
             ? $spendable($daily->fresh())
             : (($setting->enabled && $limit > 0) ? $limit : 0);
         $fallbackLots = $this->allFallbackLots($user);
-        $redeemTokenRemaining = $fallbackLots
+        $creditQuotaLots = $fallbackLots->filter(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot));
+        $tokenQuotaLots = $fallbackLots
+            ->where('billing_mode', 'TOKEN_QUOTA')
+            ->reject(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot));
+        $redeemTokenRemaining = $tokenQuotaLots
             ->where('source_type', 'REDEEM_CODE')
-            ->where('billing_mode', 'TOKEN_QUOTA')
             ->sum($spendable);
-        $paidTokenRemaining = $fallbackLots
-            ->where('billing_mode', 'TOKEN_QUOTA')
+        $paidTokenRemaining = $tokenQuotaLots
             ->reject(fn (EntitlementLot $lot): bool => $lot->source_type === 'REDEEM_CODE')
             ->sum($spendable);
-        $paidCreditRemaining = $fallbackLots
-            ->where('billing_mode', 'CREDIT_BALANCE')
-            ->sum($spendable);
+        // Customer-facing Credits include quota-backed Credit packages as well as
+        // legacy money-credit lots. This field is used only as an availability
+        // signal in the Playground; exact balances come from Entitlements.
+        $paidCreditRemaining = $creditQuotaLots->sum($spendable)
+            + $fallbackLots->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable);
 
         $fallbackAliasCandidates = $fallbackLots
             ->flatMap(fn (EntitlementLot $lot): array => is_array($lot->allowed_model_aliases) ? $lot->allowed_model_aliases : [])
@@ -82,8 +86,13 @@ class PlaygroundService
 
         $modelBalances = collect($availableAliases)->map(function (string $alias) use ($fallbackLots, $freeAliases, $spendable): array {
             $lots = $fallbackLots->filter(fn (EntitlementLot $lot): bool => in_array($alias, $lot->allowed_model_aliases ?? [], true));
-            $tokenRemaining = $lots->where('billing_mode', 'TOKEN_QUOTA')->sum($spendable);
-            $creditRemaining = $lots->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable);
+            $creditQuota = $lots->filter(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot));
+            $tokenRemaining = $lots
+                ->where('billing_mode', 'TOKEN_QUOTA')
+                ->reject(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot))
+                ->sum($spendable);
+            $creditRemaining = $creditQuota->sum($spendable)
+                + $lots->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable);
             $nextExpiry = $lots->whereNotNull('expires_at')->sortBy('expires_at')->first()?->expires_at;
 
             return [
@@ -100,6 +109,33 @@ class PlaygroundService
         $defaultAlias = $configuredDefault !== null && in_array($configuredDefault, $availableAliases, true)
             ? $configuredDefault
             : ($freeAliases[0] ?? $fallbackAliases[0] ?? null);
+
+        // The customer picker should show the complete published Playground
+        // catalogue, not only models this account can currently spend. Locked
+        // rows stay visible so customers understand what exists without leaking
+        // provider/internal routing details. The run/stream methods below remain
+        // the authoritative access check.
+        $catalogModels = collect($this->allPublishedChatModelSummaries())
+            ->map(function (array $model) use ($availableAliases, $fallbackAliases, $defaultAlias, $setting): array {
+                $alias = (string) $model['public_alias'];
+                $funded = in_array($alias, $availableAliases, true);
+                $switchAllowed = (bool) $setting->allow_model_switching
+                    || $alias === $defaultAlias
+                    || in_array($alias, $fallbackAliases, true);
+                $available = $funded && $switchAllowed;
+
+                return [
+                    ...$model,
+                    'available' => $available,
+                    'lock_reason' => $available
+                        ? null
+                        : (! $funded
+                            ? 'Not included in your current Playground access.'
+                            : 'Model switching is disabled for this Playground.'),
+                ];
+            })
+            ->values()
+            ->all();
 
         return [
             'enabled' => (bool) $setting->enabled,
@@ -119,6 +155,7 @@ class PlaygroundService
             'fallback_model_aliases' => $fallbackAliases,
             'available_model_aliases' => $availableAliases,
             'available_models' => $this->availableModelSummaries($availableAliases),
+            'catalog_models' => $catalogModels,
             'funded_model_statuses' => $fundedModelStatuses,
             'unavailable_funded_models' => $unavailableFundedModels,
             'model_balances' => $modelBalances,
@@ -159,14 +196,14 @@ class PlaygroundService
         if ($fundingSource === 'daily' && ! $this->hasDailyFundingForAlias($user, $alias->public_alias)) {
             throw new PlaygroundException(
                 'playground_quota_exhausted',
-                'Your daily free Playground quota is exhausted for this model. Choose the balance fallback to continue.',
+                'Your daily free token limit has been reached for this model. Wait for the daily reset, or use Tokens or Credits to continue now.',
                 402
             );
         }
         if ($fundingSource === 'balance' && ! $this->hasBalanceFundingForAlias($user, $alias->public_alias)) {
             throw new PlaygroundException(
                 'playground_balance_exhausted',
-                'No redeemed, purchased token, or credit balance is available for this Playground model.',
+                'No redeemed or purchased Tokens or Credits are available for this model.',
                 402
             );
         }
@@ -187,6 +224,23 @@ class PlaygroundService
         };
 
         $input['max_output_tokens'] = min((int) $input['max_output_tokens'], max(1, (int) $setting->max_output_tokens));
+        if ($fundingSource === 'daily') {
+            $affordableOutput = $this->affordableDailyOutputTokens($quota, $alias, $input);
+            if ($affordableOutput < 1) {
+                throw new PlaygroundException(
+                    'playground_quota_exhausted',
+                    ((int) ($quota['remaining'] ?? 0)) > 0
+                        ? 'Your remaining free Tokens are not enough for this request. Start a shorter/new chat, or use Tokens or Credits to continue.'
+                        : 'Your daily free token limit has been reached. Wait for the daily reset, or use Tokens or Credits to continue now.',
+                    402
+                );
+            }
+            // Auto may advertise a 65,536-token technical ceiling, but the free
+            // daily lot must never reserve more than the customer can actually
+            // fund. Silently lower only the per-request ceiling; the model still
+            // gets the largest output that the remaining daily balance can cover.
+            $input['max_output_tokens'] = min((int) $input['max_output_tokens'], $affordableOutput);
+        }
         $body = $this->body($alias->public_alias, $input);
         $requestId = 'pg_'.Str::lower(Str::random(24));
         $base = rtrim((string) ($setting->gateway_base_url ?: config('services.spcambo.gateway_base_url')), '/');
@@ -262,14 +316,14 @@ class PlaygroundService
         if ($fundingSource === 'daily' && ! $this->hasDailyFundingForAlias($user, $alias->public_alias)) {
             throw new PlaygroundException(
                 'playground_quota_exhausted',
-                'Your daily free Playground quota is exhausted for this model. Choose the balance fallback to continue.',
+                'Your daily free token limit has been reached for this model. Wait for the daily reset, or use Tokens or Credits to continue now.',
                 402
             );
         }
         if ($fundingSource === 'balance' && ! $this->hasBalanceFundingForAlias($user, $alias->public_alias)) {
             throw new PlaygroundException(
                 'playground_balance_exhausted',
-                'No redeemed, purchased token, or credit balance is available for this Playground model.',
+                'No redeemed or purchased Tokens or Credits are available for this model.',
                 402
             );
         }
@@ -290,6 +344,23 @@ class PlaygroundService
         };
 
         $input['max_output_tokens'] = min((int) $input['max_output_tokens'], max(1, (int) $setting->max_output_tokens));
+        if ($fundingSource === 'daily') {
+            $affordableOutput = $this->affordableDailyOutputTokens($quota, $alias, $input);
+            if ($affordableOutput < 1) {
+                throw new PlaygroundException(
+                    'playground_quota_exhausted',
+                    ((int) ($quota['remaining'] ?? 0)) > 0
+                        ? 'Your remaining free Tokens are not enough for this request. Start a shorter/new chat, or use Tokens or Credits to continue.'
+                        : 'Your daily free token limit has been reached. Wait for the daily reset, or use Tokens or Credits to continue now.',
+                    402
+                );
+            }
+            // Auto may advertise a 65,536-token technical ceiling, but the free
+            // daily lot must never reserve more than the customer can actually
+            // fund. Silently lower only the per-request ceiling; the model still
+            // gets the largest output that the remaining daily balance can cover.
+            $input['max_output_tokens'] = min((int) $input['max_output_tokens'], $affordableOutput);
+        }
         $body = $this->body($alias->public_alias, $input, true);
         $requestId = 'pg_'.Str::lower(Str::random(24));
         $base = rtrim((string) ($setting->gateway_base_url ?: config('services.spcambo.gateway_base_url')), '/');
@@ -298,9 +369,9 @@ class PlaygroundService
         }
 
         $protocol = (string) $input['protocol'];
-        $timeoutSeconds = max(10, (int) config('services.spcambo.playground_timeout_seconds', 90));
+        $connectTimeoutSeconds = max(5, min(60, (int) config('services.spcambo.playground_connect_timeout_seconds', 30)));
 
-        return response()->stream(function () use ($credential, $fundingSource, $requestId, $base, $path, $body, $protocol, $timeoutSeconds): void {
+        return response()->stream(function () use ($credential, $fundingSource, $requestId, $base, $path, $body, $protocol, $connectTimeoutSeconds): void {
             $this->emitSse('meta', [
                 'request_id' => $requestId,
                 'protocol' => $protocol,
@@ -315,7 +386,11 @@ class PlaygroundService
                         'X-Request-Id' => $requestId,
                         'X-SP-Cambo-Playground-Funding' => $fundingSource === 'balance' ? 'BALANCE' : 'DAILY',
                     ])
-                    ->timeout($timeoutSeconds)
+                    // A streaming generation has no wall-clock timeout once connected.
+                    // Navigation/Stop is handled by the browser-level AbortController;
+                    // this connect timeout only protects the initial connection.
+                    ->connectTimeout($connectTimeoutSeconds)
+                    ->timeout(0)
                     ->withOptions(['stream' => true]);
 
                 if ($protocol === 'messages') {
@@ -353,6 +428,7 @@ class PlaygroundService
             $buffer = '';
             $finalText = '';
             $eventCount = 0;
+            $finishReason = null;
 
             try {
                 while (! $stream->eof()) {
@@ -377,6 +453,7 @@ class PlaygroundService
                         if (! is_array($payload)) {
                             continue;
                         }
+                        $finishReason = $this->streamFinishReason($payload) ?? $finishReason;
                         $delta = $this->streamDelta($payload);
                         if ($delta !== '') {
                             $finalText .= $delta;
@@ -390,6 +467,7 @@ class PlaygroundService
                     if ($data !== null && $data !== '[DONE]') {
                         $payload = json_decode($data, true);
                         if (is_array($payload)) {
+                            $finishReason = $this->streamFinishReason($payload) ?? $finishReason;
                             $delta = $this->streamDelta($payload);
                             if ($delta !== '') {
                                 $finalText .= $delta;
@@ -412,6 +490,7 @@ class PlaygroundService
                 'protocol' => $protocol,
                 'event_count' => $eventCount,
                 'text_length' => mb_strlen($finalText),
+                'finish_reason' => $finishReason,
                 'response' => [
                     'streamed' => true,
                     'protocol' => $protocol,
@@ -515,6 +594,39 @@ class PlaygroundService
         return '';
     }
 
+    private function streamFinishReason(array $payload): ?string
+    {
+        // OpenAI Chat Completions and compatible routers.
+        $finish = $payload['choices'][0]['finish_reason'] ?? null;
+        if (is_string($finish) && trim($finish) !== '') {
+            return trim($finish);
+        }
+
+        // Anthropic Messages. `message_delta.delta.stop_reason` carries the
+        // authoritative reason; some compatible routers expose stop_reason at
+        // the top level instead.
+        $stop = $payload['delta']['stop_reason'] ?? $payload['stop_reason'] ?? null;
+        if (is_string($stop) && trim($stop) !== '') {
+            return trim($stop);
+        }
+
+        // OpenAI Responses. Incomplete responses include a reason such as
+        // max_output_tokens; completed responses are a natural stop.
+        $response = is_array($payload['response'] ?? null) ? $payload['response'] : [];
+        $incomplete = $response['incomplete_details']['reason'] ?? $payload['incomplete_details']['reason'] ?? null;
+        if (is_string($incomplete) && trim($incomplete) !== '') {
+            return trim($incomplete);
+        }
+        if (($payload['type'] ?? null) === 'response.completed' || ($response['status'] ?? null) === 'completed') {
+            return 'stop';
+        }
+        if (($payload['type'] ?? null) === 'response.incomplete' || ($response['status'] ?? null) === 'incomplete') {
+            return 'incomplete';
+        }
+
+        return null;
+    }
+
     /** @return array{0:string,1:string} */
     private function gatewayErrorDetails(Response $response): array
     {
@@ -611,6 +723,15 @@ class PlaygroundService
                 'expires_at' => now()->addDay()->startOfDay(),
             ], "playground-daily:{$user->id}:{$day}");
         });
+    }
+
+    private function isDisplayedCreditLot(EntitlementLot $lot): bool
+    {
+        $snapshot = is_array($lot->billing_snapshot) ? $lot->billing_snapshot : [];
+        $rules = is_array($snapshot['billing_rules'] ?? null) ? $snapshot['billing_rules'] : [];
+
+        return ($rules['package_kind'] ?? null) === 'SP_CREDITS'
+            || in_array(($rules['display_unit_label'] ?? null), ['Credits', 'SP Credits'], true);
     }
 
     private function hasDailyFundingForAlias(User $user, string $alias): bool
@@ -722,8 +843,13 @@ class PlaygroundService
             /** @var ModelAlias|null $modelAlias */
             $modelAlias = $rows->get($alias);
             $matching = $lots->filter(fn (EntitlementLot $lot): bool => in_array($alias, is_array($lot->allowed_model_aliases) ? $lot->allowed_model_aliases : [], true));
-            $tokenRemaining = (int) $matching->where('billing_mode', 'TOKEN_QUOTA')->sum($spendable);
-            $creditRemaining = (int) $matching->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable);
+            $creditQuota = $matching->filter(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot));
+            $tokenRemaining = (int) $matching
+                ->where('billing_mode', 'TOKEN_QUOTA')
+                ->reject(fn (EntitlementLot $lot): bool => $this->isDisplayedCreditLot($lot))
+                ->sum($spendable);
+            $creditRemaining = (int) ($creditQuota->sum($spendable)
+                + $matching->where('billing_mode', 'CREDIT_BALANCE')->sum($spendable));
 
             $reason = null;
             if (! $modelAlias) {
@@ -754,6 +880,28 @@ class PlaygroundService
                 'credit_remaining' => $creditRemaining,
             ];
         })->values()->all();
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    private function allPublishedChatModelSummaries(): array
+    {
+        return ModelAlias::query()
+            ->published()
+            ->orderBy('display_name')
+            ->get(['id', 'public_alias', 'display_name', 'capabilities', 'limits'])
+            ->filter(fn (ModelAlias $alias): bool =>
+                ($alias->capabilities['messages_api'] ?? false) === true
+                || ($alias->capabilities['responses_api'] ?? false) === true
+                || ($alias->capabilities['chat_completions_api'] ?? false) === true
+            )
+            ->map(fn (ModelAlias $alias): array => [
+                'public_alias' => $alias->public_alias,
+                'display_name' => $alias->display_name,
+                'capabilities' => $alias->capabilities,
+                'limits' => $alias->limits,
+            ])
+            ->values()
+            ->all();
     }
 
     /** @param array<int,string> $aliases @return array<int,array<string,mixed>> */
@@ -792,22 +940,99 @@ class PlaygroundService
         ));
     }
 
+    /**
+     * Conservative free-daily output budget.
+     *
+     * The gateway performs the authoritative local token estimate. This helper
+     * exists only to avoid asking the reservation layer to hold a full 65K output
+     * when the daily lot has less than that remaining. It intentionally
+     * over-estimates the input side so settlement stays within the reserved lot.
+     */
+    private function affordableDailyOutputTokens(array $quota, ModelAlias $alias, array $input): int
+    {
+        $remaining = max(0, (int) ($quota['remaining'] ?? 0));
+        if ($remaining <= 0) {
+            return 0;
+        }
+
+        $limits = is_array($alias->limits) ? $alias->limits : [];
+        $multipliers = is_array($limits['billing_multipliers_bps'] ?? null)
+            ? $limits['billing_multipliers_bps']
+            : [];
+        $inputBps = max(
+            10_000,
+            (int) ($multipliers['input'] ?? 10_000),
+            (int) ($multipliers['cache_read'] ?? 10_000),
+            (int) ($multipliers['cache_write'] ?? 10_000),
+        );
+        $outputBps = max(
+            10_000,
+            (int) ($multipliers['output'] ?? 10_000),
+            (int) ($multipliers['reasoning'] ?? 10_000),
+        );
+        $minimum = max(0, (int) ($limits['minimum_request_units'] ?? 0));
+
+        $conversation = $this->conversation($input);
+        $system = trim((string) ($input['system_prompt'] ?? ''));
+        $visible = $system."\n".json_encode($conversation, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $bytes = strlen($visible);
+
+        // bytes/3 is deliberately conservative for normal English/code input.
+        // Add 25% + a small protocol allowance so the gateway estimate is very
+        // unlikely to exceed the budget we leave for input.
+        $inputTokens = max(1, (int) ceil($bytes / 3));
+        $inputTokens = (int) ceil($inputTokens * 1.25) + 64;
+        $inputUnits = (int) ceil(($inputTokens * $inputBps) / 10_000);
+        $availableForOutput = $remaining - max($minimum, $inputUnits);
+        if ($availableForOutput <= 0) {
+            return 0;
+        }
+
+        return max(0, (int) floor(($availableForOutput * 10_000) / $outputBps));
+    }
+
     private function credential(User $user): PlaygroundCredential
     {
         return DB::transaction(function () use ($user): PlaygroundCredential {
+            // The hosted Playground is governed by its daily/purchased entitlement
+            // balance, not by a tiny token-per-minute estimate. A 65,536 output
+            // ceiling previously collided with the old 40K TPM hidden-key limit:
+            // the gateway reserves estimated input + requested maximum output for
+            // rate admission, so a perfectly valid request could receive HTTP 429
+            // while the customer still had plenty of daily tokens left.
+            $limits = [
+                'label' => 'System Playground credential',
+                'requests_per_minute' => 30,
+                'tokens_per_minute' => null,
+                'concurrency_limit' => 1,
+                'max_request_bytes' => 1_048_576,
+                'max_output_tokens' => 65_536,
+            ];
+
             $existing = PlaygroundCredential::query()->where('user_id', $user->id)->lockForUpdate()->first();
             if ($existing) {
-                return $existing;
+                $key = $existing->apiKey()->lockForUpdate()->first();
+                if ($key) {
+                    // Repair credentials created by older releases in-place so an
+                    // upgrade does not require deleting users or Playground chats.
+                    $key->forceFill([
+                        'label' => $limits['label'],
+                        'requests_per_minute' => $limits['requests_per_minute'],
+                        'tokens_per_minute' => $limits['tokens_per_minute'],
+                        'concurrency_limit' => $limits['concurrency_limit'],
+                        'max_request_bytes' => $limits['max_request_bytes'],
+                        'max_output_tokens' => $limits['max_output_tokens'],
+                    ])->save();
+
+                    return $existing;
+                }
+
+                // A stale relation cannot authenticate any request. Recreate it
+                // rather than leaving the customer permanently locked out.
+                $existing->delete();
             }
 
-            $created = $this->secrets->create($user, [
-                'label' => 'System Playground credential',
-                'requests_per_minute' => 12,
-                'tokens_per_minute' => 40000,
-                'concurrency_limit' => 1,
-                'max_request_bytes' => 131072,
-                'max_output_tokens' => 65536,
-            ], [], false);
+            $created = $this->secrets->create($user, $limits, [], false);
 
             return PlaygroundCredential::query()->create([
                 'user_id' => $user->id,

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Order;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class OrderFulfillmentService
 {
@@ -12,11 +13,12 @@ class OrderFulfillmentService
         private readonly FulfillmentClaimService $claims,
         private readonly TelegramPurchaseAlertService $purchaseAlerts,
         private readonly PackageStockService $stock,
+        private readonly ReferralService $referrals,
     ) {}
 
     public function fulfill(Order $order): Order
     {
-        return DB::transaction(function () use ($order): Order {
+        $fulfilled = DB::transaction(function () use ($order): Order {
             $locked = Order::query()->with('items')->lockForUpdate()->findOrFail($order->id);
             if ($locked->fulfilled_at !== null) {
                 return $locked;
@@ -101,5 +103,19 @@ class OrderFulfillmentService
 
             return $fulfilled;
         });
+
+        try {
+            $this->referrals->rewardFulfilledOrder($fulfilled);
+        } catch (\Throwable $exception) {
+            // Referral accounting must never roll back a successfully paid order.
+            // The reward path is idempotent, so operators may safely retry later.
+            Log::error('Referral reward processing failed after fulfillment.', [
+                'order_id' => (string) $fulfilled->id,
+                'exception' => $exception::class,
+                'message' => $exception->getMessage(),
+            ]);
+        }
+
+        return $fulfilled;
     }
 }

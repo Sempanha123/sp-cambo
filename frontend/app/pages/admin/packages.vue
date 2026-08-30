@@ -42,7 +42,7 @@ const packages = await useSpResource('admin:packages', () => api.admin.packages(
  * Loaded for the form, not for this page's own display.
  *
  * The write contract takes the control plane's integer alias ids, and the margin
- * projection needs each alias's upstream cost, so both come from the same read the
+ * projection needs each alias's SP reference cost, so both come from the same read the
  * model-pricing page uses. A failure here disables editing rather than letting the
  * operator save a model selection that was never read back.
  */
@@ -56,7 +56,7 @@ const isLive = isPackageLive
  *
  * Covers both failure modes: a margin that was computed and came in under the
  * package's own floor, and a margin that could not be computed at all because an
- * allowed alias has no verified upstream cost. The second is not the safer case —
+ * allowed alias has no verified SP reference cost. The second is not the safer case —
  * it means the cost is unknown, not that it is low.
  */
 const isAtRisk = isPackageAtRisk
@@ -65,7 +65,7 @@ const all = computed(() => packages.data.value ?? [])
 const atRisk = computed(() => all.value.filter(isAtRisk))
 const live = computed(() => all.value.filter(isLive))
 
-/** Aliases anywhere in the catalogue whose upstream cost has never been verified. */
+/** Aliases anywhere in the catalogue whose SP reference cost has never been set. */
 const aliasesMissingCost = computed(() => aliasesMissingUpstreamCost(all.value))
 
 type Filter = 'all' | 'live' | 'at_risk' | 'unpublished'
@@ -132,7 +132,7 @@ const marginVerdict = (item: AdminPackage) => {
     return {
       tone: 'neutral' as const,
       label: 'Margin unknown',
-      detail: 'Upstream cost is not verified for every allowed model, so no margin can be calculated.'
+      detail: 'SP reference cost is not set for every allowed model, so no margin can be calculated.'
     }
   }
 
@@ -406,7 +406,7 @@ const submit = async (input: AdminPackageInput) => {
             label="Models missing cost"
             icon="i-lucide-circle-help"
             :value="formatCount(aliasesMissingCost.length)"
-            hint="No verified upstream cost"
+            hint="No verified SP reference cost"
             :tone="aliasesMissingCost.length > 0 ? 'warning' : 'success'"
           />
           <SpMetric
@@ -424,7 +424,7 @@ const submit = async (input: AdminPackageInput) => {
           variant="subtle"
           icon="i-lucide-triangle-alert"
           :title="`${formatCount(atRisk.length)} package${atRisk.length === 1 ? ' is' : 's are'} on sale without an established margin`"
-          :description="`Customers can buy ${atRisk.length === 1 ? 'it' : 'them'} right now. Each was published with a written override, shown on the package below. Verify the upstream cost of the listed models, or withdraw the package from sale.`"
+          :description="`Customers can buy ${atRisk.length === 1 ? 'it' : 'them'} right now. Each was published with a written override, shown on the package below. Verify the SP reference cost of the listed models, or withdraw the package from sale.`"
         />
 
         <UAlert
@@ -432,7 +432,7 @@ const submit = async (input: AdminPackageInput) => {
           color="warning"
           variant="subtle"
           icon="i-lucide-circle-help"
-          title="Some models have no verified upstream cost"
+          title="Some models have no verified SP reference cost"
           :description="`Profitability cannot be calculated for any package that allows ${aliasesMissingCost.length === 1 ? 'this model' : 'these models'}: ${aliasesMissingCost.join(', ')}. Record the upstream rates and a verification date against each model alias.`"
           :actions="[{
             label: 'Open model pricing',
@@ -568,7 +568,7 @@ const submit = async (input: AdminPackageInput) => {
               </div>
               <div>
                 <dt class="text-xs text-dimmed">
-                  Worst-case upstream cost
+                  Worst-case SP reference cost
                 </dt>
                 <dd class="sp-numeric text-sm text-default">
                   {{
@@ -617,7 +617,7 @@ const submit = async (input: AdminPackageInput) => {
                 class="space-y-1.5"
               >
                 <p class="text-xs text-dimmed">
-                  Models with no verified upstream cost
+                  Models with no verified SP reference cost
                 </p>
                 <div class="flex flex-wrap gap-1.5">
                   <UBadge

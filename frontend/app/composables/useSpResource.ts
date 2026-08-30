@@ -34,7 +34,13 @@ export async function useSpResource<T>(
 ) {
   const errorState = useState<SerializedSpError | null>(`sp-resource-error:${key}`, () => null)
 
-  const asyncData = await useAsyncData<T | null>(
+  // IMPORTANT: `useAsyncData()` is a promise-like AsyncData handle. Awaiting an
+  // idle handle (`immediate: false`) can suspend a client-side route forever:
+  // the page's `onMounted()` hook is supposed to call `refresh()`, but mounting
+  // cannot happen while setup is waiting for an execution that was explicitly
+  // disabled. Keep idle resources non-blocking, while preserving the existing
+  // awaited behaviour for normal/SSR resources.
+  const asyncDataHandle = useAsyncData<T | null>(
     key,
     async () => {
       errorState.value = null
@@ -62,6 +68,21 @@ export async function useSpResource<T>(
       default: () => null
     }
   )
+
+  // `lazy: true` has the same navigation contract as an idle resource: the
+  // destination page must render immediately while the request resolves in the
+  // background. Awaiting a lazy handle keeps Nuxt's previous route mounted,
+  // which makes the URL/sidebar change while the old page remains visible.
+  // On the browser, authenticated dashboard resources must never hold a route
+  // transition open. This matters especially on Windows local development where a
+  // long-lived Playground stream can occupy the single PHP `artisan serve` worker.
+  // The destination page should render its loading state immediately, then fill in
+  // as soon as the control-plane request can run. SSR/public resources keep the
+  // original awaited behaviour.
+  const nonBlockingClientResource = import.meta.client && options.server === false
+  const asyncData = nonBlockingClientResource || options.immediate === false || options.lazy === true
+    ? asyncDataHandle
+    : await asyncDataHandle
 
   const error = computed(() => {
     const snapshot = errorState.value

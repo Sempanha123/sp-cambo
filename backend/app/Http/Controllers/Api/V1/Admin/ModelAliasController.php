@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AiModel;
 use App\Models\ModelAlias;
 use App\Services\AuditService;
+use App\Services\ModelAliasReferenceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -85,7 +86,7 @@ class ModelAliasController extends Controller
     /**
      * Update a model alias.
      */
-    public function update(Request $request, ModelAlias $modelAlias, AuditService $audit): JsonResponse
+    public function update(Request $request, ModelAlias $modelAlias, AuditService $audit, ModelAliasReferenceService $references): JsonResponse
     {
         $data = $request->validate([
             'ai_model_id' => ['sometimes', 'string', 'exists:ai_models,id'],
@@ -104,18 +105,26 @@ class ModelAliasController extends Controller
         $reason = $data['reason'];
         unset($data['reason']);
 
-        $alias = DB::transaction(function () use ($request, $modelAlias, $data, $reason, $audit): ModelAlias {
+        $alias = DB::transaction(function () use ($request, $modelAlias, $data, $reason, $audit, $references): ModelAlias {
             $before = $modelAlias->only([
                 'ai_model_id', 'public_alias', 'display_name', 'description',
                 'capabilities', 'limits', 'status', 'enabled', 'customer_visible',
             ]);
+            $oldPublicAlias = (string) $modelAlias->public_alias;
 
             if (isset($data['ai_model_id'])) {
                 $aiModel = AiModel::query()->findOrFail($data['ai_model_id']);
                 $data['ai_model_id'] = $aiModel->id;
             }
+            if (isset($data['public_alias'])) {
+                $data['public_alias'] = strtolower(trim((string) $data['public_alias']));
+            }
 
             $modelAlias->update($data);
+            $newPublicAlias = (string) $modelAlias->public_alias;
+            if ($oldPublicAlias !== $newPublicAlias) {
+                $references->rename($oldPublicAlias, $newPublicAlias);
+            }
 
             $audit->record(
                 $request->user(),

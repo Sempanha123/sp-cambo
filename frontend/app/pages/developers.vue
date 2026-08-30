@@ -36,7 +36,7 @@ const guarantees = [
   {
     icon: 'i-lucide-radio',
     title: 'Streaming passthrough',
-    description: 'Server-sent events are streamed straight through. Usage is settled from the terminal usage payload of the stream, not guessed from token counting.'
+    description: "Server-sent events are streamed straight through. Customer billing is settled by SP Cambo's local request/response meter and does not depend on OmniRoute/provider usage counters."
   },
   {
     icon: 'i-lucide-wrench',

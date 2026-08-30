@@ -3,9 +3,10 @@ import { once } from "node:events";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { customerKey } from "./auth.js";
 import { GatewayError, writeError } from "./errors.js";
-import { mergeUsage, prepare, upstreamBody, usageFromHeaders, usageFromJson } from "./protocol.js";
+import { LocalPromptCache } from "./local-prompt-cache.js";
+import { localizeSseUsage, prepare, spLocalOutputTokensFromSse, spLocalUsage, spLocalUsageFromOutputTokens, upstreamBody, withLocalUsage } from "./protocol.js";
 import { buildToolNameMap, normalizeToolNames, rewriteSseToolNames, type ToolNameMap } from "./tool-names.js";
-import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore, Usage } from "./types.js";
+import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore } from "./types.js";
 import { INFERENCE_PATHS } from "./types.js";
 
 export type Dependencies = { controlPlane: ControlPlane; rateStore: RateStore; fetchImpl?: Fetch };
@@ -13,10 +14,11 @@ export type Dependencies = { controlPlane: ControlPlane; rateStore: RateStore; f
 export function buildApp(config: GatewayConfig, dependencies: Dependencies): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: config.maxBodyBytes });
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
+  const promptCache = new LocalPromptCache();
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => done(null, body));
   app.addHook("onClose", async () => dependencies.rateStore.close());
-  app.get("/health", async () => ({ data: { status: "ok", model_routing: "database_internal_model_id", build: "fix28" } }));
+  app.get("/health", async () => ({ data: { status: "ok", model_routing: "database_internal_model_id", build: "r42-local-cache-metering" } }));
   app.get("/ready", async (_request, reply) => {
     try {
       const response = await fetchImpl(`${config.controlPlaneBaseUrl}/api/v1/health`, {
@@ -26,12 +28,12 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       });
       if (!response.ok) {
         reply.code(503);
-        return { data: { status: "not_ready", build: "fix28", control_plane: "unavailable" } };
+        return { data: { status: "not_ready", build: "r42-local-cache-metering", control_plane: "unavailable" } };
       }
-      return { data: { status: "ready", build: "fix28", control_plane: "ready", model_routing: "database_internal_model_id" } };
+      return { data: { status: "ready", build: "r42-local-cache-metering", control_plane: "ready", model_routing: "database_internal_model_id" } };
     } catch {
       reply.code(503);
-      return { data: { status: "not_ready", build: "fix28", control_plane: "unavailable" } };
+      return { data: { status: "not_ready", build: "r42-local-cache-metering", control_plane: "unavailable" } };
     }
   });
   app.get("/v1/models", async (request) => {
@@ -68,6 +70,24 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const inspection = await dependencies.controlPlane.inspect(key);
     const keyCap = inspection.limits.max_request_bytes;
     if (bytes > config.maxBodyBytes || (keyCap !== null && bytes > keyCap)) throw new GatewayError(413, "request_too_large", "The request exceeds the allowed size.");
+    // /v1/messages/count_tokens is a local utility endpoint. It validates the
+    // customer key/model but never reserves balance and never calls OmniRoute.
+    if (path === "/v1/messages/count_tokens") {
+      const allowed = inspection.allowed_models.find((model) => model.id === prepared.publicModel);
+      if (!allowed) throw new GatewayError(403, "model_not_allowed", "The model is not allowed for this key.");
+      if (allowed.capabilities.messages_api !== true) throw new GatewayError(400, "model_unavailable", "The model does not support this inference protocol.");
+      reply.header("x-sp-cambo-metering", "local-cache-aware-v1");
+      return reply.status(200).send({ input_tokens: prepared.estimatedInput });
+    }
+
+    const localInput = promptCache.measure(
+      inspection.key_id,
+      path,
+      prepared.publicModel,
+      prepared.promptSegments,
+      prepared.estimatedInput,
+    );
+
     const outputCap = inspection.limits.max_output_tokens;
     if (outputCap !== null && prepared.requestedMaxOutput > outputCap) throw new GatewayError(400, "max_output_tokens_exceeded", "The requested output exceeds the API key limit.");
     const estimatedTotal = prepared.estimatedInput + prepared.requestedMaxOutput;
@@ -76,7 +96,8 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     try {
       const playgroundFundingScope = fundingScope(request);
       const preflight = await dependencies.controlPlane.preflight({
-        customer_key: key, public_model: prepared.publicModel, estimated_input_tokens: prepared.estimatedInput,
+        customer_key: key, public_model: prepared.publicModel, estimated_input_tokens: localInput.input_tokens,
+        estimated_cache_read_tokens: localInput.cache_read_tokens,
         requested_max_output_tokens: prepared.requestedMaxOutput, request_bytes: bytes, request_id: prepared.requestId,
         request_fingerprint: prepared.fingerprint, endpoint: path,
         ...(playgroundFundingScope ? { playground_funding_scope: playgroundFundingScope } : {}),
@@ -116,24 +137,33 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
             signal: controller.signal,
           });
           upstream = await abortable(fetchPromise, controller.signal);
+          // For streaming responses the route timeout is a connection/headers
+          // timeout, not a generation-duration ceiling. Once headers arrive,
+          // the stream stays alive until the model finishes, the client presses
+          // Stop/disconnects, or the upstream itself closes the stream.
+          if (prepared.streaming && upstream.body) clearTimeout(timeout);
         } catch {
           const reason = abortReason(controller.signal) ?? "upstream_timeout";
-          await reconcileBestEffort(reservationId, reason);
+          // No public response bytes exist yet, so the customer is not charged.
+          // R42 never waits for provider usage to decide a failed request.
+          await releaseBestEffort(reservationId);
           throw operationFailure(reason);
         }
         if (!upstream.ok) {
-          if (upstream.status >= 500 || upstream.status === 408 || upstream.status === 429) {
-            await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
-          } else {
-            await dependencies.controlPlane.release(reservationId);
-          }
+          // Failed/rejected upstream requests are non-billable because no usable
+          // public completion was delivered.
+          await releaseBestEffort(reservationId);
           return proxyError(reply, upstream, path);
         }
+        // Only successful inference attempts seed SP Cambo's private local
+        // prompt-prefix cache. Prompt text is never stored, only SHA-256 segment
+        // digests and local token estimates.
+        promptCache.remember(inspection.key_id, path, prepared.publicModel, prepared.promptSegments);
         void markStateBestEffort(reservationId, "STREAMING");
         if (prepared.streaming && upstream.body) {
-          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal, toolNames);
+          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal, toolNames, localInput.input_tokens, localInput.cache_read_tokens);
         }
-        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal, toolNames);
+        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal, toolNames, localInput.input_tokens, localInput.cache_read_tokens);
       } finally {
         clearTimeout(timeout);
         request.raw.off("aborted", onRequestAborted);
@@ -142,7 +172,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap): Promise<unknown> {
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number): Promise<unknown> {
     let text: string;
     try {
       text = await abortable(upstream.text(), signal);
@@ -153,32 +183,30 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     }
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch {
-      await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
+      await releaseBestEffort(reservationId);
       throw new GatewayError(502, "upstream_invalid_response", "The inference service returned an invalid response.");
     }
-    const usage = usageFromJson(parsed, path) ?? usageFromHeaders(upstream.headers, path);
-    if (!usage) {
-      await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable");
-      throw new GatewayError(502, "billing_settlement_pending", "Usage settlement is pending reconciliation.");
-    }
-    const publicResponse = normalizeToolNames(parsed, toolNames);
-    try {
-      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - requestStartedAt });
-    } catch {
-      await reconcileBestEffort(reservationId, "settlement_failed");
-    }
+    const normalizedResponse = normalizeToolNames(parsed, toolNames);
+    // R29: customer settlement is measured entirely at the SP Cambo edge.
+    // Provider/OmniRoute usage metadata and usage headers are intentionally
+    // ignored for billing. They may remain in the proxied response for client
+    // compatibility, but they cannot change the customer's SP balance.
+    const usage = spLocalUsage(localInputTokens, localCacheReadTokens, normalizedResponse, JSON.stringify(normalizedResponse));
+    const publicResponse = withLocalUsage(normalizedResponse, path, usage);
+    await settleLocalBestEffort(reservationId, usage, Date.now() - requestStartedAt);
     copyResponseHeaders(reply, upstream);
+    reply.header("x-sp-cambo-metering", "local-cache-aware-v1");
     reply.status(upstream.status).send(publicResponse);
     return reply;
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number): Promise<void> {
     reply.hijack();
     reply.raw.statusCode = upstream.status;
     reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
     reply.raw.setHeader("cache-control", "no-store");
     reply.raw.setHeader("x-request-id", requestId);
-    let usage: Usage | null = null; let buffer = ""; let bytesSent = false;
+    let buffer = ""; let bytesSent = false; let localOutputTokens = 0;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     const writePublic = async (text: string): Promise<void> => {
       if (text === "") return;
@@ -193,35 +221,33 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         while (true) {
           const frame = takeSseFrame(buffer);
           if (!frame) break;
-          usage = parseSse(frame.complete, usage, path);
-          await writePublic(frame.complete);
+          localOutputTokens += spLocalOutputTokensFromSse(frame.complete);
+          const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
+          await writePublic(localizeSseUsage(frame.complete, path, localUsage));
           buffer = frame.remainder;
         }
       }
       buffer += decoder.decode();
       if (buffer !== "") {
-        usage = parseSse(buffer, usage, path);
-        await writePublic(buffer);
+        localOutputTokens += spLocalOutputTokensFromSse(buffer);
+        const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
+        await writePublic(localizeSseUsage(buffer, path, localUsage));
       }
     } catch {
       void reader.cancel(signal.reason).catch(() => undefined);
       if (!reply.raw.destroyed) reply.raw.destroy();
       const reason = abortReason(signal) ?? (bytesSent ? "upstream_disconnect" : "upstream_timeout");
-      await reconcileBestEffort(reservationId, reason);
+      if (bytesSent) {
+        const partialUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
+        await settleLocalBestEffort(reservationId, partialUsage, Date.now() - requestStartedAt);
+      } else {
+        await releaseBestEffort(reservationId);
+      }
       return;
     }
 
-    usage = mergeUsage(usage, usageFromHeaders(upstream.headers, path));
-    if (!usage) {
-      await reconcileBestEffort(reservationId, bytesSent ? "usage_unavailable" : "upstream_disconnect");
-      reply.raw.end();
-      return;
-    }
-    try {
-      await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: Date.now() - requestStartedAt });
-    } catch {
-      await reconcileBestEffort(reservationId, "settlement_failed");
-    }
+    const usage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
+    await settleLocalBestEffort(reservationId, usage, Date.now() - requestStartedAt);
     reply.raw.end();
   }
 
@@ -230,8 +256,29 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     try { await dependencies.controlPlane.state(reservationId, state); } catch { /* Observability must never block inference. */ }
   }
 
-  async function reconcileBestEffort(reservationId: string, reason: string): Promise<void> {
-    try { await dependencies.controlPlane.reconcile(reservationId, reason); } catch { /* Stale recovery preserves the reservation if billing is unavailable. */ }
+  async function settleLocalBestEffort(reservationId: string, usage: ReturnType<typeof spLocalUsageFromOutputTokens>, durationMs: number): Promise<void> {
+    // The control plane is local to SP Cambo. Retry short transient failures
+    // before placing the reservation into local reconciliation.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await dependencies.controlPlane.settle(reservationId, { ...usage, duration_ms: durationMs });
+        return;
+      } catch {
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 75 * (attempt + 1)));
+      }
+    }
+    try {
+      await dependencies.controlPlane.reconcile(reservationId, "settlement_failed", { ...usage, duration_ms: durationMs });
+    } catch {
+      // If the local control plane itself is down, the reservation remains held
+      // for the normal recovery job; no provider usage is needed to resolve it.
+    }
+  }
+
+  async function releaseBestEffort(reservationId: string): Promise<void> {
+    try { await dependencies.controlPlane.release(reservationId); } catch {
+      try { await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable"); } catch { /* local recovery will handle stale hold */ }
+    }
   }
 
   return app;
@@ -291,14 +338,6 @@ function upstreamHeaders(request: FastifyRequest, apiKey: string, correlation: s
   return headers;
 }
 
-function parseSse(buffer: string, current: Usage | null, path: InferencePath): Usage | null {
-  for (const event of buffer.replaceAll("\r\n", "\n").split("\n\n")) for (const line of event.split("\n")) if (line.startsWith("data:")) {
-    const data = line.slice(5).trim(); if (data === "[DONE]") continue;
-    try { current = mergeUsage(current, usageFromJson(JSON.parse(data), path)); } catch { /* incomplete/invalid event */ }
-  }
-  return current;
-}
-
 async function proxyError(_reply: FastifyReply, upstream: Response, path: InferencePath): Promise<never> {
   // Drain the private upstream body without ever treating it as a public error
   // contract. OmniRoute/provider diagnostics can contain routes, model IDs,
@@ -314,9 +353,11 @@ async function proxyError(_reply: FastifyReply, upstream: Response, path: Infere
 }
 
 function copyResponseHeaders(reply: FastifyReply, upstream: Response): void {
-  for (const name of ["content-type", "request-id", "x-request-id", "anthropic-ratelimit-requests-limit", "anthropic-ratelimit-tokens-limit"]) {
-    const value = upstream.headers.get(name); if (value) reply.header(name, value);
-  }
+  // Do not expose private OmniRoute/provider request IDs, usage limits, or
+  // billing-adjacent telemetry. Only the public payload content type crosses
+  // this boundary; SP Cambo supplies its own metering header separately.
+  const contentType = upstream.headers.get("content-type");
+  if (contentType) reply.header("content-type", contentType);
   reply.header("cache-control", "no-store");
 }
 

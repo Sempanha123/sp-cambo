@@ -35,6 +35,8 @@ export type SpErrorCode
     | 'account_suspended'
     | 'not_found'
     | 'rate_limit_exceeded'
+    | 'playground_quota_exhausted'
+    | 'playground_balance_exhausted'
     | 'conflict'
     | 'idempotency_conflict'
     | 'already_claimed'
@@ -48,6 +50,7 @@ export type SpErrorCode
     | 'database_migration_required'
     | 'inference_unavailable'
     | 'playground_run_failed'
+    | 'playground_history_unavailable'
     | 'server_error'
     | 'network_unreachable'
     | 'endpoint_unavailable'
@@ -79,6 +82,8 @@ export interface RegisterInput {
   email: string
   password: string
   password_confirmation: string
+  verification_code: string
+  referral_code?: string | null
 }
 
 export interface LoginInput {
@@ -92,6 +97,8 @@ export interface AuthFormState {
   email: string
   password: string
   password_confirmation: string
+  verification_code: string
+  referral_code?: string | null
 }
 
 export interface HealthResponse {
@@ -147,13 +154,15 @@ export interface PublicApiKeyStatus {
   masked_key?: string
   status?: string
   package?: string | null
+  funding_source?: 'none' | 'account' | 'dedicated_key' | 'mixed'
+  funding_note?: string | null
   allowed_models?: string[]
   created_at?: string
   expires_at?: string | null
   quota_remaining?: string | null
   credit_remaining?: MoneyAmount | null
   credit_balances?: MoneyAmount[]
-  tokens_used?: { input: string, output: string, total: string }
+  tokens_used?: { input: string, output: string, total: string, cached_input?: string, saved?: string, billed?: string, savings_rate_percent?: number }
   total_spend?: MoneyAmount | null
   total_spend_by_currency?: MoneyAmount[]
   last_used?: string | null
@@ -165,14 +174,14 @@ export interface PublicApiKeyStatus {
     finished_at: string | null
     endpoint: string
     model: string
-    internal_model: string | null
-    provider: string | null
-    provider_slug: string | null
-    route_version: number | null
     state: 'reserved' | 'connecting' | 'streaming' | 'reconciling' | 'settled' | 'failed' | 'released' | string
     status: 'success' | 'error' | 'pending'
     duration_ms: number | null
     input_tokens: string | null
+    cached_input_tokens: string | null
+    saved_tokens?: string | null
+    billed_tokens?: string | null
+    savings_rate_percent?: number | null
     output_tokens: string | null
     total_tokens: string | null
     reserved_units: string | null

@@ -61,6 +61,8 @@ class ModelCatalogTest extends TestCase
         $alias->pricing()->create([
             'currency' => 'USD', 'exponent' => 2,
             'input_per_million_minor' => 300, 'output_per_million_minor' => 1500,
+            'upstream_input_per_million_minor' => 120, 'upstream_output_per_million_minor' => 900,
+            'upstream_cost_verified_at' => now(),
         ]);
 
         $unverified = AiModel::query()->create([
@@ -81,6 +83,10 @@ class ModelCatalogTest extends TestCase
             ->assertJsonPath('data.0.credit_pricing.input_per_million.minor', '300')
             ->assertJsonMissingPath('data.0.internal_model_id')
             ->assertJsonMissingPath('data.0.provider')
+            ->assertJsonMissingPath('data.0.upstream_cost')
+            ->assertJsonMissingPath('data.0.upstream_input_per_million_minor')
+            ->assertJsonMissingPath('data.0.profit')
+            ->assertJsonMissingPath('data.0.margin')
             ->assertJsonMissingPath('data.1');
 
         $this->assertStringNotContainsString('internal-secret-route-name', $response->getContent());

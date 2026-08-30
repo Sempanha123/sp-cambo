@@ -6,10 +6,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     port: integer(env.GATEWAY_PORT ?? "3010", "GATEWAY_PORT", 1, 65_535),
     controlPlaneBaseUrl: privateUrl(required(env.CONTROL_PLANE_BASE_URL, "CONTROL_PLANE_BASE_URL"), "CONTROL_PLANE_BASE_URL"),
     internalSecret: secret(env.SP_CAMBO_INTERNAL_GATEWAY_SECRET, "SP_CAMBO_INTERNAL_GATEWAY_SECRET"),
-    // Upstream provider routing is supplied by the Laravel control plane for
-    // each reservation. The gateway no longer needs a duplicate OmniRoute key.
-    omniRouteBaseUrl: env.OMNIROUTE_BASE_URL?.trim() ?? "",
-    omniRouteApiKey: env.OMNIROUTE_API_KEY?.trim() ?? "",
     rateStore: rateStore(env.GATEWAY_RATE_STORE ?? "redis"),
     redisUrl: (env.GATEWAY_RATE_STORE ?? "redis").toLowerCase() === "memory"
       ? null

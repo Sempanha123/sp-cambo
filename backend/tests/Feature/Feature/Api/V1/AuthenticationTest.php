@@ -5,14 +5,17 @@ namespace Tests\Feature\Feature\Api\V1;
 use App\Enums\AccountStatus;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Models\RegistrationEmailVerification;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Auth\Notifications\ResetPassword;
+use App\Mail\RegistrationVerificationCodeMail;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -36,11 +39,14 @@ class AuthenticationTest extends TestCase
     {
         $this->seed(RolePermissionSeeder::class);
 
+        $this->prepareRegistrationCode('test@example.com');
+
         $registration = $this->postJson('/api/v1/auth/register', [
             'name' => 'Test User',
             'email' => 'test@example.com',
             'password' => 'a-secure-test-password',
             'password_confirmation' => 'a-secure-test-password',
+            'verification_code' => '123456',
         ]);
 
         $registration
@@ -60,6 +66,7 @@ class AuthenticationTest extends TestCase
         $this->assertDatabaseHas('users', [
             'email' => 'test@example.com',
         ]);
+        $this->assertNotNull(User::query()->where('email', 'test@example.com')->firstOrFail()->email_verified_at);
         $this->assertTrue(User::query()->where('email', 'test@example.com')->firstOrFail()->hasRole('CUSTOMER'));
 
         $this->withToken($token)
@@ -100,11 +107,14 @@ class AuthenticationTest extends TestCase
 
     public function test_registration_bootstraps_the_customer_role_on_a_fresh_migrated_database(): void
     {
+        $this->prepareRegistrationCode('unseeded@example.test');
+
         $response = $this->postJson('/api/v1/auth/register', [
             'name' => 'Unseeded User',
             'email' => 'unseeded@example.test',
             'password' => 'a-secure-test-password',
             'password_confirmation' => 'a-secure-test-password',
+            'verification_code' => '123456',
         ])->assertCreated();
 
         $this->assertDatabaseHas('roles', [
@@ -113,6 +123,46 @@ class AuthenticationTest extends TestCase
         ]);
         $this->assertTrue(User::query()->where('email', 'unseeded@example.test')->firstOrFail()->hasRole('CUSTOMER'));
         $this->assertIsString($response->json('data.token'));
+    }
+
+    public function test_manual_registration_sends_and_consumes_a_one_time_email_code(): void
+    {
+        Mail::fake();
+
+        $this->postJson('/api/v1/auth/register/code', [
+            'email' => 'verify-me@gmail.com',
+        ])->assertOk()
+            ->assertJsonPath('data.message', 'Verification code sent. Check your email.')
+            ->assertJsonPath('data.resend_after', 60);
+
+        $code = null;
+        Mail::assertSent(RegistrationVerificationCodeMail::class, function (RegistrationVerificationCodeMail $mail) use (&$code): bool {
+            $code = $mail->code;
+            return true;
+        });
+
+        $this->assertIsString($code);
+        $this->assertDatabaseMissing('users', ['email' => 'verify-me@gmail.com']);
+
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'Verified User',
+            'email' => 'verify-me@gmail.com',
+            'password' => 'a-secure-test-password',
+            'password_confirmation' => 'a-secure-test-password',
+            'verification_code' => $code,
+        ])->assertCreated()
+            ->assertJsonPath('data.user.email', 'verify-me@gmail.com');
+
+        $user = User::query()->where('email', 'verify-me@gmail.com')->firstOrFail();
+        $this->assertNotNull($user->email_verified_at);
+
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'Reuse Attempt',
+            'email' => 'another@example.test',
+            'password' => 'a-secure-test-password',
+            'password_confirmation' => 'a-secure-test-password',
+            'verification_code' => $code,
+        ])->assertUnprocessable();
     }
 
     public function test_registration_validation_errors_use_laravel_json_validation_shape(): void
@@ -347,5 +397,21 @@ class AuthenticationTest extends TestCase
             ->getJson('/api/v1/me')
             ->assertForbidden()
             ->assertJsonPath('code', 'account_suspended');
+    }
+
+    private function prepareRegistrationCode(string $email, string $code = '123456'): void
+    {
+        $normalized = mb_strtolower(trim($email));
+        RegistrationEmailVerification::query()->updateOrCreate(
+            ['email' => $normalized],
+            [
+                'code_hash' => hash_hmac('sha256', $normalized.'|'.$code, (string) config('app.key')),
+                'attempts' => 0,
+                'last_sent_at' => now()->subMinute(),
+                'expires_at' => now()->addMinutes(10),
+                'verified_at' => null,
+                'consumed_at' => null,
+            ],
+        );
     }
 }

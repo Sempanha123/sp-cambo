@@ -5,6 +5,7 @@ namespace Tests\Feature\Feature\Api\V1;
 use App\Models\AiModel;
 use App\Models\EntitlementLot;
 use App\Models\ModelAlias;
+use App\Models\PlaygroundCredential;
 use App\Models\PlaygroundSetting;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
@@ -177,6 +178,108 @@ class PlaygroundIsolationTest extends TestCase
         Http::assertSent(fn ($request): bool => $request->hasHeader('X-SP-Cambo-Playground-Funding', 'BALANCE'));
         $this->assertDatabaseCount('playground_credentials', 1);
         $this->assertDatabaseCount('api_keys', 1);
+    }
+
+    public function test_free_playground_automatically_lowers_64k_ceiling_to_fit_remaining_daily_tokens(): void
+    {
+        Http::fake([
+            'http://gateway.test/*' => Http::response([
+                'content' => [['type' => 'text', 'text' => 'Budget-aware request accepted']],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $this->settings($alias, 60_000);
+        PlaygroundSetting::current()->forceFill(['max_output_tokens' => 65_536])->save();
+
+        $this->actingAs($user)->getJson('/api/v1/me/playground/quota')->assertOk();
+        EntitlementLot::query()
+            ->where('user_id', $user->id)
+            ->where('source_type', 'PLAYGROUND_DAILY')
+            ->update(['remaining_units' => 14_179, 'reserved_units' => 0]);
+
+        $this->actingAs($user)->postJson('/api/v1/me/playground/run', [
+            'model' => $alias->public_alias,
+            'protocol' => 'messages',
+            'messages' => [
+                ['role' => 'user', 'content' => 'hi'],
+            ],
+            'max_output_tokens' => 65_536,
+        ])->assertOk()->assertJsonPath('data.message', 'Budget-aware request accepted');
+
+        Http::assertSent(function ($request): bool {
+            $body = $request->data();
+            $max = (int) ($body['max_tokens'] ?? 0);
+
+            return $max > 0 && $max < 14_179;
+        });
+    }
+
+    public function test_existing_hidden_playground_credential_is_repaired_for_64k_output_without_tpm_false_limit(): void
+    {
+        Http::fake([
+            'http://gateway.test/*' => Http::response([
+                'content' => [['type' => 'text', 'text' => 'Credential limits repaired']],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $this->settings($alias, 100_000);
+
+        $payload = [
+            'model' => $alias->public_alias,
+            'protocol' => 'messages',
+            'prompt' => 'Create the hidden Playground credential.',
+            'max_output_tokens' => 2048,
+        ];
+
+        $this->actingAs($user)->postJson('/api/v1/me/playground/run', $payload)->assertOk();
+
+        $credential = PlaygroundCredential::query()->where('user_id', $user->id)->sole();
+        $key = $credential->apiKey()->firstOrFail();
+        $key->forceFill([
+            'requests_per_minute' => 12,
+            'tokens_per_minute' => 40_000,
+            'max_request_bytes' => 131_072,
+            'max_output_tokens' => 8_192,
+        ])->save();
+
+        $this->actingAs($user)->postJson('/api/v1/me/playground/run', $payload)->assertOk();
+
+        $key->refresh();
+        $this->assertSame(30, (int) $key->requests_per_minute);
+        $this->assertNull($key->tokens_per_minute);
+        $this->assertSame(1, (int) $key->concurrency_limit);
+        $this->assertSame(1_048_576, (int) $key->max_request_bytes);
+        $this->assertSame(65_536, (int) $key->max_output_tokens);
+    }
+
+    public function test_long_generated_history_can_be_sent_back_for_a_follow_up_request(): void
+    {
+        Http::fake([
+            'http://gateway.test/*' => Http::response([
+                'content' => [['type' => 'text', 'text' => 'Continuation accepted']],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $this->settings($alias, 400_000);
+
+        $this->actingAs($user)
+            ->postJson('/api/v1/me/playground/run', [
+                'model' => $alias->public_alias,
+                'protocol' => 'messages',
+                'messages' => [
+                    ['role' => 'assistant', 'content' => str_repeat('x', 25_000)],
+                    ['role' => 'user', 'content' => 'Continue and finish the file.'],
+                ],
+                'max_output_tokens' => 65_536,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.message', 'Continuation accepted');
     }
 
     public function test_purchased_model_not_in_daily_free_list_is_available_with_account_balance(): void

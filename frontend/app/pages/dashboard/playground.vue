@@ -4,14 +4,16 @@ import type { PlaygroundChatSummary, PlaygroundModel, RequestActivity } from '~/
 type ChatMessage = { role: 'user' | 'assistant', content: string }
 type PlaygroundProtocol = 'messages' | 'responses' | 'chat_completions'
 
-definePageMeta({ layout: 'dashboard', middleware: ['auth'] })
+definePageMeta({ layout: 'dashboard', middleware: ['auth'], keepalive: true })
 useSeoMeta({
   title: 'Playground',
-  description: 'Chat with SP Cambo models using daily free quota first, then an explicit redeemed or purchased balance fallback.',
+  description: 'Chat with available models using free daily Tokens first, then an explicit purchased Tokens or Credits fallback.',
   robots: 'noindex'
 })
 
 const api = useSpApi()
+const backgroundRun = usePlaygroundBackgroundRun()
+const auth = useAuthStore()
 const toast = useToast()
 const quota = await useSpResource('dashboard:playground-quota', () => api.account.playgroundQuota(), { server: false, lazy: true })
 
@@ -19,11 +21,10 @@ const selectedAlias = ref<string | undefined>()
 const messages = ref<ChatMessage[]>([])
 const composer = ref('')
 const systemPrompt = ref('')
-const maxOutputTokens = ref(1024)
+const maxOutputChoice = ref<'auto' | '8192' | '16384' | '32768' | '65536'>('auto')
+const autoContinueLongCode = ref(true)
 const temperatureEnabled = ref(false)
 const temperature = ref(0.7)
-const sending = ref(false)
-const receivedStreamDelta = ref(false)
 const lastRawResponse = ref<unknown | null>(null)
 const lastRequestId = ref<string | null>(null)
 const errorMessage = ref<string | null>(null)
@@ -34,16 +35,28 @@ const showInspector = ref(true)
 const historyOpen = ref(false)
 const historyLoading = ref(false)
 const historySaving = ref(false)
-const historyError = ref<string | null>(null)
+const historyLoadError = ref<string | null>(null)
+const historySaveError = ref<string | null>(null)
+const historyError = computed(() => historySaveError.value ?? historyLoadError.value)
 const chatHistory = ref<PlaygroundChatSummary[]>([])
 const currentChatId = ref<number | null>(null)
+const currentChatKey = ref('')
+const runMatchesCurrentChat = computed(() => {
+  const run = backgroundRun.state.value
+  if (!run.token) return false
+  if (run.chat_id !== null && currentChatId.value !== null) return run.chat_id === currentChatId.value
+  return Boolean(run.chat_key && currentChatKey.value && run.chat_key === currentChatKey.value)
+})
+// A Playground generation belongs to the browser session, not to this route component.
+// Navigating elsewhere keeps it running; returning to Playground reattaches to it.
+const sending = computed(() => backgroundRun.state.value.running)
+const receivedStreamDelta = computed(() => runMatchesCurrentChat.value && backgroundRun.state.value.assistant_text.length > 0)
 const inspectorTab = ref<'setup' | 'usage'>('setup')
 const chatScroll = ref<HTMLElement | null>(null)
 const recentActivity = ref<RequestActivity[]>([])
 const liveClock = ref(Date.now())
 let activityTimer: ReturnType<typeof setInterval> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
-let streamController: AbortController | null = null
 
 const starters = [
   { label: 'Analyze data', icon: 'i-lucide-chart-no-axes-column', prompt: 'Help me analyze this data and explain the important patterns:\n' },
@@ -59,7 +72,9 @@ const personaPrompts = [
   { label: 'Translator', value: 'Translate accurately while preserving meaning, tone and formatting. Ask only when the target language is genuinely ambiguous.' }
 ]
 
-const allModels = computed(() => quota.data.value?.available_models ?? [])
+const allModels = computed(() => (quota.data.value?.catalog_models?.length
+  ? quota.data.value.catalog_models
+  : quota.data.value?.available_models ?? []))
 const hasChatProtocol = (model: PlaygroundModel) => Boolean(
   model.capabilities.responses_api === true
   || model.capabilities.messages_api === true
@@ -76,18 +91,17 @@ const availableModels = computed(() => {
 const unavailableFundedModels = computed(() => quota.data.value?.unavailable_funded_models ?? [])
 const modelOptions = computed(() => {
   const q = quota.data.value
-  const runnable = availableModels.value.map((model) => {
-    const free = q?.free_model_aliases.includes(model.public_alias) ?? false
-    const purchased = q?.fallback_model_aliases.includes(model.public_alias) ?? false
-    const access = free && purchased ? 'Free + purchased' : free ? 'Daily free' : purchased ? 'Purchased' : 'Unavailable'
-    return { label: `${model.display_name} · ${access}`, value: model.public_alias }
+  const catalogue = q?.catalog_models?.length ? q.catalog_models : allModels.value.map(model => ({ ...model, available: availableModels.value.some(row => row.public_alias === model.public_alias), lock_reason: null }))
+  return catalogue.map(model => {
+    const presentation = modelPresentation(model.public_alias, model.display_name)
+    return {
+      label: presentation.label,
+      value: model.available ? model.public_alias : `blocked:${model.public_alias}`,
+      disabled: !model.available,
+      icon: model.available ? presentation.icon : 'i-lucide-lock-keyhole',
+      description: model.available ? model.public_alias : (model.lock_reason || 'Not available for your account')
+    }
   })
-  const blocked = unavailableFundedModels.value.map(model => ({
-    label: `${model.display_name} · Temporarily unavailable`,
-    value: `blocked:${model.public_alias}`,
-    disabled: true
-  }))
-  return [...runnable, ...blocked]
 })
 const selectedModel = computed<PlaygroundModel | null>(() => allModels.value.find(model => model.public_alias === selectedAlias.value) ?? null)
 
@@ -109,13 +123,6 @@ const preferredProtocol = (model: PlaygroundModel | null): PlaygroundProtocol | 
   return null
 }
 const protocol = computed(() => preferredProtocol(selectedModel.value))
-const protocolLabels: Record<PlaygroundProtocol, string> = {
-  responses: 'Responses API',
-  messages: 'Anthropic Messages',
-  chat_completions: 'Chat Completions'
-}
-const protocolLabel = computed(() => protocol.value ? protocolLabels[protocol.value] : 'No chat protocol')
-
 watch([allModels, () => quota.data.value], () => {
   const q = quota.data.value
   const candidate = q?.default_model_alias || q?.available_model_aliases?.[0] || allModels.value[0]?.public_alias
@@ -124,7 +131,6 @@ watch([allModels, () => quota.data.value], () => {
       ? candidate
       : availableModels.value[0]?.public_alias
   }
-  if (q) maxOutputTokens.value = Math.min(maxOutputTokens.value, q.max_output_tokens || 1024)
 }, { immediate: true })
 
 const dailyRemaining = computed(() => Math.max(0, Number(quota.data.value?.remaining) || 0))
@@ -152,11 +158,42 @@ const selectedBalance = computed(() => quota.data.value?.model_balances.find(row
 const canSend = computed(() => Boolean(
   quota.data.value?.enabled && selectedAlias.value && protocol.value && composer.value.trim() && fundingForSelectedModel.value && !sending.value
 ))
-const activeFundingLabel = computed(() => dailyFundingForSelectedModel.value ? 'Daily free' : paidOnlyFunding.value ? 'Purchased balance' : balanceFundingForSelectedModel.value ? 'Customer balance' : 'No funding selected')
-const freePercent = computed(() => {
-  const q = quota.data.value
-  if (!q?.limit) return 0
-  return Math.max(0, Math.min(100, Math.round((q.remaining / q.limit) * 100)))
+const activeFundingLabel = computed(() => dailyFundingForSelectedModel.value ? 'Free access' : paidOnlyFunding.value ? 'Purchased access' : balanceFundingForSelectedModel.value ? 'Customer balance' : 'No access selected')
+
+// R34: every Playground customer gets the same coding-friendly Auto ceiling.
+// Funding source never lowers the output ceiling. The request is still bounded by
+// the published model capability and the SP Cambo service maximum, so "64K" is
+// a ceiling rather than a promise that every response will consume 64K tokens.
+const PLAYGROUND_AUTO_MAX_OUTPUT = 65_536
+const outputServiceLimit = computed(() => Math.max(1, Number(quota.data.value?.max_output_tokens) || PLAYGROUND_AUTO_MAX_OUTPUT))
+const outputModelLimit = computed(() => Math.max(1, Number(selectedModel.value?.capabilities.max_output_tokens) || outputServiceLimit.value))
+const outputHardLimit = computed(() => Math.max(1, Math.min(outputServiceLimit.value, outputModelLimit.value, PLAYGROUND_AUTO_MAX_OUTPUT)))
+const outputCeilingItems = computed(() => {
+  const hard = outputHardLimit.value
+  const manual = [8_192, 16_384, 32_768, 65_536]
+    .filter(value => value <= hard)
+    .map(value => ({ label: new Intl.NumberFormat().format(value), value: String(value) }))
+
+  return [
+    { label: `Auto — up to ${new Intl.NumberFormat().format(hard)} (recommended)`, value: 'auto' },
+    ...manual
+  ]
+})
+const effectiveMaxOutputTokens = computed(() => {
+  if (maxOutputChoice.value === 'auto') return outputHardLimit.value
+  return Math.max(1, Math.min(Number(maxOutputChoice.value) || outputHardLimit.value, outputHardLimit.value))
+})
+const outputCeilingHelp = computed(() => {
+  const current = new Intl.NumberFormat().format(effectiveMaxOutputTokens.value)
+  if (maxOutputChoice.value === 'auto') {
+    return `Auto allows up to ${current} output tokens. The actual per-request ceiling can be lower when the current Token balance cannot fund the full maximum; the model can also finish earlier naturally.`
+  }
+  return `This request is capped at ${current} output tokens. The model can still finish earlier naturally.`
+})
+watch(outputHardLimit, (hard) => {
+  if (maxOutputChoice.value !== 'auto' && Number(maxOutputChoice.value) > hard) {
+    maxOutputChoice.value = 'auto'
+  }
 })
 const liveRequestStates: RequestActivity['state'][] = ['reserved', 'connecting', 'streaming']
 const runningRequests = computed(() => recentActivity.value.filter(row => liveRequestStates.includes(row.state)))
@@ -166,6 +203,13 @@ const lastRequest = computed(() => {
 })
 
 const formatUnits = (value: number | string | null | undefined) => new Intl.NumberFormat().format(Math.max(0, Number(value) || 0))
+const formatSpCredits = (value: string | null | undefined) => {
+  if (value == null) return '—'
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '—'
+  const formatted = amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 })
+  return `$${formatted}`
+}
 const elapsed = (row: RequestActivity) => {
   if (row.duration_ms !== null) {
     const ms = Math.max(0, row.duration_ms)
@@ -176,8 +220,30 @@ const elapsed = (row: RequestActivity) => {
 }
 const stateColor = (state: RequestActivity['state']) => state === 'settled' ? 'success' : ['failed', 'released'].includes(state) ? 'error' : state === 'reconciling' ? 'warning' : 'primary'
 const stateLabel = (state: RequestActivity['state']) => state === 'reconciling' ? 'Billing pending' : state === 'settled' ? 'Settled' : state === 'released' ? 'Released' : state === 'failed' ? 'Failed' : state === 'streaming' ? 'Streaming' : state === 'connecting' ? 'Connecting' : 'Reserved'
-const requestUnits = (row: RequestActivity) => row.metered_units !== null ? `${formatUnits(row.metered_units)} units` : row.reserved_units !== null ? `${formatUnits(row.reserved_units)} reserved` : '—'
+const requestUnits = (row: RequestActivity) => row.metered_units !== null ? `${formatUnits(row.metered_units)} Tokens · ${formatSpCredits(row.sp_credits_used)} Credits` : row.reserved_units !== null ? `${formatUnits(row.reserved_units)} Tokens reserved` : '—'
 const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => nextTick(() => chatScroll.value?.scrollTo({ top: chatScroll.value.scrollHeight, behavior }))
+
+const activeChatStorageKey = computed(() => `spc.playground.active-chat:${auth.user?.id ?? 'session'}`)
+const rememberActiveChat = (id: number | null) => {
+  if (!import.meta.client) return
+  if (id === null) window.localStorage.removeItem(activeChatStorageKey.value)
+  else window.localStorage.setItem(activeChatStorageKey.value, String(id))
+}
+
+const newClientChatKey = () => {
+  const random = globalThis.crypto?.randomUUID?.()
+  return random || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
+}
+const ensureClientChatKey = () => {
+  if (!currentChatKey.value) currentChatKey.value = newClientChatKey()
+  return currentChatKey.value
+}
+const mergeHistorySummary = (chat: PlaygroundChatSummary) => {
+  const next = [chat, ...chatHistory.value.filter(row => row.id !== chat.id)]
+    .sort((a, b) => new Date(b.last_message_at ?? 0).getTime() - new Date(a.last_message_at ?? 0).getTime())
+    .slice(0, 30)
+  chatHistory.value = next
+}
 
 const refreshActivity = async () => {
   if (typeof api.account.activity !== 'function') return
@@ -187,11 +253,11 @@ const refreshActivity = async () => {
 }
 const refreshHistory = async () => {
   historyLoading.value = true
-  historyError.value = null
+  historyLoadError.value = null
   try {
     chatHistory.value = await api.account.playgroundChats({ limit: 30 })
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : 'Chat history could not be loaded.'
+    historyLoadError.value = error instanceof Error ? error.message : 'Chat history could not be loaded.'
   } finally {
     historyLoading.value = false
   }
@@ -206,11 +272,20 @@ const persistCurrentChat = async (refresh = true): Promise<boolean> => {
   const storedMessages = messages.value
     .filter(message => message.content.trim() !== '')
     .slice(-60)
+    .map(message => ({
+      role: message.role,
+      // A very large generated file should never make autosave fail. The full
+      // response remains visible in the current chat; history keeps a bounded copy.
+      content: message.content.length > 120000
+        ? `${message.content.slice(0, 120000)}\n\n[Saved history truncated for storage]`
+        : message.content
+    }))
 
   if (storedMessages.length === 0) return true
 
   historySaving.value = true
   const payload = {
+    client_key: ensureClientChatKey(),
     title: chatTitle(),
     model_alias: selectedAlias.value ?? null,
     system_prompt: systemPrompt.value.trim() || null,
@@ -218,17 +293,48 @@ const persistCurrentChat = async (refresh = true): Promise<boolean> => {
   }
 
   try {
-    if (currentChatId.value) {
-      await api.account.updatePlaygroundChat(currentChatId.value, payload)
-    } else {
-      const created = await api.account.createPlaygroundChat(payload)
-      currentChatId.value = created.id
+    let saved
+    try {
+      saved = await api.account.syncPlaygroundChat(payload)
+    } catch (syncError) {
+      // Fix31 compatibility path: if an older/stale Laravel route cache is still
+      // serving Fix27/Fix28 routes, /chats/sync can be interpreted as the
+      // dynamic {chat} route and fail before the controller runs. Fall back to
+      // the original create/update endpoints so a customer's conversation is
+      // still persisted while START_ALL clears the stale route cache.
+      const status = Number((syncError as { status?: number })?.status ?? 0)
+      const code = String((syncError as { code?: string })?.code ?? '')
+      const legacyCompatible = [404, 500, 501, 503].includes(status)
+        || ['endpoint_unavailable', 'server_error', 'playground_history_unavailable'].includes(code)
+
+      if (!legacyCompatible) throw syncError
+
+      if (currentChatId.value) {
+        saved = await api.account.updatePlaygroundChat(currentChatId.value, {
+          title: payload.title,
+          model_alias: payload.model_alias,
+          system_prompt: payload.system_prompt,
+          messages: payload.messages
+        })
+      } else {
+        saved = await api.account.createPlaygroundChat({
+          title: payload.title,
+          model_alias: payload.model_alias,
+          system_prompt: payload.system_prompt,
+          messages: payload.messages
+        })
+      }
     }
-    historyError.value = null
+
+    currentChatId.value = saved.id
+    rememberActiveChat(saved.id)
+    currentChatKey.value = saved.client_key || payload.client_key
+    mergeHistorySummary(saved)
+    historySaveError.value = null
     if (refresh) await refreshHistory()
     return true
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : 'This chat could not be saved.'
+    historySaveError.value = error instanceof Error ? error.message : 'This chat could not be saved.'
     return false
   } finally {
     historySaving.value = false
@@ -242,7 +348,8 @@ const openHistory = async () => {
   }
 
   historyOpen.value = true
-  historyError.value = null
+  historyLoadError.value = null
+  historySaveError.value = null
 
   // This also adopts conversations that were already open before the history
   // feature was deployed (for example after a hot reload from Fix26 -> Fix27).
@@ -257,10 +364,12 @@ const openChat = async (id: number) => {
   if (sending.value) return
   if (currentChatId.value !== id) await persistCurrentChat()
   historyLoading.value = true
-  historyError.value = null
+  historyLoadError.value = null
   try {
     const chat = await api.account.playgroundChat(id)
     currentChatId.value = chat.id
+    rememberActiveChat(chat.id)
+    currentChatKey.value = chat.client_key || newClientChatKey()
     messages.value = chat.messages.slice(-60)
     systemPrompt.value = chat.system_prompt ?? ''
     if (chat.model_alias && availableModels.value.some(model => model.public_alias === chat.model_alias)) selectedAlias.value = chat.model_alias
@@ -270,7 +379,7 @@ const openChat = async (id: number) => {
     historyOpen.value = false
     void scrollToBottom('auto')
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : 'This chat could not be opened.'
+    historyLoadError.value = error instanceof Error ? error.message : 'This chat could not be opened.'
     await refreshHistory()
   } finally {
     historyLoading.value = false
@@ -283,11 +392,13 @@ const deleteChat = async (id: number) => {
     await api.account.deletePlaygroundChat(id)
     if (currentChatId.value === id) {
       currentChatId.value = null
+      rememberActiveChat(null)
+      currentChatKey.value = newClientChatKey()
       messages.value = []
     }
     await refreshHistory()
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : 'This chat could not be deleted.'
+    historyLoadError.value = error instanceof Error ? error.message : 'This chat could not be deleted.'
   }
 }
 
@@ -297,12 +408,97 @@ const clearHistory = async () => {
   try {
     await api.account.clearPlaygroundChats()
     currentChatId.value = null
+    rememberActiveChat(null)
+    currentChatKey.value = newClientChatKey()
     messages.value = []
     await refreshHistory()
   } catch (error) {
-    historyError.value = error instanceof Error ? error.message : 'Chat history could not be cleared.'
+    historyLoadError.value = error instanceof Error ? error.message : 'Chat history could not be cleared.'
   }
 }
+
+const restoreActiveChat = async () => {
+  if (!import.meta.client || currentChatId.value !== null || messages.value.length > 0) return
+  const raw = window.localStorage.getItem(activeChatStorageKey.value)
+  const id = raw ? Number(raw) : NaN
+  if (!Number.isInteger(id) || id <= 0) {
+    rememberActiveChat(null)
+    return
+  }
+
+  try {
+    const chat = await api.account.playgroundChat(id)
+    currentChatId.value = chat.id
+    currentChatKey.value = chat.client_key || newClientChatKey()
+    messages.value = chat.messages.slice(-60)
+    systemPrompt.value = chat.system_prompt ?? ''
+    if (chat.model_alias) selectedAlias.value = chat.model_alias
+    mergeHistorySummary(chat)
+    void scrollToBottom('auto')
+  } catch {
+    // The chat may have expired, been cleared, or belong to a previous account.
+    rememberActiveChat(null)
+  }
+}
+
+const mirrorBackgroundRunIntoChat = () => {
+  const run = backgroundRun.state.value
+  if (!runMatchesCurrentChat.value) return
+
+  if (run.request_id) lastRequestId.value = run.request_id
+  if (!run.running && run.status !== 'saving') return
+
+  const last = messages.value[messages.value.length - 1]
+  if (last?.role === 'assistant') {
+    // The server history contains the last fully-saved turn. While this browser
+    // still owns the live stream, mirror the unsaved tail from shared app state.
+    last.content = run.assistant_text
+  } else {
+    messages.value.push({ role: 'assistant', content: run.assistant_text })
+  }
+  void scrollToBottom('auto')
+}
+
+const reloadCurrentChatFromServer = async () => {
+  if (!currentChatId.value) return
+  try {
+    const chat = await api.account.playgroundChat(currentChatId.value)
+    messages.value = chat.messages.slice(-60)
+    systemPrompt.value = chat.system_prompt ?? systemPrompt.value
+    if (chat.model_alias && availableModels.value.some(model => model.public_alias === chat.model_alias)) {
+      selectedAlias.value = chat.model_alias
+    }
+    mergeHistorySummary(chat)
+    void scrollToBottom('auto')
+  } catch {
+    // The stream owner already persists the conversation. If a refresh races that
+    // final save, the normal history refresh/next visit will pick it up.
+  }
+}
+
+watch(
+  () => ({
+    token: backgroundRun.state.value.token,
+    status: backgroundRun.state.value.status,
+    text: backgroundRun.state.value.assistant_text,
+    requestId: backgroundRun.state.value.request_id,
+    finishedAt: backgroundRun.state.value.finished_at
+  }),
+  async (run, previous) => {
+    if (run.requestId && runMatchesCurrentChat.value) lastRequestId.value = run.requestId
+    if (runMatchesCurrentChat.value && (backgroundRun.state.value.running || run.status === 'saving')) {
+      mirrorBackgroundRunIntoChat()
+    }
+
+    const becameTerminal = ['done', 'failed', 'stopped'].includes(run.status)
+      && run.status !== previous?.status
+    if (becameTerminal && runMatchesCurrentChat.value) {
+      await reloadCurrentChatFromServer()
+      await Promise.all([quota.refresh(), refreshActivity(), refreshHistory()])
+    }
+  },
+  { flush: 'post' }
+)
 
 const refreshResources = async () => {
   await Promise.all([quota.refresh(), refreshActivity(), refreshHistory()])
@@ -311,6 +507,8 @@ const newChat = async () => {
   if (sending.value) return
   await persistCurrentChat()
   currentChatId.value = null
+  rememberActiveChat(null)
+  currentChatKey.value = newClientChatKey()
   messages.value = []
   composer.value = ''
   errorMessage.value = null
@@ -326,94 +524,239 @@ const setPersona = (prompt: string) => {
   systemPrompt.value = prompt
 }
 
+// R35: a 64K-capable coding response can easily exceed the old 20,000-character
+// per-message validator. Keep enough recent conversation for useful continuation
+// while staying comfortably below the 1 MB gateway request-size ceiling.
+const PLAYGROUND_CONTEXT_MAX_BYTES = 700_000
+const PLAYGROUND_CONTEXT_MAX_MESSAGES = 40
+const contextEncoder = new TextEncoder()
+
+const utf8Bytes = (value: string) => contextEncoder.encode(value).byteLength
+const suffixWithinByteBudget = (value: string, budget: number) => {
+  if (budget <= 0) return ''
+  if (utf8Bytes(value) <= budget) return value
+
+  let low = 0
+  let high = value.length
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2)
+    const candidate = value.slice(value.length - mid)
+    if (utf8Bytes(candidate) <= budget) low = mid
+    else high = mid - 1
+  }
+  return value.slice(value.length - low)
+}
+
+const playgroundErrorMessage = (error: unknown) => {
+  const code = (error as { code?: string } | null)?.code
+  if (code === 'playground_quota_exhausted') {
+    const reset = quota.data.value?.reset_at ? formatDateTime(quota.data.value.reset_at) : 'the next daily reset'
+    return dailyRemaining.value > 0
+      ? 'Your remaining free Tokens are not enough for this request. Start a shorter/new chat, or use Tokens or Credits to continue.'
+      : `Daily free limit reached. Your free Tokens reset ${reset}. Buy or redeem Tokens or Credits to continue now.`
+  }
+  if (code === 'playground_balance_exhausted' || code === 'insufficient_tokens' || code === 'insufficient_credits') {
+    return 'No Tokens or Credits are available for this model. Add a package, redeem a code, or wait for free access to reset.'
+  }
+  if (code === 'rate_limit_exceeded') {
+    return 'Too many requests in a short time. This is not your daily Token limit. Wait about a minute and try again.'
+  }
+  return error instanceof Error ? error.message : 'The Playground request could not be completed.'
+}
+
+const buildOutboundMessages = (source: ChatMessage[]): ChatMessage[] => {
+  const selected: ChatMessage[] = []
+  let usedBytes = 0
+
+  for (let index = source.length - 1; index >= 0 && selected.length < PLAYGROUND_CONTEXT_MAX_MESSAGES; index -= 1) {
+    const message = source[index]
+    if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue
+
+    const overhead = 96
+    const fullBytes = utf8Bytes(message.content) + overhead
+    const remaining = PLAYGROUND_CONTEXT_MAX_BYTES - usedBytes
+
+    if (fullBytes <= remaining) {
+      selected.push({ role: message.role, content: message.content })
+      usedBytes += fullBytes
+      continue
+    }
+
+    // Preserve the most recent tail when one very large generated file would
+    // otherwise make the next 'continue/fix this' request fail validation.
+    if (remaining > 2_048) {
+      const marker = '[Earlier content omitted from Playground context to stay within the request-size limit.]\n'
+      const clipped = suffixWithinByteBudget(message.content, Math.max(0, remaining - utf8Bytes(marker) - overhead))
+      if (clipped) selected.push({ role: message.role, content: `${marker}${clipped}` })
+    }
+    break
+  }
+
+  return selected.reverse()
+}
+
+const CODING_REQUEST_PATTERN = /\b(code|coding|html|css|javascript|typescript|php|python|vue|react|website|portfolio|component|function|class|api|sql)\b/i
+const COMPLETE_CODE_INSTRUCTION = 'For coding requests, return the complete requested implementation. Do not intentionally omit sections, replace code with placeholders, or stop with “continue”. Close every code fence, HTML tag, CSS block, and script block before finishing. If the response reaches a technical output ceiling, stop only at a clean continuation point so the Playground can continue the same answer.'
+
+const AUTO_CONTINUE_MAX_SEGMENTS = 4
+const AUTO_CONTINUE_PROMPT = 'Continue the exact same file from the next missing character/line. Do not repeat earlier code or explanation. If the previous answer used a fenced code block and the continuation is code, begin with a fenced code block using the same language; never emit raw continuation code as normal prose. Finish the requested implementation completely and close every open code fence/tag/block before the final answer ends.'
+const LENGTH_FINISH_REASONS = new Set(['length', 'max_tokens', 'max_output_tokens', 'max_completion_tokens', 'token_limit', 'incomplete'])
+
+const codeLooksStructurallyIncomplete = (text: string): boolean => {
+  const value = text.trim()
+  if (!value) return false
+  if ((value.match(/```/g) ?? []).length % 2 === 1) return true
+
+  const pairs: Array<[RegExp, RegExp]> = [
+    [/<html(?:\s|>)/i, /<\/html>/i],
+    [/<style(?:\s|>)/i, /<\/style>/i],
+    [/<script(?:\s|>)/i, /<\/script>/i],
+    [/<body(?:\s|>)/i, /<\/body>/i]
+  ]
+  return pairs.some(([open, close]) => open.test(value) && !close.test(value))
+}
+
+const shouldAutoContinue = (finishReason: string | null, assistantText: string): boolean => {
+  if (!autoContinueLongCode.value) return false
+  const reason = (finishReason ?? '').trim().toLowerCase()
+  return LENGTH_FINISH_REASONS.has(reason) || codeLooksStructurallyIncomplete(assistantText)
+}
+
 const send = async () => {
   const text = composer.value.trim()
   if (!canSend.value || !text || !selectedAlias.value || !protocol.value) return
 
   messages.value.push({ role: 'user', content: text })
   await persistCurrentChat()
-  const outboundMessages = messages.value.slice(-30)
   composer.value = ''
-  sending.value = true
-  receivedStreamDelta.value = false
   errorMessage.value = null
 
   const assistantIndex = messages.value.length
   messages.value.push({ role: 'assistant', content: '' })
   void scrollToBottom()
 
-  const input = {
-    model: selectedAlias.value,
-    protocol: protocol.value,
-    system_prompt: systemPrompt.value.trim() || null,
-    messages: outboundMessages,
-    max_output_tokens: Math.min(
-      Number(maxOutputTokens.value) || 1024,
-      quota.data.value?.max_output_tokens ?? 2048,
-      selectedModel.value?.capabilities.max_output_tokens ?? Number.MAX_SAFE_INTEGER
-    ),
-    temperature: temperatureEnabled.value ? Number(temperature.value) : null,
-    funding_source: dailyFundingForSelectedModel.value ? 'daily' as const : 'balance' as const
-  }
+  const activeRun = backgroundRun.start({
+    chatId: currentChatId.value,
+    chatKey: currentChatKey.value || null,
+    modelAlias: selectedAlias.value
+  })
+  const runToken = activeRun.token
+  let fundingSource: 'daily' | 'balance' = dailyFundingForSelectedModel.value ? 'daily' : 'balance'
+  let segment = 0
 
-  streamController = new AbortController()
   try {
-    await api.account.streamPlayground(input, {
-      onMeta: (data) => {
-        if (data.request_id) lastRequestId.value = data.request_id
-      },
-      onDelta: (delta) => {
-        const target = messages.value[assistantIndex]
-        if (!target || target.role !== 'assistant') return
-        target.content += delta
-        receivedStreamDelta.value = true
-        void scrollToBottom('auto')
-      },
-      onDone: (data) => {
-        if (data.request_id) lastRequestId.value = data.request_id
-        lastRawResponse.value = data.response ?? {
-          streamed: true,
-          protocol: data.protocol ?? protocol.value,
-          event_count: data.event_count ?? null,
-          text_length: data.text_length ?? null
+    while (segment < (autoContinueLongCode.value ? AUTO_CONTINUE_MAX_SEGMENTS : 1)) {
+      const assistant = messages.value[assistantIndex]
+      if (!assistant || assistant.role !== 'assistant') break
+
+      const visibleContext: ChatMessage[] = segment === 0
+        ? messages.value.slice(0, assistantIndex)
+        : [
+            ...messages.value.slice(0, assistantIndex),
+            { role: 'assistant', content: assistant.content },
+            { role: 'user', content: AUTO_CONTINUE_PROMPT }
+          ]
+      const outboundMessages = buildOutboundMessages(visibleContext)
+      let finishReason: string | null = null
+
+      const requestedSystem = systemPrompt.value.trim()
+      const codingSystem = autoContinueLongCode.value && CODING_REQUEST_PATTERN.test(text) ? COMPLETE_CODE_INSTRUCTION : ''
+      const effectiveSystem = [requestedSystem, codingSystem].filter(Boolean).join('\n\n')
+
+      const input = {
+        model: selectedAlias.value,
+        protocol: protocol.value,
+        system_prompt: effectiveSystem || null,
+        messages: outboundMessages,
+        max_output_tokens: effectiveMaxOutputTokens.value,
+        temperature: temperatureEnabled.value ? Number(temperature.value) : null,
+        funding_source: fundingSource
+      }
+
+      await api.account.streamPlayground(input, {
+        onMeta: (data) => {
+          if (data.request_id) {
+            lastRequestId.value = data.request_id
+            backgroundRun.setRequestId(runToken, data.request_id)
+          }
+        },
+        onDelta: (delta) => {
+          backgroundRun.append(runToken, delta)
+          const target = messages.value[assistantIndex]
+          if (!target || target.role !== 'assistant') return
+          target.content += delta
+          void scrollToBottom('auto')
+        },
+        onDone: (data) => {
+          finishReason = typeof data.finish_reason === 'string' ? data.finish_reason : null
+          if (data.request_id) {
+            lastRequestId.value = data.request_id
+            backgroundRun.setRequestId(runToken, data.request_id)
+          }
+          lastRawResponse.value = data.response ?? {
+            streamed: true,
+            protocol: data.protocol ?? protocol.value,
+            event_count: data.event_count ?? null,
+            text_length: data.text_length ?? null,
+            finish_reason: finishReason
+          }
+        }
+      }, activeRun.signal)
+
+      const completedText = messages.value[assistantIndex]?.content ?? ''
+      segment += 1
+      if (segment >= AUTO_CONTINUE_MAX_SEGMENTS || !shouldAutoContinue(finishReason, completedText)) break
+
+      // A continuation is a new settled request. Refresh access first so free
+      // daily quota cannot silently spill into paid balance unless the customer
+      // already enabled the explicit balance fallback.
+      await quota.refresh()
+      if (fundingSource === 'daily' && !dailyFundingForSelectedModel.value) {
+        if (useBalanceFallback.value && balanceAvailableForSelectedModel.value) {
+          fundingSource = 'balance'
+        } else {
+          errorMessage.value = 'The response reached today’s free limit while Playground was completing the code. The partial answer is saved. Wait for the daily reset or enable Tokens / Credits to continue it.'
+          break
         }
       }
-    }, streamController.signal)
+    }
 
     const assistant = messages.value[assistantIndex]
     if (assistant && assistant.role === 'assistant' && assistant.content.trim() === '') {
       assistant.content = 'The model completed without a text response. Open live usage to inspect the settled request.'
     }
 
-    // Give the activity endpoint a brief moment to publish the final state after
-    // the gateway has completed settlement/reconciliation and closed the stream.
     await new Promise(resolve => setTimeout(resolve, 150))
     await quota.refresh()
     await refreshActivity()
+    backgroundRun.saving(runToken)
     await persistCurrentChat()
+    backgroundRun.finish(runToken)
     void scrollToBottom()
   } catch (error) {
     const assistant = messages.value[assistantIndex]
-    const aborted = error instanceof DOMException && error.name === 'AbortError'
+    const aborted = (error as { name?: string } | null)?.name === 'AbortError'
     if (assistant && assistant.role === 'assistant' && assistant.content.trim() === '') {
       messages.value.splice(assistantIndex, 1)
     }
     if (!aborted) {
-      errorMessage.value = error instanceof Error ? error.message : 'The Playground request could not be completed.'
+      errorMessage.value = playgroundErrorMessage(error)
     }
     await quota.refresh()
     await refreshActivity()
+    backgroundRun.saving(runToken)
     await persistCurrentChat()
-  } finally {
-    streamController = null
-    sending.value = false
-    receivedStreamDelta.value = false
+    backgroundRun.fail(
+      runToken,
+      aborted ? 'Generation stopped by the customer.' : playgroundErrorMessage(error),
+      aborted
+    )
   }
 }
 
 const stopGenerating = () => {
   if (!sending.value) return
-  streamController?.abort()
+  backgroundRun.stop()
 }
 
 const redeem = async () => {
@@ -427,23 +770,29 @@ const redeem = async () => {
     if (quota.data.value?.fallback_available && selectedAlias.value && quota.data.value.fallback_model_aliases.includes(selectedAlias.value)) {
       useBalanceFallback.value = true
     }
-    toast.add({ title: 'Redeem code applied', description: `${result.units} ${result.billing_mode === 'TOKEN_QUOTA' ? 'token units' : 'credit units'} added. Playground balance fallback is ready when daily free quota is unavailable.`, color: 'success' })
+    toast.add({ title: 'Redeem code applied', description: `${result.units} ${result.billing_mode === 'TOKEN_QUOTA' ? 'Tokens' : 'Credits'} added. Purchased access is ready when free daily Tokens are unavailable.`, color: 'success' })
   } catch (error) {
     toast.add({ title: 'Redeem failed', description: error instanceof Error ? error.message : 'Please try again.', color: 'error' })
   } finally { redeeming.value = false }
 }
 
 onMounted(() => {
+  ensureClientChatKey()
   if (window.matchMedia('(max-width: 1023px)').matches) showInspector.value = false
   void refreshActivity()
-  void refreshHistory()
+  void (async () => {
+    await refreshHistory()
+    await restoreActiveChat()
+    mirrorBackgroundRunIntoChat()
+  })()
   activityTimer = setInterval(() => void refreshActivity(), 3000)
   clockTimer = setInterval(() => {
     liveClock.value = Date.now()
   }, 1000)
 })
 onBeforeUnmount(() => {
-  streamController?.abort()
+  // Do not abort the Playground stream here. Route navigation is not a Stop action;
+  // the browser keeps the request alive until it finishes or the customer presses Stop.
   if (activityTimer) clearInterval(activityTimer)
   if (clockTimer) clearInterval(clockTimer)
 })
@@ -478,7 +827,11 @@ onBeforeUnmount(() => {
           <aside class="absolute inset-y-0 left-0 flex w-full max-w-[20rem] max-sm:max-w-none flex-col border-r border-default bg-elevated/95 shadow-2xl backdrop-blur-xl">
             <div class="flex min-h-14 items-center justify-between gap-2 border-b border-default px-3.5">
               <div class="min-w-0">
-                <p class="text-sm font-semibold text-highlighted">Chat history</p>
+                <div class="flex items-center gap-2">
+                  <p class="text-sm font-semibold text-highlighted">Chat history</p>
+                  <UBadge v-if="historySaving" color="warning" variant="subtle" size="sm">Saving…</UBadge>
+                  <UBadge v-else-if="currentChatId && !historySaveError" color="success" variant="subtle" size="sm">Saved</UBadge>
+                </div>
                 <p class="text-[10px] text-muted">30 chats · 30-day rolling retention</p>
               </div>
               <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" aria-label="Close history" @click="historyOpen = false" />
@@ -517,22 +870,19 @@ onBeforeUnmount(() => {
           <section class="flex min-w-0 flex-1 flex-col bg-default/10">
             <header class="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated/35 px-3 py-2.5 sm:px-4">
               <div class="flex min-w-0 flex-1 items-center gap-2">
+                <SpModelLogo v-if="selectedAlias" :model="selectedAlias" :label="selectedModel?.display_name" size="sm" class="hidden sm:inline-flex" />
                 <USelectMenu
                   v-model="selectedAlias"
                   :items="modelOptions"
                   value-key="value"
-                  class="w-full min-w-44 max-w-72"
-                  :disabled="quota.data.value?.allow_model_switching === false && (quota.data.value?.fallback_model_aliases.length ?? 0) === 0"
+                  class="w-full min-w-44 max-w-80"
                   placeholder="Choose model"
                 />
-                <UBadge color="neutral" variant="subtle" class="hidden sm:inline-flex">{{ protocolLabel }}</UBadge>
-                <UBadge :color="fundingForSelectedModel ? 'success' : 'warning'" variant="subtle" class="hidden md:inline-flex">{{ activeFundingLabel }}</UBadge>
               </div>
               <div class="flex items-center gap-1.5">
-                <div class="hidden items-center gap-2 rounded-lg border border-default bg-default/30 px-2.5 py-1.5 text-xs lg:flex">
-                  <span class="text-muted">Free</span>
-                  <strong class="sp-numeric text-highlighted">{{ formatUnits(dailyRemaining) }}</strong>
-                  <div class="h-1.5 w-14 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${freePercent}%` }" /></div>
+                <div class="hidden items-center gap-2 rounded-lg border border-default bg-default/30 px-2.5 py-1.5 text-xs lg:flex" title="Playground access is active. Remaining balances are available on the Entitlements page.">
+                  <span class="inline-block size-1.5 rounded-full bg-success" />
+                  <span class="font-medium text-toned">{{ dailyFundingForSelectedModel ? 'Free access' : balanceFundingForSelectedModel ? 'Customer access' : 'Playground' }}</span>
                 </div>
                 <UButton
                   size="sm"
@@ -548,10 +898,12 @@ onBeforeUnmount(() => {
             <div ref="chatScroll" class="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth">
               <div class="mx-auto w-full max-w-5xl px-4 py-7 sm:px-6 lg:px-8">
                 <div v-if="messages.length === 0" class="mx-auto flex min-h-[28rem] max-w-3xl flex-col items-center justify-center text-center">
-                  <div class="mb-4 flex size-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                  <SpModelLogo v-if="selectedAlias" :model="selectedAlias" :label="selectedModel?.display_name" size="lg" class="mb-4" />
+                  <div v-else class="mb-4 flex size-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
                     <UIcon name="i-lucide-sparkles" class="size-6" />
                   </div>
                   <h2 class="text-2xl font-semibold tracking-tight text-highlighted">What can I help you build?</h2>
+                  <p v-if="selectedModel" class="mt-1 text-xs font-medium text-toned">Using {{ selectedModel.display_name }} <span class="font-mono text-muted">· {{ selectedAlias }}</span></p>
                   <p class="mt-2 max-w-xl text-sm leading-6 text-muted">Choose a starter or type naturally. Long answers stay inside this chat area, and code gets its own copyable editor-style block.</p>
                   <div class="mt-7 grid w-full gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     <button
@@ -661,14 +1013,31 @@ onBeforeUnmount(() => {
             <div class="min-h-0 flex-1 overflow-y-auto p-4">
               <div v-if="inspectorTab === 'setup'" class="space-y-5">
                 <div class="rounded-xl border border-default bg-default/25 p-3 text-xs">
-                  <div class="flex items-center justify-between gap-3"><span class="text-muted">Protocol</span><strong>{{ protocolLabel }}</strong></div>
-                  <div class="mt-2 flex items-center justify-between gap-3"><span class="text-muted">Alias</span><span class="max-w-44 truncate font-mono text-[11px] text-highlighted">{{ selectedAlias || '—' }}</span></div>
-                  <div class="mt-2 flex items-center justify-between gap-3"><span class="text-muted">Funding</span><UBadge :color="fundingForSelectedModel ? 'success' : 'warning'" variant="subtle" size="sm">{{ activeFundingLabel }}</UBadge></div>
+                  <div class="flex items-center gap-2.5">
+                    <SpModelLogo v-if="selectedAlias" :model="selectedAlias" :label="selectedModel?.display_name" size="sm" />
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate font-medium text-highlighted">{{ selectedModel?.display_name || 'Choose a model' }}</p>
+                      <code class="block truncate font-mono text-[10px] text-muted">{{ selectedAlias || '—' }}</code>
+                    </div>
+                  </div>
+                  <div class="mt-3 flex items-center justify-between gap-3 border-t border-default pt-2.5"><span class="text-muted">Funding</span><UBadge :color="fundingForSelectedModel ? 'success' : 'warning'" variant="subtle" size="sm">{{ activeFundingLabel }}</UBadge></div>
                 </div>
 
-                <UFormField label="Maximum output tokens">
-                  <UInputNumber v-model="maxOutputTokens" :min="1" :max="quota.data.value?.max_output_tokens ?? 65536" class="w-full" />
+                <UFormField
+                  label="Maximum output"
+                  :help="outputCeilingHelp"
+                >
+                  <USelect
+                    v-model="maxOutputChoice"
+                    :items="outputCeilingItems"
+                    value-key="value"
+                    class="w-full"
+                  />
                 </UFormField>
+                <div class="rounded-xl border border-default bg-default/20 p-3">
+                  <USwitch v-model="autoContinueLongCode" label="Continue long code automatically" />
+                  <p class="mt-1.5 text-[11px] leading-4 text-muted">For coding requests, Playground asks for the full implementation and automatically continues the same answer if the model reaches an output ceiling or leaves code structurally unfinished (up to 4 segments). Stop still ends it immediately.</p>
+                </div>
                 <USwitch v-model="temperatureEnabled" label="Custom temperature" />
                 <UFormField v-if="temperatureEnabled" label="Temperature">
                   <UInputNumber v-model="temperature" :min="0" :max="2" :step="0.1" class="w-full" />
@@ -701,9 +1070,8 @@ onBeforeUnmount(() => {
                     <UBadge :color="stateColor(lastRequest.state)" variant="subtle" size="sm">{{ stateLabel(lastRequest.state) }}</UBadge>
                   </div>
                   <div class="space-y-2.5 text-xs">
-                    <div class="flex justify-between gap-3"><span class="text-muted">Provider</span><strong>{{ lastRequest.provider || 'Resolving…' }}</strong></div>
-                    <div class="flex justify-between gap-3"><span class="text-muted">Public model</span><span class="max-w-44 truncate font-mono text-[11px]">{{ lastRequest.public_model }}</span></div>
-                    <div class="flex justify-between gap-3"><span class="text-muted">Route model</span><span class="max-w-44 truncate font-mono text-[11px]">{{ lastRequest.internal_model || '—' }}</span></div>
+                    <div class="flex justify-between gap-3"><span class="text-muted">Model</span><span class="max-w-52 truncate font-mono text-[11px] text-highlighted">{{ lastRequest.public_model }}</span></div>
+                    <div class="flex justify-between gap-3"><span class="text-muted">Request</span><span class="max-w-48 truncate font-mono text-[10px] text-dimmed">{{ lastRequest.id }}</span></div>
                   </div>
                   <div class="mt-3 grid grid-cols-3 gap-2 border-t border-default pt-3 text-center">
                     <div class="rounded-lg border border-success/20 bg-success/5 p-2"><p class="text-[10px] uppercase tracking-wide text-success/80">Input</p><strong class="sp-numeric mt-1 block text-sm text-success">{{ lastRequest.input_tokens ?? '—' }}</strong></div>
@@ -711,7 +1079,7 @@ onBeforeUnmount(() => {
                     <div class="rounded-lg border border-warning/20 bg-warning/5 p-2"><p class="text-[10px] uppercase tracking-wide text-warning/80">Duration</p><strong class="sp-numeric mt-1 block text-sm text-warning">{{ elapsed(lastRequest) }}</strong></div>
                   </div>
                   <div class="mt-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5">
-                    <p class="text-[10px] uppercase tracking-wide text-primary/80">Units</p>
+                    <p class="text-[10px] uppercase tracking-wide text-primary/80">Tokens & Credits</p>
                     <strong class="sp-numeric mt-1 block text-sm text-primary">{{ requestUnits(lastRequest) }}</strong>
                     <p v-if="lastRequest.state === 'reconciling'" class="mt-1 text-[11px] leading-4 text-warning">The model response finished. Billing is being reconciled; this request is not still running.</p>
                   </div>
@@ -719,32 +1087,36 @@ onBeforeUnmount(() => {
                 </section>
 
                 <section class="rounded-xl border border-default bg-default/25 p-3.5">
-                  <div class="flex items-center justify-between gap-3"><span class="text-xs text-muted">Daily free remaining</span><strong class="sp-numeric text-sm text-highlighted">{{ formatUnits(dailyRemaining) }}</strong></div>
-                  <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${freePercent}%` }" /></div>
-                  <div class="mt-3 grid grid-cols-3 gap-1.5 text-center text-[10px]">
-                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Redeemed</p><strong class="sp-numeric mt-1 block text-default">{{ formatUnits(quota.data.value?.redeem_token_remaining ?? 0) }}</strong></div>
-                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Purchased</p><strong class="sp-numeric mt-1 block text-default">{{ formatUnits(quota.data.value?.paid_token_remaining ?? 0) }}</strong></div>
-                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Credit</p><strong class="sp-numeric mt-1 block text-default">{{ formatUnits(quota.data.value?.paid_credit_remaining ?? 0) }}</strong></div>
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <p class="text-xs font-medium text-highlighted">Access status</p>
+                      <p class="mt-1 text-[11px] leading-4 text-muted">Exact balance counters stay on the Entitlements page so the chat stays focused on your response.</p>
+                    </div>
+                    <UBadge :color="fundingForSelectedModel ? 'success' : 'warning'" variant="subtle" size="sm">{{ fundingForSelectedModel ? 'Ready' : 'Needs access' }}</UBadge>
                   </div>
+                  <div class="mt-3 grid grid-cols-3 gap-1.5 text-center text-[10px]">
+                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Free daily Tokens</p><strong class="mt-1 block text-default">{{ dailyFundingForSelectedModel ? 'Available' : (selectedIsFreeEligible ? 'Limit reached' : 'Unavailable') }}</strong></div>
+                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Tokens</p><strong class="mt-1 block text-default">{{ Number(quota.data.value?.redeem_token_remaining ?? 0) + Number(quota.data.value?.paid_token_remaining ?? 0) > 0 ? 'Available' : 'Not added' }}</strong></div>
+                    <div class="rounded-lg bg-muted/35 p-2"><p class="text-muted">Credits</p><strong class="mt-1 block text-default">{{ Number(quota.data.value?.paid_credit_remaining ?? 0) > 0 ? 'Available' : 'Not added' }}</strong></div>
+                  </div>
+                  <UButton to="/dashboard/entitlements" color="neutral" variant="subtle" block size="sm" class="mt-3" trailing-icon="i-lucide-arrow-right">View Tokens & Credits</UButton>
                 </section>
 
                 <section v-if="(quota.data.value?.model_balances.length ?? 0) > 0" class="space-y-2">
                   <p class="text-xs font-medium text-muted">Model access</p>
                   <div v-for="modelBalance in quota.data.value?.model_balances ?? []" :key="modelBalance.alias" class="rounded-xl border border-default bg-default/25 p-3 text-xs">
-                    <div class="flex items-center justify-between gap-2"><strong class="truncate font-mono text-[11px] text-highlighted">{{ modelBalance.alias }}</strong><UBadge :color="modelBalance.balance_available ? 'success' : 'neutral'" variant="subtle" size="sm">{{ modelBalance.free_eligible && modelBalance.balance_available ? 'Free + purchased' : modelBalance.free_eligible ? 'Daily free' : 'Purchased' }}</UBadge></div>
-                    <div class="mt-2 space-y-1 text-muted"><p v-if="modelBalance.token_remaining > 0">Purchased: <strong class="sp-numeric text-default">{{ formatUnits(modelBalance.token_remaining) }}</strong> tokens</p><p v-if="modelBalance.credit_remaining > 0">Credit: <strong class="sp-numeric text-default">{{ formatUnits(modelBalance.credit_remaining) }}</strong></p><p v-if="modelBalance.next_expires_at">Expires {{ formatDateTime(modelBalance.next_expires_at) }}</p></div>
+                    <div class="flex items-center justify-between gap-2">
+                      <strong class="truncate font-mono text-[11px] text-highlighted">{{ modelBalance.alias }}</strong>
+                      <UBadge :color="modelBalance.free_eligible || modelBalance.balance_available ? 'success' : 'neutral'" variant="subtle" size="sm">{{ modelBalance.free_eligible || modelBalance.balance_available ? 'Available' : 'Locked' }}</UBadge>
+                    </div>
+                    <p v-if="modelBalance.next_expires_at" class="mt-2 text-muted">Expires {{ formatDateTime(modelBalance.next_expires_at) }}</p>
                   </div>
                 </section>
 
-                <UAlert v-if="quotaExhausted" color="warning" variant="subtle" title="Daily quota exhausted" :description="balanceAvailableForSelectedModel ? 'Enable customer balance to continue.' : 'Redeem a code, buy a package, or wait for the daily reset.'" />
-                <UButton v-if="quotaExhausted && balanceAvailableForSelectedModel" class="w-full" :color="useBalanceFallback ? 'success' : 'primary'" :variant="useBalanceFallback ? 'soft' : 'solid'" :icon="useBalanceFallback ? 'i-lucide-circle-check' : 'i-lucide-wallet-cards'" @click="useBalanceFallback = !useBalanceFallback">{{ useBalanceFallback ? 'Customer balance enabled' : 'Continue with customer balance' }}</UButton>
+                <UAlert v-if="quotaExhausted" color="warning" variant="subtle" title="Daily free limit reached" :description="balanceAvailableForSelectedModel ? 'Use your Tokens or Credits to continue now.' : `Your free Tokens reset ${quota.data.value?.reset_at ? formatDateTime(quota.data.value.reset_at) : 'at the next daily reset'}. You can also buy or redeem Tokens or Credits.`" />
+                <UButton v-if="quotaExhausted && balanceAvailableForSelectedModel" class="w-full" :color="useBalanceFallback ? 'success' : 'primary'" :variant="useBalanceFallback ? 'soft' : 'solid'" :icon="useBalanceFallback ? 'i-lucide-circle-check' : 'i-lucide-wallet-cards'" @click="useBalanceFallback = !useBalanceFallback">{{ useBalanceFallback ? 'Tokens / Credits enabled' : 'Continue with Tokens / Credits' }}</UButton>
                 <div class="flex gap-2"><UInput v-model="redeemCode" class="min-w-0 flex-1" placeholder="Redeem code" @keyup.enter="redeem" /><UButton color="neutral" variant="subtle" :loading="redeeming" :disabled="!redeemCode.trim()" @click="redeem">Redeem</UButton></div>
 
-                <details v-if="lastRawResponse !== null" class="rounded-xl border border-default bg-default/25 p-3 text-xs">
-                  <summary class="cursor-pointer font-medium text-highlighted">Raw response</summary>
-                  <p v-if="lastRequestId" class="mt-2 break-all font-mono text-[10px] text-dimmed">{{ lastRequestId }}</p>
-                  <pre class="mt-3 max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-5 text-muted">{{ JSON.stringify(lastRawResponse, null, 2) }}</pre>
-                </details>
               </div>
             </div>
           </aside>

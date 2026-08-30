@@ -65,6 +65,12 @@ import type {
   ResellerManagementScope
 } from '~/types/reseller'
 import type {
+  ReferralDashboard,
+  ReferralResolution,
+  AdminReferralOverview,
+  AdminReferralSettings
+} from '~/types/referrals'
+import type {
   ApiKeyCreated,
   ApiKeyDetails, ApiKeyUsageSummary,
   ApiKeyStatusReport,
@@ -99,6 +105,8 @@ interface SpRequestOptions {
   collection?: boolean
   /** Skip the credential for genuinely public routes. */
   anonymous?: boolean
+  /** Fail visibly instead of leaving a navigation/loading state hanging forever. */
+  timeout?: number
 }
 
 /**
@@ -187,7 +195,8 @@ export function useSpApi() {
         body: options.body,
         query: options.query,
         credentials: cookieMode.value ? 'include' : 'same-origin',
-        retry: 0
+        retry: 0,
+        timeout: options.timeout
       })
 
       return response.data
@@ -225,7 +234,7 @@ export function useSpApi() {
     handlers: {
       onMeta?: (data: { request_id?: string, protocol?: string, streaming?: boolean }) => void
       onDelta?: (text: string) => void
-      onDone?: (data: { request_id?: string, protocol?: string, event_count?: number, text_length?: number, response?: unknown }) => void
+      onDone?: (data: { request_id?: string, protocol?: string, event_count?: number, text_length?: number, finish_reason?: string | null, response?: unknown }) => void
     } = {},
     signal?: AbortSignal
   ): Promise<void> => {
@@ -295,7 +304,7 @@ export function useSpApi() {
         return
       }
       if (event === 'done') {
-        handlers.onDone?.(data as { request_id?: string, protocol?: string, event_count?: number, text_length?: number, response?: unknown })
+        handlers.onDone?.(data as { request_id?: string, protocol?: string, event_count?: number, text_length?: number, finish_reason?: string | null, response?: unknown })
         return
       }
       if (event === 'error') {
@@ -348,6 +357,12 @@ export function useSpApi() {
     health: () => request<HealthResponse>('/health', { anonymous: true }),
 
     auth: {
+      /** Implemented: POST /api/v1/auth/register/code */
+      sendRegistrationCode: (input: { email: string }) => request<{ message: string, expires_in: number, resend_after: number }>('/auth/register/code', {
+        method: 'POST',
+        body: { ...input },
+        anonymous: true
+      }),
       /** Implemented: POST /api/v1/auth/register */
       register: (input: RegisterInput) => request<AuthResponse>('/auth/register', {
         method: 'POST',
@@ -402,6 +417,15 @@ export function useSpApi() {
       })
     },
 
+    referrals: {
+      resolve: (code: string) => request<ReferralResolution>(`/referrals/${apiSegment(code)}`, { anonymous: true }),
+      dashboard: () => request<ReferralDashboard>('/me/referrals'),
+      claim: (referralCode: string) => request<{ claimed: boolean, referred_at: string | null }>('/me/referrals/claim', {
+        method: 'POST',
+        body: { referral_code: referralCode }
+      })
+    },
+
     /** Requested contract — authenticated customer account. */
     account: {
       /** Implemented: PATCH /api/v1/me */
@@ -428,7 +452,8 @@ export function useSpApi() {
       balance: () => request<BalanceSummary>('/me/balance'),
       entitlements: () => request<EntitlementLot[]>('/me/entitlements', { collection: true }),
       apiKeys: () => request<ApiKeySummary[]>('/me/api-keys', { collection: true }),
-      apiKeyDetails: (id: string) => request<ApiKeyDetails>(`/me/api-keys/${apiSegment(id)}`),
+      apiKeyDetails: (id: string) => request<ApiKeyDetails>(`/me/api-keys/${apiSegment(id)}`, { timeout: 6_000 }),
+      apiKeyFunding: (id: string) => request<Pick<ApiKeyDetails, 'balance_source' | 'token_quota_remaining' | 'credit_balances' | 'funding' | 'funding_status' | 'funding_message' | 'funding_diagnostic_id' | 'server_time'>>(`/me/api-keys/${apiSegment(id)}/funding`, { timeout: 10_000 }),
       apiKeyUsageSummary: (id: string, query?: { from?: string, to?: string, bucket?: 'hour' | 'day' }) =>
         request<ApiKeyUsageSummary>(`/me/usage/keys/${apiSegment(id)}/summary`, { query }),
       createApiKey: (input: {
@@ -455,6 +480,8 @@ export function useSpApi() {
         request<PlaygroundChat>(`/me/playground/chats/${apiSegment(String(id))}`),
       createPlaygroundChat: (input: { title?: string | null, model_alias?: string | null, system_prompt?: string | null, messages: Array<{ role: 'user' | 'assistant', content: string }> }) =>
         request<PlaygroundChat>('/me/playground/chats', { method: 'POST', body: { ...input } }),
+      syncPlaygroundChat: (input: { client_key: string, title?: string | null, model_alias?: string | null, system_prompt?: string | null, messages: Array<{ role: 'user' | 'assistant', content: string }> }) =>
+        request<PlaygroundChat>('/me/playground/chats/sync', { method: 'PUT', body: { ...input } }),
       updatePlaygroundChat: (id: number | string, input: { title?: string | null, model_alias?: string | null, system_prompt?: string | null, messages?: Array<{ role: 'user' | 'assistant', content: string }> }) =>
         request<PlaygroundChat>(`/me/playground/chats/${apiSegment(String(id))}`, { method: 'PUT', body: { ...input } }),
       deletePlaygroundChat: (id: number | string) =>
@@ -498,7 +525,7 @@ export function useSpApi() {
 
     /** Public API key checker — no authentication required. */
     checkApiKey: (params: { api_key: string }) =>
-      request<PublicApiKeyStatus>('/keys/check', { method: 'POST', body: params, anonymous: true }),
+      request<PublicApiKeyStatus>('/keys/check', { method: 'POST', body: params, anonymous: true, timeout: 12_000 }),
 
     google: {
       redirect: (params?: { intent?: 'login' | 'link', domain?: string }) =>
@@ -525,6 +552,9 @@ export function useSpApi() {
      * holding one may still receive 403 `forbidden` from the other.
      */
     admin: {
+      referrals: () => request<AdminReferralOverview>('/admin/referrals'),
+      updateReferralSettings: (input: AdminReferralSettings & { reason: string }) =>
+        request<AdminReferralSettings>('/admin/referrals/settings', { method: 'PUT', body: { ...input } }),
       overview: () => request<AdminOverview>('/admin/overview'),
       systemHealth: () => request<AdminSystemHealth>('/admin/system-health'),
       auditLogs: (query?: { action?: string, subject_type?: string, actor_user_id?: number, limit?: number }) =>

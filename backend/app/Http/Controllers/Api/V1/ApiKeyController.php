@@ -13,6 +13,7 @@ use App\Models\UsageRecord;
 use App\Models\User;
 use App\Services\ApiKeySecretService;
 use App\Services\AuditService;
+use App\Services\InferenceBillingService;
 use App\Support\AccessAllocationSchema;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -136,7 +137,7 @@ class ApiKeyController extends Controller
         $request->validate(['api_key' => ['required', 'string', 'min:10', 'max:255']]);
 
         $digest = $secrets->digest((string) $request->input('api_key'));
-        $key = ApiKey::query()->with(['modelAliases', 'user'])->where('lookup_digest', $digest)->first();
+        $key = ApiKey::query()->with('modelAliases')->where('lookup_digest', $digest)->first();
 
         if (! $key) {
             return response()->json(['message' => 'Invalid API key'], 404);
@@ -171,10 +172,34 @@ class ApiKeyController extends Controller
         $usageTotals = UsageRecord::query()
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
-            ->selectRaw('COALESCE(SUM(input_tokens), 0) as input_tokens')
+            ->selectRaw('COALESCE(SUM(input_tokens + cache_read_tokens + cache_write_tokens), 0) as input_tokens')
+            ->selectRaw('COALESCE(SUM(cache_read_tokens), 0) as cached_input_tokens')
             ->selectRaw('COALESCE(SUM(output_tokens), 0) as output_tokens')
             ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
             ->first();
+
+        // Smart-reuse savings are derived exclusively from SP Cambo local usage.
+        // Only Token-quota rows are comparable to metered_units; wallet rows are
+        // intentionally excluded so a money-minor-unit charge is never presented
+        // as a Token saving.
+        $tokenQuotaUsage = UsageRecord::query()
+            ->where('usage_records.user_id', $key->user_id)
+            ->where('usage_records.api_key_id', $key->id)
+            ->join('reservations', 'reservations.id', '=', 'usage_records.reservation_id')
+            ->where('reservations.billing_mode', 'TOKEN_QUOTA')
+            ->get(['usage_records.input_tokens', 'usage_records.output_tokens', 'usage_records.cache_read_tokens', 'usage_records.metered_units']);
+        $reuseSaved = 0;
+        $reuseBilled = 0;
+        foreach ($tokenQuotaUsage as $row) {
+            $baseline = (int) $row->input_tokens + (int) $row->cache_read_tokens + (int) $row->output_tokens;
+            $cached = max(0, (int) $row->cache_read_tokens);
+            $policySaved = InferenceBillingService::localCacheSavedTokens($cached);
+            $actualSaved = max(0, $baseline - (int) $row->metered_units);
+            $reuseSaved += min(max(0, $policySaved), $actualSaved);
+            $reuseBilled += max(0, (int) $row->metered_units);
+        }
+        $reuseBaseline = $reuseSaved + $reuseBilled;
+        $reuseRate = $reuseBaseline > 0 ? round(($reuseSaved * 100) / $reuseBaseline, 1) : 0.0;
 
         $spendRows = UsageRecord::query()
             ->where('user_id', $key->user_id)
@@ -194,16 +219,13 @@ class ApiKeyController extends Controller
         $recentRequests = ApiRequestLog::query()
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
-            ->with(['usage', 'reservation.providerConnectionRevision.provider'])
+            ->with(['usage', 'reservation'])
             ->latest('started_at')
-            ->limit(20)
+            ->limit(12)
             ->get()
             ->map(function (ApiRequestLog $log): array {
                 $usage = $log->usage;
                 $reservation = $log->reservation;
-                $snapshot = is_array($reservation?->billing_snapshot) ? $reservation->billing_snapshot : [];
-                $revision = $reservation?->providerConnectionRevision;
-                $provider = $revision?->provider;
                 $charge = $usage?->credit_charge_minor === null ? null : [
                     'minor' => (string) $usage->credit_charge_minor,
                     'currency' => (string) ($usage->currency ?? 'USD'),
@@ -215,16 +237,26 @@ class ApiKeyController extends Controller
                     $durationMs = max(0, $log->started_at->diffInMilliseconds($finishedAt));
                 }
 
+                $savedTokens = null;
+                $billedTokens = null;
+                $savingsRate = null;
+                if ($usage !== null && $reservation?->billing_mode === 'TOKEN_QUOTA') {
+                    $baseline = (int) $usage->input_tokens + (int) $usage->cache_read_tokens + (int) $usage->output_tokens;
+                    $cached = max(0, (int) $usage->cache_read_tokens);
+                    $policySaved = InferenceBillingService::localCacheSavedTokens($cached);
+                    $actualSaved = max(0, $baseline - (int) $usage->metered_units);
+                    $savedTokens = min(max(0, $policySaved), $actualSaved);
+                    $billedTokens = max(0, (int) $usage->metered_units);
+                    $savingsBase = $savedTokens + $billedTokens;
+                    $savingsRate = $savingsBase > 0 ? round(($savedTokens * 100) / $savingsBase, 1) : 0.0;
+                }
+
                 return [
                     'request_id' => $log->id,
                     'time' => $log->started_at->toAtomString(),
                     'finished_at' => $finishedAt?->toAtomString(),
                     'endpoint' => $log->endpoint,
                     'model' => $log->public_model,
-                    'internal_model' => $snapshot['internal_model_id'] ?? null,
-                    'provider' => $provider?->name,
-                    'provider_slug' => $provider?->slug,
-                    'route_version' => $snapshot['route_version'] ?? $revision?->route_version,
                     'state' => strtolower($log->state),
                     'status' => match ($log->state) {
                         'SETTLED' => 'success',
@@ -232,7 +264,11 @@ class ApiKeyController extends Controller
                         default => 'pending',
                     },
                     'duration_ms' => $durationMs,
-                    'input_tokens' => $usage === null ? null : (string) $usage->input_tokens,
+                    'input_tokens' => $usage === null ? null : (string) ((int) $usage->input_tokens + (int) $usage->cache_read_tokens + (int) $usage->cache_write_tokens),
+                    'cached_input_tokens' => $usage === null ? null : (string) $usage->cache_read_tokens,
+                    'saved_tokens' => $savedTokens === null ? null : (string) $savedTokens,
+                    'billed_tokens' => $billedTokens === null ? null : (string) $billedTokens,
+                    'savings_rate_percent' => $savingsRate,
                     'output_tokens' => $usage === null ? null : (string) $usage->output_tokens,
                     'total_tokens' => $usage === null ? null : (string) $usage->total_tokens,
                     'reserved_units' => $usage === null && $log->estimated_units !== null ? (string) $log->estimated_units : null,
@@ -251,14 +287,26 @@ class ApiKeyController extends Controller
             'masked_key' => $key->prefix.'...'.$key->last_four,
             'status' => $status,
             'package' => $packages->isEmpty() ? null : $packages->implode(', '),
+            'funding_source' => $eligibleLots->isEmpty()
+                ? 'none'
+                : ($eligibleLots->contains(fn (EntitlementLot $lot): bool => ($lot->access_scope ?? 'ACCOUNT') === 'API_KEY')
+                    ? ($eligibleLots->contains(fn (EntitlementLot $lot): bool => ($lot->access_scope ?? 'ACCOUNT') === 'ACCOUNT') ? 'mixed' : 'dedicated_key')
+                    : 'account'),
+            'funding_note' => $eligibleLots->isEmpty()
+                ? 'This key has model permission but no matching spendable purchased/redeemed balance.'
+                : 'Normal API keys spend matching account-level balance plus any package dedicated to this key. Playground daily quota is never shared with API keys.',
             'allowed_models' => $key->modelAliases->pluck('public_alias')->values(),
             'created_at' => $key->created_at->toAtomString(),
             'expires_at' => $key->expires_at?->toAtomString(),
             'last_used' => $key->last_used_at?->toAtomString(),
             'tokens_used' => [
                 'input' => (string) ($usageTotals?->input_tokens ?? 0),
+                'cached_input' => (string) ($usageTotals?->cached_input_tokens ?? 0),
                 'output' => (string) ($usageTotals?->output_tokens ?? 0),
                 'total' => (string) ($usageTotals?->total_tokens ?? 0),
+                'saved' => (string) $reuseSaved,
+                'billed' => (string) $reuseBilled,
+                'savings_rate_percent' => $reuseRate,
             ],
             // Money is never converted through float arithmetic. If historical
             // records contain more than one currency/scale, the single-value
@@ -295,10 +343,25 @@ class ApiKeyController extends Controller
         // non-expired lots with indexed predicates, then perform the final scope and
         // model matching in PHP. ReservationService remains the authoritative atomic
         // enforcement path for actual spend.
-        $rows = EntitlementLot::query()
+        $rowsQuery = EntitlementLot::query()
             ->where('user_id', $key->user_id)
             ->where('status', 'ACTIVE')
-            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()));
+
+        if ($isPlaygroundKey) {
+            $rowsQuery->where('source_type', 'PLAYGROUND_DAILY')->where('access_scope', 'PLAYGROUND');
+        } else {
+            $rowsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                ->where(function ($scope) use ($key): void {
+                    $scope->whereNull('access_scope')
+                        ->orWhere('access_scope', 'ACCOUNT')
+                        ->orWhere(function ($dedicated) use ($key): void {
+                            $dedicated->where('access_scope', 'API_KEY')->where('bound_api_key_id', $key->id);
+                        });
+                });
+        }
+
+        $rows = $rowsQuery
             ->orderBy('created_at')
             ->orderBy('id')
             ->get(['id', 'billing_mode', 'original_units', 'remaining_units', 'reserved_units', 'unit_label', 'currency', 'currency_exponent', 'package_name', 'source_type', 'allowed_model_aliases', 'activated_at', 'expires_at', 'access_scope', 'bound_api_key_id', 'fulfillment_claim_id']);
@@ -358,26 +421,31 @@ class ApiKeyController extends Controller
 
     public function show(Request $request, ApiKey $apiKey): JsonResponse
     {
-        if (! AccessAllocationSchema::ready()) {
-            return response()->json(AccessAllocationSchema::errorPayload(), 503);
-        }
-
-        // The key identity/scope card must remain available even if one legacy
-        // entitlement row cannot be summarized. This keeps navigation usable and
-        // isolates historical funding-data defects from the credential itself.
+        // IMPORTANT: the details route is intentionally independent from the
+        // entitlement-allocation schema. A customer must always be able to open
+        // the credential identity page even while a funding migration is pending
+        // or an entitlement table is under maintenance. Funding is loaded from the
+        // separate /funding endpoint after first paint.
         try {
-            $key = $this->owned($request, $apiKey)->load('modelAliases');
-            if ($this->isSystemPlaygroundKey($key)) {
-                abort(404);
-            }
-        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException $exception) {
-            throw $exception;
+            $userId = (int) $this->user($request)->id;
+
+            // Re-query through the authenticated owner instead of relying on the
+            // already-bound model. This makes the endpoint deterministic for ULID
+            // keys and avoids accidentally exposing another user's credential.
+            $key = ApiKey::query()
+                ->whereKey((string) $apiKey->getKey())
+                ->where('user_id', $userId)
+                ->whereNotIn('id', PlaygroundCredential::query()->select('api_key_id'))
+                ->with(['modelAliases:id,public_alias'])
+                ->firstOrFail();
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $exception) {
+            abort(404);
         } catch (Throwable $exception) {
             $requestId = 'keydiag_'.Str::lower(Str::random(12));
             Log::error('API key identity load failed.', [
                 'diagnostic_id' => $requestId,
                 'user_id' => (int) $request->user()->id,
-                'api_key_id' => (string) $apiKey->id,
+                'api_key_id' => (string) $apiKey->getKey(),
                 'exception' => $exception::class,
                 'message' => Str::limit($exception->getMessage(), 1000),
             ]);
@@ -389,13 +457,29 @@ class ApiKeyController extends Controller
             ], 500);
         }
 
-        $fundingStatus = 'ready';
-        $fundingMessage = null;
-        $fundingDiagnosticId = null;
-        $lots = new \Illuminate\Database\Eloquent\Collection;
-        $tokenRemaining = 0;
-        $creditBalances = [];
-        $funding = collect();
+        return response()->json(['data' => [
+            'key' => $this->summary($key),
+            'balance_source' => 'loading',
+            'token_quota_remaining' => null,
+            'credit_balances' => [],
+            'funding' => [],
+            'funding_status' => 'deferred',
+            'funding_message' => null,
+            'funding_diagnostic_id' => null,
+            'server_time' => now()->toAtomString(),
+        ]]);
+    }
+
+    public function funding(Request $request, ApiKey $apiKey): JsonResponse
+    {
+        if (! AccessAllocationSchema::ready()) {
+            return response()->json(AccessAllocationSchema::errorPayload(), 503);
+        }
+
+        $key = $this->owned($request, $apiKey)->load('modelAliases');
+        if ($this->isSystemPlaygroundKey($key)) {
+            abort(404);
+        }
 
         try {
             $lots = $this->eligibleLotsForKey($key);
@@ -411,6 +495,7 @@ class ApiKeyController extends Controller
 
             $funding = $lots->map(function (EntitlementLot $lot) use ($spendable, $key): array {
                 $expiresAt = $lot->expires_at;
+
                 return [
                     'id' => (string) $lot->id,
                     'package_name' => (string) ($lot->package_name ?: 'Purchased access'),
@@ -433,34 +518,37 @@ class ApiKeyController extends Controller
                     'days_remaining' => $expiresAt === null ? null : max(0, (int) ceil(now()->diffInSeconds($expiresAt, false) / 86400)),
                 ];
             })->values();
+
+            return response()->json(['data' => [
+                'balance_source' => $lots->isEmpty()
+                    ? 'no_spendable_balance'
+                    : ($lots->contains(fn (EntitlementLot $lot): bool => ($lot->access_scope ?? 'ACCOUNT') === 'API_KEY')
+                        ? 'dedicated_and_legacy_entitlements'
+                        : 'legacy_account_entitlements'),
+                'token_quota_remaining' => (string) $tokenRemaining,
+                'credit_balances' => $creditBalances,
+                'funding' => $funding,
+                'funding_status' => 'ready',
+                'funding_message' => null,
+                'funding_diagnostic_id' => null,
+                'server_time' => now()->toAtomString(),
+            ]]);
         } catch (Throwable $exception) {
-            $fundingStatus = 'unavailable';
-            $fundingMessage = 'The key is available, but SP Cambo could not summarize one or more historical balance records. Your accounting data was not changed.';
-            $fundingDiagnosticId = 'keyfund_'.Str::lower(Str::random(12));
+            $requestId = 'keyfund_'.Str::lower(Str::random(12));
             Log::error('API key funding summary load failed.', [
-                'diagnostic_id' => $fundingDiagnosticId,
+                'diagnostic_id' => $requestId,
                 'user_id' => (int) $request->user()->id,
                 'api_key_id' => (string) $key->id,
                 'exception' => $exception::class,
                 'message' => Str::limit($exception->getMessage(), 1000),
             ]);
-        }
 
-        return response()->json(['data' => [
-            'key' => $this->summary($key),
-            'balance_source' => $fundingStatus !== 'ready' || $lots->isEmpty()
-                ? 'no_spendable_balance'
-                : ($lots->contains(fn (EntitlementLot $lot): bool => ($lot->access_scope ?? 'ACCOUNT') === 'API_KEY')
-                    ? 'dedicated_and_legacy_entitlements'
-                    : 'legacy_account_entitlements'),
-            'token_quota_remaining' => (string) $tokenRemaining,
-            'credit_balances' => $creditBalances,
-            'funding' => $funding,
-            'funding_status' => $fundingStatus,
-            'funding_message' => $fundingMessage,
-            'funding_diagnostic_id' => $fundingDiagnosticId,
-            'server_time' => now()->toAtomString(),
-        ]]);
+            return response()->json([
+                'message' => "The API key loaded, but its funding summary could not be loaded. Diagnostic reference: {$requestId}",
+                'code' => 'api_key_funding_load_failed',
+                'request_id' => $requestId,
+            ], 500);
+        }
     }
 
     public function status(Request $request, ApiKey $apiKey): JsonResponse
@@ -556,7 +644,13 @@ class ApiKeyController extends Controller
     {
         $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
 
-        return ['id' => $key->id, 'label' => $key->label, 'prefix' => $key->prefix, 'last_four' => $key->last_four, 'status' => $status, 'created_at' => $key->created_at->toAtomString(), 'last_used_at' => $key->last_used_at?->toAtomString(), 'expires_at' => $key->expires_at?->toAtomString(), 'allowed_model_aliases' => $key->modelAliases->pluck('public_alias')->values(), 'limits' => $this->limits($key), 'bound_entitlement_id' => null, 'secret_recopy_available' => is_string($key->secret_ciphertext) && $key->secret_ciphertext !== ''];
+        // Do not decrypt the recovery copy merely to render key metadata. Older
+        // rows or a rotated APP_KEY can make an encrypted cast throw even though
+        // the API credential itself is otherwise perfectly usable. Presence is
+        // enough for the UI, so inspect the raw database value.
+        $rawSecretCiphertext = $key->getRawOriginal('secret_ciphertext');
+
+        return ['id' => $key->id, 'label' => $key->label, 'prefix' => $key->prefix, 'last_four' => $key->last_four, 'status' => $status, 'created_at' => $key->created_at->toAtomString(), 'last_used_at' => $key->last_used_at?->toAtomString(), 'expires_at' => $key->expires_at?->toAtomString(), 'allowed_model_aliases' => $key->modelAliases->pluck('public_alias')->values(), 'limits' => $this->limits($key), 'bound_entitlement_id' => null, 'secret_recopy_available' => is_string($rawSecretCiphertext) && $rawSecretCiphertext !== ''];
     }
 
     private function limits(ApiKey $key): array

@@ -7,7 +7,7 @@ import type { ApiKeyStatus } from '~/types/commerce'
  * another reseller's ids return 404, never another tenant's data.
  *
  * Two unrelated credential families appear here and must never be conflated:
- * `sk-spc-*` inference keys belong to a managed customer and call the gateway,
+ * `sk-*` inference keys belong to a managed customer and call the gateway,
  * while `sk-spm-*` management keys are the reseller's own automation credential
  * and cannot perform inference.
  */

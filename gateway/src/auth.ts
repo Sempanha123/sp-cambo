@@ -14,7 +14,7 @@ export function customerKey(request: FastifyRequest): string {
     throw new GatewayError(401, "conflicting_api_keys", "Conflicting API credentials were supplied.");
   }
   const key = bearer ?? anthropic;
-  if (!key || !/^sk-spc-[a-z0-9]{32,80}$/.test(key)) {
+  if (!key || !/^sk-(?:spc-)?[a-z0-9]{32,80}$/.test(key)) {
     throw new GatewayError(401, "invalid_api_key", "The API key is invalid.");
   }
   return key;

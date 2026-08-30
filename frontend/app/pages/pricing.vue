@@ -12,6 +12,20 @@ const packages = await useSpResource('catalog:packages', () => api.catalog.packa
 
 const sorted = computed(() => [...(packages.data.value ?? [])].sort((a, b) => a.sort_order - b.sort_order))
 
+const isSoldOut = (item: PublicPackage) => item.stock_remaining !== null && BigInt(item.stock_remaining) <= 0n
+const stockLabel = (item: PublicPackage) => {
+  if (item.stock_remaining === null) return 'Available'
+  if (isSoldOut(item)) return 'Sold out'
+  return `${formatUnits(item.stock_remaining)} left`
+}
+const familyDescription = (label: string) => {
+  const brand = modelPresentation(label, label).brand
+  if (brand === 'anthropic') return 'Claude-compatible models routed through one stable SP Cambo family.'
+  if (brand === 'openai') return 'Codex and GPT-style public models with stable SP Cambo model IDs.'
+  if (brand === 'gemini') return 'Fast Gemini models for chat, coding and general AI workloads.'
+  return 'Prepaid model access with clear limits and no automatic renewal.'
+}
+
 /** Groups by the admin-defined family so families can be compared side by side. */
 const groups = computed(() => {
   const map = new Map<string, { label: string, items: PublicPackage[] }>()
@@ -26,10 +40,18 @@ const groups = computed(() => {
   return [...map.values()]
 })
 
-const billingModeLabel = (mode: PublicPackage['billing_mode']) =>
-  mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance'
+const billingModeLabel = (item: PublicPackage) => {
+  if (['Credits', 'SP Credits'].includes(item.display_unit_label ?? '')) return 'Credit quota'
+  return item.billing_mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance'
+}
 
 const includedLabel = (item: PublicPackage): string => {
+  if (item.display_units && item.display_unit_label) {
+    return ['Credits', 'SP Credits'].includes(item.display_unit_label)
+      ? `$${formatUnits(item.display_units)} Credits`
+      : `${formatUnits(item.display_units)} ${item.display_unit_label}`
+  }
+
   if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
     return `${formatMoney(item.credit_amount)} credit`
   }
@@ -52,7 +74,11 @@ const faqs = [
   },
   {
     label: 'Are estimates ever billed?',
-    content: 'No. During a request SP Cambo reserves an estimate, then settles against the usage the provider actually reported. Interim figures are labelled as estimates in your dashboard until settlement completes.'
+    content: 'No. During a request SP Cambo reserves a maximum estimate, then settles only the locally measured input + delivered output. Unused reservation is returned. OmniRoute/provider usage counters are never used to change your balance.'
+  },
+  {
+    label: 'Are Tokens the exact raw provider token count?',
+    content: 'Tokens use a simple local 1:1 meter: one locally estimated model-visible input Token and one locally generated output Token each consume one Token. The count is deterministic but is not claimed to be an exact vendor-private tokenizer count.'
   },
   {
     label: 'How do I pay?',
@@ -73,8 +99,7 @@ const faqs = [
           Prepaid packages, published prices
         </h1>
         <p class="text-lg text-muted text-pretty">
-          Pick a package, pay once, and use it until it is spent or expires. Prices, sizes and
-          lifetimes below are published by SP Cambo — nothing on this page is illustrative.
+          Choose a model family, compare packages at a glance, and pay once. Larger bundles have a lower effective unit price, while smart reuse discounts repeated context. Model logos, availability, included Tokens and expiry are shown clearly before checkout.
         </p>
       </div>
 
@@ -100,14 +125,20 @@ const faqs = [
               :key="group.label"
               class="space-y-5"
             >
-              <SpSectionHeading :title="group.label" />
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <SpModelFamilyHeader :family="group.label" :description="familyDescription(group.label)" />
+                <p class="text-xs text-muted">{{ group.items.length }} package{{ group.items.length === 1 ? '' : 's' }}</p>
+              </div>
 
               <div class="grid gap-5 lg:grid-cols-3">
                 <article
                   v-for="item in group.items"
                   :key="item.slug"
-                  class="relative flex flex-col gap-5 rounded-xl border bg-elevated/30 p-6"
-                  :class="item.featured ? 'border-primary/60 ring-1 ring-primary/25' : 'border-default'"
+                  class="relative flex flex-col gap-5 rounded-2xl border bg-elevated/30 p-6 transition"
+                  :class="[
+                    item.featured ? 'border-primary/60 ring-1 ring-primary/25' : 'border-default',
+                    isSoldOut(item) ? 'opacity-65' : 'hover:-translate-y-0.5 hover:border-primary/30'
+                  ]"
                 >
                   <UBadge
                     v-if="item.badge"
@@ -119,16 +150,23 @@ const faqs = [
                     {{ item.badge }}
                   </UBadge>
 
-                  <div class="space-y-1.5">
-                    <h3 class="text-lg font-medium text-highlighted">
-                      {{ item.name }}
-                    </h3>
-                    <p
-                      v-if="item.subtitle"
-                      class="text-sm text-muted"
-                    >
-                      {{ item.subtitle }}
-                    </p>
+                  <div class="flex items-start gap-3">
+                    <SpModelLogo :model="item.allowed_model_aliases[0] || item.family_label" :label="item.family_label" size="md" />
+                    <div class="min-w-0 flex-1 space-y-1.5">
+                      <h3 class="text-lg font-semibold text-highlighted">
+                        {{ item.name }}
+                      </h3>
+                      <p v-if="item.subtitle" class="text-sm text-muted">
+                        {{ item.subtitle }}
+                      </p>
+                      <UBadge
+                        :color="isSoldOut(item) ? 'error' : 'success'"
+                        variant="subtle"
+                        size="sm"
+                      >
+                        {{ stockLabel(item) }}
+                      </UBadge>
+                    </div>
                   </div>
 
                   <div class="space-y-1">
@@ -144,7 +182,7 @@ const faqs = [
                       </span>
                     </div>
                     <p class="text-xs text-muted">
-                      One-off payment · {{ billingModeLabel(item.billing_mode) }}
+                      One-off payment · {{ billingModeLabel(item) }}
                     </p>
                   </div>
 
@@ -190,19 +228,9 @@ const faqs = [
                     <p class="text-xs font-medium tracking-wide text-muted uppercase">
                       Works with
                     </p>
-                    <ul class="flex flex-wrap gap-1.5">
-                      <li
-                        v-for="alias in item.allowed_model_aliases"
-                        :key="alias"
-                      >
-                        <UBadge
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          class="font-mono"
-                        >
-                          {{ alias }}
-                        </UBadge>
+                    <ul class="flex flex-wrap gap-2">
+                      <li v-for="alias in item.allowed_model_aliases" :key="alias">
+                        <SpModelBadge :model="alias" compact />
                       </li>
                     </ul>
                   </div>
@@ -228,14 +256,15 @@ const faqs = [
                   </ul>
 
                   <UButton
-                    :to="auth.authenticated ? `/dashboard/buy?package=${item.slug}` : '/register'"
-                    :color="item.featured ? 'primary' : 'neutral'"
-                    :variant="item.featured ? 'solid' : 'subtle'"
+                    :to="isSoldOut(item) ? undefined : (auth.authenticated ? `/dashboard/buy?package=${item.slug}` : '/register')"
+                    :color="isSoldOut(item) ? 'neutral' : (item.featured ? 'primary' : 'neutral')"
+                    :variant="isSoldOut(item) ? 'outline' : (item.featured ? 'solid' : 'subtle')"
+                    :disabled="isSoldOut(item)"
                     block
                     class="mt-auto"
-                    trailing-icon="i-lucide-arrow-right"
+                    :trailing-icon="isSoldOut(item) ? undefined : 'i-lucide-arrow-right'"
                   >
-                    {{ auth.authenticated ? 'Buy this package' : 'Create account to buy' }}
+                    {{ isSoldOut(item) ? 'Sold out' : (auth.authenticated ? 'Choose package' : 'Create account to buy') }}
                   </UButton>
                 </article>
               </div>
@@ -253,9 +282,7 @@ const faqs = [
               How billing works
             </h2>
             <p class="text-sm text-muted text-pretty">
-              Two billing modes, one prepaid balance. Token-quota packages meter weighted units;
-              credit packages draw down a monetary balance using the per-model rates published in
-              the catalogue.
+              Two prepaid package types. New input/output is metered 1:1; repeated prompt prefixes detected by SP Cambo's local cache use 0.25× Tokens. $1 Credit settles as 100,000 billable Tokens. Credits are not withdrawable cash.
             </p>
             <UButton
               to="/docs/billing"

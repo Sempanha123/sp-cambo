@@ -26,6 +26,8 @@ class RegisterRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email:rfc', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'verification_code' => ['required', 'string', 'size:6', 'regex:/^[0-9]{6}$/'],
+            'referral_code' => ['nullable', 'string', 'min:4', 'max:32', 'regex:/^[A-Za-z0-9_-]+$/'],
         ];
     }
 }

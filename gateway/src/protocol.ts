@@ -3,16 +3,19 @@ import { GatewayError } from "./errors.js";
 import type { InferencePath, Usage } from "./types.js";
 
 const FIELDS: Record<InferencePath, ReadonlySet<string>> = {
-  "/v1/messages": new Set(["model", "messages", "system", "max_tokens", "metadata", "stop_sequences", "stream", "temperature", "thinking", "tool_choice", "tools", "top_k", "top_p", "service_tier"]),
-  "/v1/messages/count_tokens": new Set(["model", "messages", "system", "thinking", "tool_choice", "tools"]),
+  "/v1/messages": new Set(["model", "messages", "system", "max_tokens", "metadata", "stop_sequences", "stream", "temperature", "thinking", "tool_choice", "tools", "top_k", "top_p", "service_tier", "context_management", "output_config"]),
+  "/v1/messages/count_tokens": new Set(["model", "messages", "system", "thinking", "tool_choice", "tools", "context_management", "output_config"]),
   "/v1/responses": new Set(["model", "input", "instructions", "max_output_tokens", "metadata", "parallel_tool_calls", "reasoning", "service_tier", "store", "stream", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "user", "include", "previous_response_id", "prompt_cache_key", "stream_options", "background", "prompt", "conversation", "max_tool_calls"]),
   "/v1/chat/completions": new Set(["model", "messages", "max_completion_tokens", "max_tokens", "metadata", "n", "parallel_tool_calls", "presence_penalty", "frequency_penalty", "reasoning_effort", "response_format", "seed", "service_tier", "stop", "store", "stream", "stream_options", "temperature", "tool_choice", "tools", "top_logprobs", "top_p", "user"]),
 };
+
+export type PromptSegment = { digest: string; tokens: number };
 
 export type Prepared = {
   publicModel: string;
   requestedMaxOutput: number;
   estimatedInput: number;
+  promptSegments: PromptSegment[];
   streaming: boolean;
   fingerprint: string;
   requestId: string;
@@ -30,11 +33,16 @@ export function prepare(path: InferencePath, raw: string, defaultMaxOutput: numb
   if (typeof model !== "string" || !/^[a-zA-Z0-9._:-]{1,100}$/.test(model)) throw new GatewayError(400, "invalid_model", "A valid public model alias is required.");
   const requested = outputTokens(path, parsed, defaultMaxOutput);
   const streaming = parsed.stream === true;
-  const estimated = estimateTokens(raw);
+  const promptSegments = promptSegmentsFor(parsed);
+  const estimated = promptSegments.reduce((sum, segment) => sum + segment.tokens, 0);
+  if (!Number.isSafeInteger(estimated)) {
+    throw new GatewayError(413, "request_too_large", "The request exceeds the supported size.");
+  }
   return {
     publicModel: model,
     requestedMaxOutput: requested,
-    estimatedInput: estimated,
+    estimatedInput: Math.max(0, estimated),
+    promptSegments,
     streaming,
     fingerprint: createHash("sha256").update(raw).digest("hex"),
     requestId: randomUUID(),
@@ -44,164 +52,34 @@ export function prepare(path: InferencePath, raw: string, defaultMaxOutput: numb
 
 export function upstreamBody(path: InferencePath, prepared: Prepared, internalModel: string, hardMax: number): string {
   const body: Record<string, unknown> = { ...prepared.body, model: internalModel };
+  // Claude Code may send Anthropic-only compatibility extensions even when a
+  // customer routes the Anthropic Messages API to a non-Anthropic private model.
+  // Accept these fields at SP Cambo's public edge, then remove them before the
+  // private route so Gemini/OpenAI-style adapters do not reject the request.
+  if (path === "/v1/messages" || path === "/v1/messages/count_tokens") {
+    delete body.context_management;
+    delete body.output_config;
+  }
   if (path === "/v1/messages") body.max_tokens = Math.min(prepared.requestedMaxOutput, hardMax);
   if (path === "/v1/responses") body.max_output_tokens = Math.min(prepared.requestedMaxOutput, hardMax);
   if (path === "/v1/chat/completions") {
     if ("max_completion_tokens" in body) body.max_completion_tokens = Math.min(prepared.requestedMaxOutput, hardMax);
     else body.max_tokens = Math.min(prepared.requestedMaxOutput, hardMax);
-    if (prepared.streaming) {
-      body.stream_options = record(body.stream_options)
-        ? { ...body.stream_options, include_usage: true }
-        : { include_usage: true };
-    }
+  }
+  // R42 does not request provider/OmniRoute usage telemetry. Customer-facing
+  // usage is derived only from SP Cambo's local request/response meter.
+  if (record(body.stream_options)) {
+    const options = { ...body.stream_options };
+    delete options.include_usage;
+    if (Object.keys(options).length === 0) delete body.stream_options;
+    else body.stream_options = options;
   }
   return JSON.stringify(body);
 }
 
-export function usageFromJson(value: unknown, path: InferencePath): Usage | null {
-  if (!record(value)) return null;
-  if (path === "/v1/messages/count_tokens") {
-    const countedInput = integer(value.input_tokens) ?? integer(value.inputTokens) ?? integer(value.prompt_tokens) ?? integer(value.promptTokens);
-    return countedInput === null ? null : {
-      input_tokens: countedInput,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      reasoning_tokens: 0,
-    };
-  }
-
-  const usage = findUsage(value);
-  if (!usage) return null;
-
-  const inputTotal = firstInteger(usage, [
-    "input_tokens", "prompt_tokens", "inputTokens", "promptTokens", "prompt_token_count", "promptTokenCount",
-  ]) ?? 0;
-  const outputTotal = firstInteger(usage, [
-    "output_tokens", "completion_tokens", "outputTokens", "completionTokens", "candidates_token_count", "candidatesTokenCount",
-  ]) ?? 0;
-  const inputDetails = record(usage.input_tokens_details) ? usage.input_tokens_details
-    : record(usage.prompt_tokens_details) ? usage.prompt_tokens_details
-      : record(usage.inputTokensDetails) ? usage.inputTokensDetails
-        : record(usage.promptTokensDetails) ? usage.promptTokensDetails
-          : {};
-  const outputDetails = record(usage.output_tokens_details) ? usage.output_tokens_details
-    : record(usage.completion_tokens_details) ? usage.completion_tokens_details
-      : record(usage.outputTokensDetails) ? usage.outputTokensDetails
-        : record(usage.completionTokensDetails) ? usage.completionTokensDetails
-          : {};
-  const reportedCacheRead = firstInteger(usage, ["cache_read_input_tokens", "cacheReadInputTokens"])
-    ?? firstInteger(inputDetails, ["cached_tokens", "cachedTokens"])
-    ?? 0;
-  const reportedCacheWrite = firstInteger(usage, ["cache_creation_input_tokens", "cacheCreationInputTokens"])
-    ?? 0;
-  const reasoning = Math.min(outputTotal, firstInteger(outputDetails, ["reasoning_tokens", "reasoningTokens"]) ?? 0);
-
-  if (path === "/v1/responses" || path === "/v1/chat/completions") {
-    // OpenAI totals include cached/reasoning subsets. Partition those totals so
-    // Laravel can price each category exactly once instead of double billing.
-    const cacheRead = Math.min(inputTotal, reportedCacheRead);
-    const cacheWrite = Math.min(inputTotal - cacheRead, reportedCacheWrite);
-    return {
-      input_tokens: inputTotal - cacheRead - cacheWrite,
-      output_tokens: outputTotal - reasoning,
-      cache_read_tokens: cacheRead,
-      cache_write_tokens: cacheWrite,
-      reasoning_tokens: reasoning,
-    };
-  }
-
-  // Anthropic cache counts are additional to input_tokens. Reasoning, when an
-  // adapter exposes it as an output detail, remains a partition of output.
-  return {
-    input_tokens: inputTotal,
-    output_tokens: outputTotal - reasoning,
-    cache_read_tokens: reportedCacheRead,
-    cache_write_tokens: reportedCacheWrite,
-    reasoning_tokens: reasoning,
-  };
-}
-
-function findUsage(value: Record<string, unknown>): Record<string, unknown> | null {
-  const direct: unknown[] = [
-    value.usage, value.usage_metadata, value.usageMetadata,
-    record(value.response) ? value.response.usage : null,
-    record(value.message) ? value.message.usage : null,
-    record(value.data) ? value.data.usage : null,
-    record(value.meta) ? value.meta.usage : null,
-    record(value.metadata) ? value.metadata.usage : null,
-  ];
-  for (const candidate of direct) if (record(candidate)) return candidate;
-
-  // OmniRoute adapters can wrap provider events differently depending on the
-  // selected combo/protocol. Search a small bounded object tree for a usage-like
-  // record instead of assuming one vendor-specific envelope.
-  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [{ value, depth: 0 }];
-  const seen = new Set<object>();
-  while (queue.length) {
-    const current = queue.shift()!;
-    if (seen.has(current.value)) continue;
-    seen.add(current.value);
-    if (looksLikeUsage(current.value)) return current.value;
-    if (current.depth >= 4) continue;
-    for (const child of Object.values(current.value)) {
-      if (record(child)) queue.push({ value: child, depth: current.depth + 1 });
-      else if (Array.isArray(child)) for (const item of child) if (record(item)) queue.push({ value: item, depth: current.depth + 1 });
-    }
-  }
-  return null;
-}
-
-function looksLikeUsage(value: Record<string, unknown>): boolean {
-  return [
-    "input_tokens", "prompt_tokens", "inputTokens", "promptTokens", "prompt_token_count", "promptTokenCount",
-    "output_tokens", "completion_tokens", "outputTokens", "completionTokens", "candidates_token_count", "candidatesTokenCount",
-  ].some((key) => integer(value[key]) !== null);
-}
-
-export function usageFromHeaders(headers: Headers, path: InferencePath): Usage | null {
-  const get = (...names: string[]): number | null => {
-    for (const name of names) {
-      const raw = headers.get(name);
-      if (raw === null || raw.trim() === "") continue;
-      const value = Number(raw);
-      if (Number.isSafeInteger(value) && value >= 0) return value;
-    }
-    return null;
-  };
-  const input = get("x-usage-input-tokens", "x-omniroute-input-tokens", "x-prompt-tokens", "x-input-tokens");
-  const output = get("x-usage-output-tokens", "x-omniroute-output-tokens", "x-completion-tokens", "x-output-tokens");
-  if (input === null && output === null) return null;
-  const cacheRead = get("x-usage-cache-read-tokens", "x-cache-read-tokens") ?? 0;
-  const cacheWrite = get("x-usage-cache-write-tokens", "x-cache-write-tokens") ?? 0;
-  const reasoning = get("x-usage-reasoning-tokens", "x-reasoning-tokens") ?? 0;
-  const inputTotal = input ?? 0;
-  const outputTotal = output ?? 0;
-  if (path === "/v1/responses" || path === "/v1/chat/completions") {
-    const cached = Math.min(inputTotal, cacheRead);
-    const written = Math.min(Math.max(0, inputTotal - cached), cacheWrite);
-    const reasoned = Math.min(outputTotal, reasoning);
-    return { input_tokens: inputTotal - cached - written, output_tokens: outputTotal - reasoned, cache_read_tokens: cached, cache_write_tokens: written, reasoning_tokens: reasoned };
-  }
-  return { input_tokens: inputTotal, output_tokens: Math.max(0, outputTotal - Math.min(outputTotal, reasoning)), cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite, reasoning_tokens: Math.min(outputTotal, reasoning) };
-}
-
-function firstInteger(value: Record<string, unknown>, keys: string[]): number | null {
-  for (const key of keys) {
-    const parsed = integer(value[key]);
-    if (parsed !== null) return parsed;
-  }
-  return null;
-}
-
-export function mergeUsage(current: Usage | null, next: Usage | null): Usage | null {
-  if (!next) return current;
-  if (!current) return next;
-  return {
-    input_tokens: Math.max(current.input_tokens, next.input_tokens), output_tokens: Math.max(current.output_tokens, next.output_tokens),
-    cache_read_tokens: Math.max(current.cache_read_tokens, next.cache_read_tokens), cache_write_tokens: Math.max(current.cache_write_tokens, next.cache_write_tokens), reasoning_tokens: Math.max(current.reasoning_tokens, next.reasoning_tokens),
-  };
-}
+// Provider/OmniRoute usage parsers intentionally do not exist in R42.
+// Customer metering is derived exclusively from the request received and the
+// response content delivered at the SP Cambo public gateway.
 
 function outputTokens(path: InferencePath, body: Record<string, unknown>, fallback: number): number {
   if (path === "/v1/messages/count_tokens") return 0;
@@ -211,14 +89,308 @@ function outputTokens(path: InferencePath, body: Record<string, unknown>, fallba
   return value as number;
 }
 
-function estimateTokens(raw: string): number {
-  // Each token represented in this JSON request requires at least one UTF-8 byte.
-  // Reserving the full byte count is therefore a conservative protocol-agnostic
-  // ceiling, unlike bytes/4 heuristics that can under-reserve token-dense input.
-  const bytes = Buffer.byteLength(raw, "utf8");
-  if (!Number.isSafeInteger(bytes)) throw new GatewayError(413, "request_too_large", "The request exceeds the supported size.");
-  return Math.max(1, bytes);
+export function estimateTokens(raw: string): number {
+  // SP-local meter: estimate only model-visible request content. This remains
+  // provider-independent; OmniRoute/provider usage counters are never read.
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+
+  const estimated = promptSegmentsFor(parsed).reduce((sum, segment) => sum + segment.tokens, 0);
+  if (!Number.isSafeInteger(estimated)) {
+    throw new GatewayError(413, "request_too_large", "The request exceeds the supported size.");
+  }
+  return Math.max(0, estimated);
 }
 
-function integer(value: unknown): number | null { return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null; }
+/**
+ * Build privacy-preserving prompt segments for SP Cambo's local cache meter.
+ * Only SHA-256 digests and token estimates are retained by the cache; prompt
+ * text itself is never stored. Segment token totals intentionally mirror the
+ * local structured estimator so cache and non-cache accounting reconcile.
+ */
+export function promptSegmentsFor(value: unknown): PromptSegment[] {
+  const segments: PromptSegment[] = [];
+  collectPromptSegments(value, "", 0, segments);
+  return segments;
+}
+
+function pushPromptSegment(segments: PromptSegment[], marker: string, tokens: number): void {
+  if (tokens <= 0) return;
+  segments.push({
+    digest: createHash("sha256").update(marker).digest("hex"),
+    tokens,
+  });
+}
+
+function collectPromptSegments(value: unknown, parentKey: string, depth: number, segments: PromptSegment[]): void {
+  if (depth > 16 || value === null || value === undefined) return;
+  if (typeof value === "string") {
+    if (["model", "user", "service_tier", "prompt_cache_key", "previous_response_id"].includes(parentKey)) return;
+    pushPromptSegment(segments, `s:${parentKey}:${value}`, estimateTextTokens(value));
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    pushPromptSegment(segments, `p:${parentKey}:${String(value)}`, 1);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      pushPromptSegment(segments, `a:${parentKey}:${index}`, 1);
+      collectPromptSegments(value[index], parentKey, depth + 1, segments);
+    }
+    return;
+  }
+  if (!record(value)) return;
+
+  const ignored = new Set([
+    "max_tokens", "max_completion_tokens", "max_output_tokens", "stream",
+    "temperature", "top_p", "top_k", "n", "seed", "store", "metadata",
+    "service_tier", "parallel_tool_calls", "stream_options",
+  ]);
+
+  pushPromptSegment(segments, `o:${parentKey}:${depth}`, depth === 0 ? 6 : 2);
+  let entries = Object.entries(value).filter(([key]) => !ignored.has(key));
+  if (depth === 0) {
+    // Put long-lived agent context before turn-by-turn conversation content.
+    // This mirrors the prefix-caching shape used by common AI clients and makes
+    // stable system/tool definitions reusable even when a new message is added.
+    const order = new Map<string, number>([
+      ["system", 0], ["instructions", 0], ["tools", 1], ["tool_choice", 2],
+      ["thinking", 3], ["reasoning", 3], ["response_format", 4], ["text", 4],
+      ["messages", 10], ["input", 10], ["prompt", 10], ["conversation", 10],
+    ]);
+    entries = entries.sort(([left], [right]) => {
+      const leftRank = order.get(left) ?? 5;
+      const rightRank = order.get(right) ?? 5;
+      return leftRank - rightRank || left.localeCompare(right);
+    });
+  }
+  for (const [key, child] of entries) {
+    const keyTokens = 1 + (key === "model" ? 0 : Math.min(2, estimateTextTokens(key)));
+    pushPromptSegment(segments, `k:${parentKey}:${key}`, keyTokens);
+    collectPromptSegments(child, key, depth + 1, segments);
+  }
+}
+
+export function spLocalUsage(inputTokens: number, cacheReadTokens: number, outputPayload: unknown, rawFallback = ""): Usage {
+  const generatedTokens = generatedPayloadTokens(outputPayload);
+  // When an adapter returns an unfamiliar public envelope, estimate only from
+  // the public response body. Provider usage metadata is never used here.
+  const fallbackTokens = rawFallback === "" ? 0 : Math.max(1, estimateTextTokens(rawFallback));
+  const outputTokens = generatedTokens > 0 ? generatedTokens : Math.ceil(fallbackTokens / 2);
+
+  return {
+    input_tokens: Math.max(0, inputTokens),
+    output_tokens: Math.max(0, outputTokens),
+    cache_read_tokens: Math.max(0, cacheReadTokens),
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+  };
+}
+
+export function spLocalOutputTokensFromSse(frame: string): number {
+  let total = 0;
+  for (const line of frame.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (data === "" || data === "[DONE]") continue;
+    try {
+      const parsed = JSON.parse(data) as unknown;
+      if (record(parsed)) {
+        const eventType = typeof parsed.type === "string" ? parsed.type.toLowerCase() : "";
+        // Many streaming protocols send a final snapshot after all deltas. The
+        // snapshot is useful to the client but must not be counted a second time.
+        if (eventType.endsWith(".done") || eventType.includes("completed") || eventType === "message_stop") continue;
+      }
+      total += generatedPayloadTokens(parsed);
+    } catch { /* Unknown SSE text is not treated as usage or billable content. */ }
+  }
+  return total;
+}
+
+export function spLocalUsageFromOutputTokens(inputTokens: number, cacheReadTokens: number, outputTokens: number): Usage {
+  return {
+    input_tokens: Math.max(0, inputTokens),
+    output_tokens: Math.max(0, outputTokens),
+    cache_read_tokens: Math.max(0, cacheReadTokens),
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+  };
+}
+
+/**
+ * A deterministic tokenizer-like heuristic for customer-visible SP estimates.
+ * It handles Latin/code text, punctuation, and non-ASCII scripts more naturally
+ * than a simple bytes/4 rule while remaining provider-independent.
+ */
+function estimateTextTokens(text: string): number {
+  const normalized = text.trim();
+  if (normalized === "") return 0;
+
+  let asciiWordChars = 0;
+  let punctuation = 0;
+  let nonAscii = 0;
+  let whitespaceRuns = 0;
+  let inWhitespace = false;
+
+  for (const char of normalized) {
+    const code = char.codePointAt(0) ?? 0;
+    if (/\s/u.test(char)) {
+      if (!inWhitespace) whitespaceRuns++;
+      inWhitespace = true;
+      continue;
+    }
+    inWhitespace = false;
+    if (code > 0x7f) {
+      nonAscii++;
+    } else if (/[A-Za-z0-9_]/.test(char)) {
+      asciiWordChars++;
+    } else {
+      punctuation++;
+    }
+  }
+
+  const tokens =
+    Math.ceil(asciiWordChars / 4) +
+    Math.ceil(punctuation / 2) +
+    Math.ceil(nonAscii * 0.75) +
+    Math.ceil(whitespaceRuns / 6);
+
+  return Math.max(1, tokens);
+}
+
+function estimateStructuredTokens(value: unknown, parentKey = "", depth = 0): number {
+  if (depth > 16 || value === null || value === undefined) return 0;
+  if (typeof value === "string") {
+    // Transport-only identifiers are not treated as model-visible prompt text.
+    if (["model", "user", "service_tier", "prompt_cache_key", "previous_response_id"].includes(parentKey)) return 0;
+    return estimateTextTokens(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") return 1;
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + 1 + estimateStructuredTokens(item, parentKey, depth + 1), 0);
+  }
+  if (!record(value)) return 0;
+
+  const ignored = new Set([
+    "max_tokens", "max_completion_tokens", "max_output_tokens", "stream",
+    "temperature", "top_p", "top_k", "n", "seed", "store", "metadata",
+    "service_tier", "parallel_tool_calls", "stream_options",
+  ]);
+
+  let total = depth === 0 ? 6 : 2; // protocol/message framing overhead.
+  for (const [key, child] of Object.entries(value)) {
+    if (ignored.has(key)) continue;
+    total += 1;
+    if (key !== "model") total += Math.min(2, estimateTextTokens(key));
+    total += estimateStructuredTokens(child, key, depth + 1);
+  }
+  return total;
+}
+
+function generatedPayloadTokens(value: unknown): number {
+  const generatedKeys = new Set([
+    "text", "content", "output_text", "reasoning_content", "arguments", "delta",
+    "partial_json", "completion", "generated_text",
+  ]);
+  let tokens = 0;
+  const walk = (node: unknown, parentKey = "", depth = 0): void => {
+    if (depth > 12 || node === null || node === undefined) return;
+    if (typeof node === "string") {
+      if (generatedKeys.has(parentKey)) tokens += estimateTextTokens(node);
+      return;
+    }
+    if (Array.isArray(node)) { for (const item of node) walk(item, parentKey, depth + 1); return; }
+    if (!record(node)) return;
+    for (const [key, child] of Object.entries(node)) {
+      if ((key === "input" || key === "arguments") && record(child)) {
+        tokens += estimateStructuredTokens(child, key, depth + 1);
+        continue;
+      }
+      walk(child, key, depth + 1);
+    }
+  };
+  walk(value);
+  return tokens;
+}
+
+
+function logicalInputTokens(usage: Usage): number {
+  return Math.max(0, usage.input_tokens) + Math.max(0, usage.cache_read_tokens) + Math.max(0, usage.cache_write_tokens);
+}
+
+function logicalTotalTokens(usage: Usage): number {
+  return logicalInputTokens(usage) + Math.max(0, usage.output_tokens) + Math.max(0, usage.reasoning_tokens);
+}
+
+/**
+ * Replace any provider/OmniRoute usage payload with SP Cambo's local meter.
+ * This is a public-response compatibility layer only; billing already uses
+ * the same local counts directly.
+ */
+function publicUsageShape(path: InferencePath, usage: Usage): Record<string, unknown> {
+  if (path === "/v1/messages" || path === "/v1/messages/count_tokens") {
+    return {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: usage.cache_read_tokens,
+    };
+  }
+  if (path === "/v1/chat/completions") {
+    return {
+      prompt_tokens: logicalInputTokens(usage),
+      completion_tokens: usage.output_tokens,
+      total_tokens: logicalTotalTokens(usage),
+      prompt_tokens_details: { cached_tokens: usage.cache_read_tokens },
+    };
+  }
+  return {
+    input_tokens: logicalInputTokens(usage),
+    output_tokens: usage.output_tokens,
+    total_tokens: logicalTotalTokens(usage),
+    input_tokens_details: { cached_tokens: usage.cache_read_tokens },
+  };
+}
+
+function replaceProviderUsageWithLocal(value: Record<string, unknown>, path: InferencePath, usage: Usage, depth = 0): void {
+  if (depth > 8) return;
+  delete value.usage_metadata;
+  delete value.usageMetadata;
+  if ("usage" in value) value.usage = publicUsageShape(path, usage);
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "usage") continue;
+    if (record(child)) replaceProviderUsageWithLocal(child, path, usage, depth + 1);
+    else if (Array.isArray(child)) {
+      for (const item of child) if (record(item)) replaceProviderUsageWithLocal(item, path, usage, depth + 1);
+    }
+  }
+}
+
+export function withLocalUsage(value: unknown, path: InferencePath, usage: Usage): unknown {
+  if (!record(value)) return value;
+  replaceProviderUsageWithLocal(value, path, usage);
+  value.usage = publicUsageShape(path, usage);
+  return value;
+}
+
+/**
+ * Overwrite every provider/OmniRoute usage object inside an SSE frame with
+ * SP Cambo's local meter. No provider usage numbers are allowed through as a
+ * customer-visible billing signal.
+ */
+export function localizeSseUsage(frame: string, path: InferencePath, usage: Usage): string {
+  const lines = frame.split(/\r?\n/);
+  return lines.map((line) => {
+    if (!line.startsWith("data:")) return line;
+    const raw = line.slice(5).trim();
+    if (raw === "" || raw === "[DONE]") return line;
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return line; }
+    if (!record(parsed)) return line;
+    replaceProviderUsageWithLocal(parsed, path, usage);
+    return `data: ${JSON.stringify(parsed)}`;
+  }).join("\n");
+}
+
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

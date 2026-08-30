@@ -93,6 +93,7 @@ class GatewayBillingController extends Controller
             'customer_key' => ['required', 'string', 'max:128'],
             'public_model' => ['required', 'string', 'max:100'],
             'estimated_input_tokens' => ['required', 'integer', 'min:0'],
+            'estimated_cache_read_tokens' => ['sometimes', 'integer', 'min:0'],
             'requested_max_output_tokens' => ['required', 'integer', 'min:0'],
             'request_bytes' => ['required', 'integer', 'min:1'],
             'request_id' => ['required', 'string', 'max:191'],
@@ -117,6 +118,7 @@ class GatewayBillingController extends Controller
                 $key,
                 $alias->loadMissing('pricing'),
                 (int) $input['estimated_input_tokens'],
+                (int) ($input['estimated_cache_read_tokens'] ?? 0),
                 $input['endpoint'] === '/v1/messages/count_tokens' ? 0 : (int) $input['requested_max_output_tokens'],
                 $input['request_id'],
                 $input['request_fingerprint'],
@@ -190,38 +192,19 @@ class GatewayBillingController extends Controller
     {
         $input = $request->validate($this->usageRules());
         $usage = $this->usage($input);
-        $settled = DB::transaction(function () use ($reservation, $usage, $input, $billing): Reservation {
-            $settled = $billing->settle($reservation, $usage);
-            $log = ApiRequestLog::query()->where('reservation_id', $settled->id)->lockForUpdate()->firstOrFail();
-            $creditCharge = $settled->billing_mode === 'CREDIT_BALANCE' ? (int) $settled->settled_units : null;
-            $upstreamCost = $billing->upstreamCost($settled->billing_snapshot, $usage);
-            $record = [
-                'user_id' => $settled->user_id,
-                'api_key_id' => $settled->api_key_id,
-                'public_model' => $settled->public_model_alias,
-                'provider_family' => $settled->billing_snapshot['provider_family'] ?? null,
-                'endpoint' => $log->endpoint,
-                ...$usage,
-                'total_tokens' => array_sum($usage),
-                'metered_units' => $settled->settled_units,
-                'credit_charge_minor' => $creditCharge,
-                'upstream_cost_minor' => $upstreamCost,
-                'currency' => $creditCharge === null && $upstreamCost === null ? null : $settled->billing_snapshot['currency'],
-                'currency_exponent' => $creditCharge === null && $upstreamCost === null ? null : $settled->billing_snapshot['currency_exponent'],
-                'settled_at' => now(),
-            ];
-            $existing = UsageRecord::query()->where('reservation_id', $settled->id)->first();
-            if ($existing && $this->usageConflict($existing, $record)) {
-                throw new InferenceIdempotencyException('Usage was already recorded with different values.');
-            }
-            UsageRecord::query()->firstOrCreate(['reservation_id' => $settled->id], $record);
-            $log->update(['state' => 'SETTLED', 'estimated_units' => null, 'duration_ms' => $input['duration_ms'] ?? null, 'finished_at' => now(), 'error_code' => null]);
+        $settled = $this->settleLocalUsage($reservation, $usage, $input['duration_ms'] ?? null, $billing);
 
-            return $settled;
-        });
-        CustomerStateChanged::dispatch((int) $settled->user_id, 'usage.settled', ['reservation_id' => $settled->id, 'public_model' => $settled->public_model_alias, 'metered_units' => (string) $settled->settled_units]);
+        CustomerStateChanged::dispatch((int) $settled->user_id, 'usage.settled', [
+            'reservation_id' => $settled->id,
+            'public_model' => $settled->public_model_alias,
+            'metered_units' => (string) $settled->settled_units,
+        ]);
 
-        return response()->json(['data' => ['reservation_id' => $settled->id, 'status' => $settled->status, 'settled_units' => (string) $settled->settled_units]]);
+        return response()->json(['data' => [
+            'reservation_id' => $settled->id,
+            'status' => $settled->status,
+            'settled_units' => (string) $settled->settled_units,
+        ]]);
     }
 
     public function release(Reservation $reservation, ReservationService $reservations): JsonResponse
@@ -229,38 +212,152 @@ class GatewayBillingController extends Controller
         $released = $reservations->release($reservation);
         $finishedAt = now();
         $log = ApiRequestLog::query()->where('reservation_id', $released->id)->first();
-        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING'], true)) {
+        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING', 'RECONCILING'], true)) {
             $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
             $log->forceFill([
                 'state' => 'RELEASED',
                 'estimated_units' => null,
                 'duration_ms' => $log->duration_ms ?? $durationMs,
                 'finished_at' => $finishedAt,
+                'error_code' => null,
             ])->save();
         }
-        CustomerStateChanged::dispatch((int) $released->user_id, 'api_request.failed', ['reservation_id' => $released->id, 'public_model' => $released->public_model_alias, 'state' => 'released']);
+        CustomerStateChanged::dispatch((int) $released->user_id, 'api_request.failed', [
+            'reservation_id' => $released->id,
+            'public_model' => $released->public_model_alias,
+            'state' => 'released',
+        ]);
 
-        return response()->json(['data' => ['reservation_id' => $released->id, 'status' => $released->status, 'settled_units' => '0']]);
+        return response()->json(['data' => [
+            'reservation_id' => $released->id,
+            'status' => $released->status,
+            'settled_units' => '0',
+        ]]);
     }
 
-    public function reconcile(Request $request, Reservation $reservation, ReservationService $reservations): JsonResponse
-    {
-        $input = $request->validate(['reason' => ['required', 'in:upstream_timeout,upstream_disconnect,client_disconnect,usage_unavailable,settlement_failed']]);
-        $pending = $reservations->markForReconciliation($reservation, $input['reason']);
+    public function reconcile(
+        Request $request,
+        Reservation $reservation,
+        ReservationService $reservations,
+        InferenceBillingService $billing,
+    ): JsonResponse {
+        $rules = [
+            'reason' => ['required', 'in:upstream_timeout,upstream_disconnect,client_disconnect,usage_unavailable,settlement_failed'],
+            'local_usage' => ['nullable', 'array'],
+            'local_usage.input_tokens' => ['required_with:local_usage', 'integer', 'min:0'],
+            'local_usage.output_tokens' => ['required_with:local_usage', 'integer', 'min:0'],
+            'local_usage.cache_read_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.cache_write_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.reasoning_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.duration_ms' => ['nullable', 'integer', 'min:0'],
+        ];
+        $input = $request->validate($rules);
+
+        // R42 has no provider-authoritative billing state to wait for. If the
+        // gateway already measured delivered output locally, settle from that
+        // local usage. Otherwise the failed request delivered no billable output,
+        // so release the reservation immediately.
+        if (is_array($input['local_usage'] ?? null)) {
+            $usage = $this->usage($input['local_usage']);
+            $settled = $this->settleLocalUsage(
+                $reservation,
+                $usage,
+                $input['local_usage']['duration_ms'] ?? null,
+                $billing,
+            );
+            CustomerStateChanged::dispatch((int) $settled->user_id, 'usage.settled', [
+                'reservation_id' => $settled->id,
+                'public_model' => $settled->public_model_alias,
+                'metered_units' => (string) $settled->settled_units,
+                'recovered_locally' => true,
+            ]);
+
+            return response()->json(['data' => [
+                'reservation_id' => $settled->id,
+                'status' => $settled->status,
+                'settled_units' => (string) $settled->settled_units,
+                'recovered_locally' => true,
+            ]]);
+        }
+
+        $released = $reservations->release($reservation);
         $finishedAt = now();
-        $log = ApiRequestLog::query()->where('reservation_id', $pending->id)->first();
-        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING'], true)) {
+        $log = ApiRequestLog::query()->where('reservation_id', $released->id)->first();
+        if ($log) {
             $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
             $log->forceFill([
-                'state' => 'RECONCILING',
+                'state' => 'RELEASED',
+                'estimated_units' => null,
                 'duration_ms' => $log->duration_ms ?? $durationMs,
                 'finished_at' => $finishedAt,
-                'error_code' => 'billing_settlement_pending',
+                'error_code' => null,
             ])->save();
         }
-        CustomerStateChanged::dispatch((int) $pending->user_id, 'api_request.failed', ['reservation_id' => $pending->id, 'public_model' => $pending->public_model_alias, 'state' => 'reconciling', 'error_code' => 'billing_settlement_pending']);
 
-        return response()->json(['data' => ['reservation_id' => $pending->id, 'status' => $pending->status]], 202);
+        return response()->json(['data' => [
+            'reservation_id' => $released->id,
+            'status' => $released->status,
+            'settled_units' => '0',
+        ]]);
+    }
+
+    /** @param array<string, int> $usage */
+    private function settleLocalUsage(
+        Reservation $reservation,
+        array $usage,
+        ?int $durationMs,
+        InferenceBillingService $billing,
+    ): Reservation {
+        return DB::transaction(function () use ($reservation, $usage, $durationMs, $billing): Reservation {
+            $settled = $billing->settle($reservation, $usage);
+            $log = ApiRequestLog::query()->where('reservation_id', $settled->id)->lockForUpdate()->firstOrFail();
+            $creditCharge = $settled->billing_mode === 'CREDIT_BALANCE' ? (int) $settled->settled_units : null;
+
+            // Private admin reference cost is computed only from SP Cambo's local
+            // meter and a static local pricing snapshot. No OmniRoute/provider
+            // usage or cost field is accepted by this endpoint.
+            $referenceCost = $billing->upstreamCost($settled->billing_snapshot, [
+                'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
+                'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
+                'cache_read_tokens' => (int) ($usage['cache_read_tokens'] ?? 0),
+                'cache_write_tokens' => 0,
+                'reasoning_tokens' => 0,
+            ]);
+
+            $record = [
+                'user_id' => $settled->user_id,
+                'api_key_id' => $settled->api_key_id,
+                'public_model' => $settled->public_model_alias,
+                'provider_family' => $settled->billing_snapshot['provider_family'] ?? null,
+                'endpoint' => $log->endpoint,
+                'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
+                'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
+                'cache_read_tokens' => (int) ($usage['cache_read_tokens'] ?? 0),
+                'cache_write_tokens' => 0,
+                'reasoning_tokens' => 0,
+                'total_tokens' => (int) ($usage['input_tokens'] ?? 0) + (int) ($usage['cache_read_tokens'] ?? 0) + (int) ($usage['output_tokens'] ?? 0),
+                'metered_units' => $settled->settled_units,
+                'credit_charge_minor' => $creditCharge,
+                'upstream_cost_minor' => $referenceCost,
+                'currency' => $creditCharge === null && $referenceCost === null ? null : $settled->billing_snapshot['currency'],
+                'currency_exponent' => $creditCharge === null && $referenceCost === null ? null : $settled->billing_snapshot['currency_exponent'],
+                'settled_at' => now(),
+            ];
+            $existing = UsageRecord::query()->where('reservation_id', $settled->id)->first();
+            if ($existing && $this->usageConflict($existing, $record)) {
+                throw new InferenceIdempotencyException('Usage was already recorded with different values.');
+            }
+            UsageRecord::query()->firstOrCreate(['reservation_id' => $settled->id], $record);
+            $log->update([
+                'state' => 'SETTLED',
+                'estimated_units' => null,
+                'duration_ms' => $durationMs,
+                'finished_at' => now(),
+                'error_code' => null,
+            ]);
+
+            return $settled;
+        });
     }
 
     private function activeKey(string $customerKey, ApiKeySecretService $secrets): ApiKey

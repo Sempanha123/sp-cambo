@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Admin\ProviderConnectionRevisionController;
 use App\Http\Controllers\Api\V1\Admin\ProviderController;
 use App\Http\Controllers\Api\V1\Admin\ProviderModelController;
 use App\Http\Controllers\Api\V1\Admin\RedeemCodeController as AdminRedeemCodeController;
+use App\Http\Controllers\Api\V1\Admin\ReferralController as AdminReferralController;
 use App\Http\Controllers\Api\V1\Admin\SystemHealthController as AdminSystemHealthController;
 use App\Http\Controllers\Api\V1\Admin\TelegramStoreController;
 use App\Http\Controllers\Api\V1\ApiKeyController;
@@ -23,6 +24,7 @@ use App\Http\Controllers\Api\V1\Auth\GoogleAuthController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\RegisterController;
+use App\Http\Controllers\Api\V1\Auth\RegistrationVerificationCodeController;
 use App\Http\Controllers\Api\V1\Auth\ResetPasswordController;
 use App\Http\Controllers\Api\V1\Catalog\ModelCatalogController;
 use App\Http\Controllers\Api\V1\Catalog\PackageCatalogController;
@@ -36,6 +38,7 @@ use App\Http\Controllers\Api\V1\PlaygroundController;
 use App\Http\Controllers\Api\V1\PlaygroundChatController;
 use App\Http\Controllers\Api\V1\PromotionPreviewController;
 use App\Http\Controllers\Api\V1\RedeemCodeController;
+use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\ResellerCustomerController;
 use App\Http\Controllers\Api\V1\ResellerCustomerKeyController;
 use App\Http\Controllers\Api\V1\ResellerManagementKeyController;
@@ -62,6 +65,7 @@ Route::prefix('v1')->group(function (): void {
     Route::get('catalog/models', ModelCatalogController::class)->middleware('throttle:120,1');
     Route::get('catalog/packages', PackageCatalogController::class)->middleware('throttle:120,1');
     Route::post('keys/check', [ApiKeyController::class, 'check'])->middleware('throttle:10,1');
+    Route::get('referrals/{code}', [ReferralController::class, 'resolve'])->where('code', '[A-Za-z0-9_-]{4,32}')->middleware('throttle:60,1');
 
     Route::middleware(['gateway.auth', 'throttle:600,1'])->prefix('internal/gateway')->group(function (): void {
         Route::post('inspect', [GatewayBillingController::class, 'inspect']);
@@ -173,7 +177,13 @@ Route::prefix('v1')->group(function (): void {
         Route::post('customers/{resellerCustomer}/api-keys/{apiKey}/revoke', [ResellerCustomerKeyController::class, 'revoke'])->middleware('management.scope:keys:write');
     });
 
+    Route::middleware(['auth:sanctum', 'account.active', 'permission:access.manage'])->prefix('admin/referrals')->group(function (): void {
+        Route::get('/', [AdminReferralController::class, 'show']);
+        Route::put('settings', [AdminReferralController::class, 'update'])->middleware('throttle:20,1');
+    });
+
     Route::prefix('auth')->group(function (): void {
+        Route::post('register/code', RegistrationVerificationCodeController::class)->middleware('throttle:5,1');
         Route::post('register', RegisterController::class)->middleware('throttle:5,1');
         Route::post('login', LoginController::class);
         Route::post('logout', LogoutController::class)->middleware(['auth:sanctum', 'account.active']);
@@ -195,18 +205,21 @@ Route::prefix('v1')->group(function (): void {
     Route::get('me/external-identities', [AccountSecurityController::class, 'identities'])->middleware(['auth:sanctum', 'account.active']);
     Route::delete('me/external-identities/{identity}', [AccountSecurityController::class, 'unlinkIdentity'])->middleware(['auth:sanctum', 'account.active']);
     Route::get('me/balance', [EntitlementController::class, 'balance'])->middleware(['auth:sanctum', 'account.active']);
+    Route::get('me/referrals', [ReferralController::class, 'show'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
+    Route::post('me/referrals/claim', [ReferralController::class, 'claim'])->middleware(['auth:sanctum', 'account.active', 'throttle:10,1']);
     Route::get('me/entitlements', [EntitlementController::class, 'index'])->middleware(['auth:sanctum', 'account.active']);
     Route::get('me/activity', [UsageController::class, 'activity'])->middleware(['auth:sanctum', 'account.active']);
     Route::get('me/usage/summary', [UsageController::class, 'summary'])->middleware(['auth:sanctum', 'account.active']);
-    Route::get('me/playground/quota', [PlaygroundController::class, 'quota'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
-    Route::post('me/playground/run', [PlaygroundController::class, 'run'])->middleware(['auth:sanctum', 'account.active', 'throttle:12,1']);
-    Route::post('me/playground/stream', [PlaygroundController::class, 'stream'])->middleware(['auth:sanctum', 'account.active', 'throttle:12,1']);
-    Route::get('me/playground/chats', [PlaygroundChatController::class, 'index'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
-    Route::post('me/playground/chats', [PlaygroundChatController::class, 'store'])->middleware(['auth:sanctum', 'account.active', 'throttle:30,1']);
-    Route::delete('me/playground/chats', [PlaygroundChatController::class, 'clear'])->middleware(['auth:sanctum', 'account.active', 'throttle:10,1']);
-    Route::get('me/playground/chats/{chat}', [PlaygroundChatController::class, 'show'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
-    Route::put('me/playground/chats/{chat}', [PlaygroundChatController::class, 'update'])->middleware(['auth:sanctum', 'account.active', 'throttle:60,1']);
-    Route::delete('me/playground/chats/{chat}', [PlaygroundChatController::class, 'destroy'])->middleware(['auth:sanctum', 'account.active', 'throttle:30,1']);
+    Route::get('me/playground/quota', [PlaygroundController::class, 'quota'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-read']);
+    Route::post('me/playground/run', [PlaygroundController::class, 'run'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-inference']);
+    Route::post('me/playground/stream', [PlaygroundController::class, 'stream'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-inference']);
+    Route::get('me/playground/chats', [PlaygroundChatController::class, 'index'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-read']);
+    Route::post('me/playground/chats', [PlaygroundChatController::class, 'store'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-history-write']);
+    Route::put('me/playground/chats/sync', [PlaygroundChatController::class, 'sync'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-history-write']);
+    Route::delete('me/playground/chats', [PlaygroundChatController::class, 'clear'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-history-destructive']);
+    Route::get('me/playground/chats/{chat}', [PlaygroundChatController::class, 'show'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-read']);
+    Route::put('me/playground/chats/{chat}', [PlaygroundChatController::class, 'update'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-history-write']);
+    Route::delete('me/playground/chats/{chat}', [PlaygroundChatController::class, 'destroy'])->middleware(['auth:sanctum', 'account.active', 'throttle:playground-history-destructive']);
     Route::get('me/usage/keys/{apiKey}/summary', [UsageController::class, 'keySummary'])->middleware(['auth:sanctum', 'account.active']);
     Route::middleware(['auth:sanctum', 'account.active'])->group(function (): void {
         Route::get('orders', [OrderController::class, 'index']);
@@ -224,6 +237,9 @@ Route::prefix('v1')->group(function (): void {
     Route::middleware(['auth:sanctum', 'account.active'])->prefix('me/api-keys')->group(function (): void {
         Route::get('/', [ApiKeyController::class, 'index']);
         Route::post('/', [ApiKeyController::class, 'store'])->middleware('throttle:10,1');
+        // Keep specific sub-resources before the identity route so route-cache
+        // compilation is unambiguous on every supported Laravel deployment.
+        Route::get('{apiKey}/funding', [ApiKeyController::class, 'funding']);
         Route::get('{apiKey}', [ApiKeyController::class, 'show']);
         Route::post('{apiKey}/reveal', [ApiKeyController::class, 'reveal'])->middleware('throttle:10,1');
         Route::post('{apiKey}/rotate', [ApiKeyController::class, 'rotate'])->middleware('throttle:5,1');

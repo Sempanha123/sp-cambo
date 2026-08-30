@@ -16,6 +16,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthenticatedUser | null>(null)
   const initialized = ref(false)
   const pending = ref(false)
+  const verificationPending = ref(false)
   const errorMessage = ref<string | null>(null)
   /**
    * Machine code behind `errorMessage`, kept so a surface can react to *which*
@@ -118,6 +119,21 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = next
   }
 
+
+  const sendRegistrationCode = async (email: string) => {
+    verificationPending.value = true
+    resetErrors()
+
+    try {
+      return await api.auth.sendRegistrationCode({ email: email.trim().toLowerCase() })
+    } catch (cause) {
+      captureError(cause)
+      return null
+    } finally {
+      verificationPending.value = false
+    }
+  }
+
   const register = async (input: RegisterInput) => {
     pending.value = true
     resetErrors()
@@ -143,6 +159,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       applySession(await api.auth.login(input))
       initialized.value = true
+      await useReferralAttribution().claimIfPossible()
 
       return true
     } catch (cause) {
@@ -191,6 +208,7 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await api.google.callback(input)
       applySession(response)
       initialized.value = true
+      await useReferralAttribution().claimIfPossible()
 
       return true
     } catch (cause) {
@@ -232,6 +250,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     initialized,
     pending,
+    verificationPending,
     errorMessage,
     errorCode,
     fieldErrors,
@@ -241,6 +260,7 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     applySession,
     setUser,
+    sendRegistrationCode,
     register,
     login,
     logout,

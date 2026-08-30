@@ -30,6 +30,40 @@ class EntitlementTest extends TestCase
         $this->assertDatabaseCount('credit_ledger', 1);
     }
 
+    public function test_grant_stores_reason_only_in_credit_ledger(): void
+    {
+        $user = User::factory()->create();
+        $reason = 'Referral reward granted when an invited customer registered successfully.';
+
+        $lot = app(EntitlementService::class)->grant(
+            $user,
+            $this->snapshot([
+                'source_type' => 'REFERRAL',
+                'source_id' => 'registration-reward-test',
+                'billing_mode' => 'CREDIT_BALANCE',
+                'original_units' => 25,
+                'unit_label' => 'USD credit',
+                'currency' => 'USD',
+                'currency_exponent' => 2,
+                'reason' => $reason,
+            ]),
+            'grant:reason-ledger-only',
+        );
+
+        $this->assertDatabaseHas('entitlement_lots', [
+            'id' => $lot->id,
+            'source_type' => 'REFERRAL',
+            'original_units' => 25,
+        ]);
+        $this->assertDatabaseHas('credit_ledger', [
+            'entitlement_lot_id' => $lot->id,
+            'idempotency_key' => 'grant:reason-ledger-only',
+            'type' => 'REFERRAL_REWARD',
+            'amount' => 25,
+            'reason' => $reason,
+        ]);
+    }
+
     public function test_expiration_forfeits_spendable_remainder_once_and_records_immutable_ledger(): void
     {
         $lot = app(EntitlementService::class)->grant(User::factory()->create(), $this->snapshot(['original_units' => 1000, 'expires_at' => now()->subSecond()]), 'grant:expiry');
@@ -92,6 +126,40 @@ class EntitlementTest extends TestCase
                 $this->assertSame('Expiration batch size must be between 1 and 1000.', $exception->getMessage());
             }
         }
+    }
+
+    public function test_customer_balance_separates_token_packages_from_quota_backed_credit_packages(): void
+    {
+        $user = User::factory()->create();
+        $service = app(EntitlementService::class);
+
+        $service->grant($user, $this->snapshot([
+            'source_id' => 'token-package',
+            'original_units' => 1_000,
+            'package_name' => 'Claude 1K Tokens',
+            'unit_label' => 'Tokens',
+        ]), 'grant:token-package');
+
+        $service->grant($user, $this->snapshot([
+            'source_id' => 'credit-package',
+            'original_units' => 10_000_000,
+            'package_name' => 'Claude 100 Credits',
+            'unit_label' => 'Tokens',
+            'billing_snapshot' => [
+                'billing_rules' => [
+                    'package_kind' => 'SP_CREDITS',
+                    'display_units' => 100,
+                    'display_unit_label' => 'Credits',
+                    'sp_credit_billable_units' => 100_000,
+                ],
+            ],
+        ]), 'grant:credit-package');
+
+        $this->actingAs($user)->getJson('/api/v1/me/balance')
+            ->assertOk()
+            ->assertJsonPath('data.token_quota.remaining_units', '1000')
+            ->assertJsonPath('data.sp_credit_quota.remaining', '100')
+            ->assertJsonPath('data.active_lot_count', 2);
     }
 
     public function test_customer_balance_and_lots_are_exact_and_tenant_isolated(): void

@@ -21,8 +21,12 @@ const families = computed(() => {
   }
 
   return [
-    { label: 'All families', value: 'all' },
-    ...[...seen.entries()].map(([value, label]) => ({ label, value }))
+    { label: 'All families', value: 'all', icon: 'i-lucide-layout-grid' },
+    ...[...seen.entries()].map(([value, label]) => ({
+      label,
+      value,
+      icon: modelPresentation(label, label).icon
+    }))
   ]
 })
 
@@ -97,7 +101,7 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
   ]
 
   if (pricing.cache_read_per_million) {
-    rows.push({ label: 'Cache read', amount: pricing.cache_read_per_million, note: null })
+    rows.push({ label: 'Cached input', amount: pricing.cache_read_per_million, note: null })
   }
 
   if (pricing.cache_write_per_million) {
@@ -112,6 +116,21 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
 
   return rows
 }
+
+const multiplierRows = (model: PublicModel) => {
+  const values = model.limits.billing_multipliers_bps ?? {}
+  const labels = [
+    ['input', 'Input'],
+    ['output', 'Output'],
+    ['cache_read', 'Cached input'],
+    ['cache_write', 'Cache write'],
+    ['reasoning', 'Reasoning']
+  ] as const
+
+  return labels
+    .filter(([key]) => typeof values[key] === 'number' && values[key] !== 10_000 && (model.limits.billing_usage_classes ?? []).includes(key))
+    .map(([key, label]) => ({ key, label, value: `${((values[key] ?? 10_000) / 10_000).toFixed(2)}×` }))
+}
 </script>
 
 <template>
@@ -122,8 +141,8 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
           Model catalogue
         </h1>
         <p class="text-lg text-muted text-pretty">
-          Use the public alias as the model name in your client. Aliases are stable: SP Cambo can
-          change upstream routing for reliability without breaking your configuration.
+          Pick the model you want, copy its model ID, then use the same ID in Playground, Claude Code,
+          Codex-compatible clients or your API integration. SP Cambo keeps these public IDs stable.
         </p>
       </div>
 
@@ -185,29 +204,28 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
               class="flex flex-col gap-4 rounded-xl border border-default bg-elevated/30 p-6"
             >
               <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0 space-y-1.5">
-                  <h2 class="truncate text-lg font-medium text-highlighted">
-                    {{ model.display_name }}
-                  </h2>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <UBadge
-                      color="neutral"
-                      variant="subtle"
-                      size="sm"
-                    >
-                      {{ model.family_label }}
-                    </UBadge>
-                    <SpStatusBadge :status="model.status" />
+                <div class="flex min-w-0 items-start gap-3">
+                  <SpModelLogo :model="model.public_alias" :label="model.display_name" size="lg" />
+                  <div class="min-w-0 space-y-1.5">
+                    <h2 class="truncate text-lg font-semibold text-highlighted">
+                      {{ model.display_name }}
+                    </h2>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <UBadge color="neutral" variant="subtle" size="sm">
+                        {{ model.family_label }}
+                      </UBadge>
+                      <SpStatusBadge :status="model.status" />
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div class="flex items-center gap-2 rounded-lg border border-default bg-default px-3 py-2">
-                <code class="min-w-0 flex-1 truncate font-mono text-xs text-toned">{{ model.public_alias }}</code>
-                <SpCopyButton
-                  :value="model.public_alias"
-                  size="sm"
-                />
+              <div class="rounded-xl border border-default bg-default/55 p-3">
+                <p class="mb-1 text-[10px] font-semibold tracking-wide text-muted uppercase">Model ID</p>
+                <div class="flex items-center gap-2">
+                  <code class="min-w-0 flex-1 truncate font-mono text-xs text-toned">{{ model.public_alias }}</code>
+                  <SpCopyButton :value="model.public_alias" size="sm" />
+                </div>
               </div>
 
               <p
@@ -302,7 +320,7 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
                 class="space-y-2 rounded-lg bg-default/60 p-4"
               >
                 <p class="text-xs font-medium tracking-wide text-muted uppercase">
-                  Credit pricing per million tokens
+                  Credit pricing per 1M Tokens
                 </p>
                 <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                   <div
@@ -329,17 +347,49 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
                   output rate. They are not free, and a thinking-heavy request can produce more of them
                   than visible output.
                 </p>
+
+                <div v-if="multiplierRows(model).length > 0" class="border-t border-default pt-3">
+                  <p class="text-xs font-medium tracking-wide text-muted uppercase">
+                    Token usage multiplier
+                  </p>
+                  <dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <div
+                      v-for="row in multiplierRows(model)"
+                      :key="row.key"
+                      class="flex items-baseline justify-between gap-2"
+                    >
+                      <dt class="text-muted">{{ row.label }}</dt>
+                      <dd class="sp-numeric font-medium text-highlighted">{{ row.value }}</dd>
+                    </div>
+                  </dl>
+                  <p class="mt-2 text-xs text-muted text-pretty">
+                    Balance settlement uses only SP Cambo's local meter. Repeated prompt prefixes can use the 0.25x local cached-input rate; provider usage/cache counters never change your balance.
+                  </p>
+                </div>
               </div>
-              <p
-                v-else
-                class="text-xs text-muted"
-              >
-                Sold through token packages rather than credit pricing. See
-                <NuxtLink
-                  to="/pricing"
-                  class="text-default underline decoration-dotted underline-offset-2"
-                >pricing</NuxtLink>.
+              <p v-else class="text-xs text-muted">
+                Sold through token packages rather than credit pricing.
               </p>
+
+              <div class="mt-auto flex flex-wrap gap-2 border-t border-default pt-4">
+                <UButton
+                  to="/pricing"
+                  size="sm"
+                  color="neutral"
+                  variant="subtle"
+                  icon="i-lucide-package"
+                >
+                  View packages
+                </UButton>
+                <UButton
+                  :to="`/dashboard/playground?model=${encodeURIComponent(model.public_alias)}`"
+                  size="sm"
+                  variant="soft"
+                  icon="i-lucide-message-circle"
+                >
+                  Try model
+                </UButton>
+              </div>
             </article>
           </div>
         </SpAsyncSection>

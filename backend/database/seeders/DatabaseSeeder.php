@@ -11,9 +11,7 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
-        // Only canonical authorization data belongs in the default seed. The
-        // sell catalog is explicit and is run with:
-        // php artisan db:seed --class=SellCatalogSeeder --force
         $this->call(RolePermissionSeeder::class);
+        $this->call(SellCatalogSeeder::class);
     }
 }

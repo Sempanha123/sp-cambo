@@ -108,6 +108,13 @@ const revenueByCurrency = computed(() => {
   return value && value.by_currency.length > 1 ? value.by_currency : []
 })
 
+/** Operator-only provider economics. This data exists only on the admin endpoint. */
+const privateFinance = computed(() => overview.data.value?.private_finance ?? null)
+const privateFinanceRows = computed(() => privateFinance.value?.by_currency ?? [])
+const privateMoney = (minor: string, currency: string, exponent: number) =>
+  formatMoney({ minor, currency, exponent })
+const privateMargin = (bps: number | null) => bps === null ? 'Unknown' : `${(bps / 100).toFixed(2)}%`
+
 /** Status counts, busiest first. An absent or empty map yields no rows. */
 const statusRows = (byStatus: Record<string, number> | undefined) =>
   Object.entries(byStatus ?? {}).sort(([, a], [, b]) => b - a)
@@ -274,6 +281,89 @@ const lagLabel = (seconds: number) => (seconds <= 0 ? '0 seconds' : formatDurati
             </div>
           </div>
         </SpAsyncSection>
+      </section>
+
+
+      <section
+        v-if="privateFinance"
+        class="space-y-4"
+      >
+        <SpSectionHeading
+          title="Private finance"
+          description="Admin-only sales, SP internal reference-cost estimates and estimated profitability. These values are never returned by customer-facing APIs or catalog pages."
+          :level="3"
+        />
+
+        <UAlert
+          color="neutral"
+          variant="subtle"
+          icon="i-lucide-lock-keyhole"
+          title="Operator-only business data"
+          :description="privateFinance.note"
+        />
+
+        <UAlert
+          v-if="privateFinance.unknown_upstream_cost_records > 0"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-triangle-alert"
+          title="Some settled usage has no SP reference cost"
+          :description="`${formatCount(privateFinance.unknown_upstream_cost_records)} settled request(s) cannot contribute to an estimated profit calculation until an SP internal reference-cost snapshot is configured.`"
+        />
+
+        <div
+          v-if="privateFinanceRows.length === 0"
+          class="rounded-lg border border-default px-4 py-5 text-sm text-muted"
+        >
+          No settled sales or costed usage yet.
+        </div>
+
+        <template v-else>
+        <div
+          v-for="row in privateFinanceRows"
+          :key="`${row.currency}-${row.exponent}`"
+          class="space-y-3 rounded-lg border border-default bg-elevated/20 p-4"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <p class="font-semibold text-highlighted">{{ row.currency }} private economics</p>
+            <UBadge color="neutral" variant="subtle">Admin only</UBadge>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <SpMetric
+              label="Fulfilled sales"
+              icon="i-lucide-receipt-text"
+              :value="privateMoney(row.fulfilled_sales_revenue_minor, row.currency, row.exponent)"
+              hint="Cash revenue from fulfilled orders"
+            />
+            <SpMetric
+              label="SP reference cost estimate"
+              icon="i-lucide-server-cog"
+              :value="privateMoney(row.upstream_cost_minor, row.currency, row.exponent)"
+              :hint="`${formatCount(row.costed_records)} costed request(s)`"
+            />
+            <SpMetric
+              label="Gross position so far"
+              icon="i-lucide-chart-no-axes-combined"
+              :value="privateMoney(row.gross_position_minor, row.currency, row.exponent)"
+              hint="Sales minus provider cost incurred so far"
+              :tone="Number(row.gross_position_minor) < 0 ? 'warning' : 'default'"
+            />
+            <SpMetric
+              label="Credit-usage margin"
+              icon="i-lucide-percent"
+              :value="privateMargin(row.known_credit_margin_bps)"
+              :hint="`${privateMoney(row.known_credit_profit_minor, row.currency, row.exponent)} known credit profit`"
+            />
+          </div>
+
+          <p class="text-xs text-muted">
+            {{ formatCount(row.settled_records) }} settled request(s) ·
+            {{ formatCount(row.token_quota_records) }} token-quota request(s) ·
+            {{ formatCount(row.unknown_cost_records) }} request(s) missing SP reference cost.
+          </p>
+        </div>
+        </template>
       </section>
 
       <section

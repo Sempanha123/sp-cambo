@@ -7,7 +7,7 @@ const navigationGroups = computed(() => {
   const groups = [
     {
       label: 'Main',
-      test: (to: string) => ['/dashboard', '/dashboard/buy', '/dashboard/checkout', '/dashboard/usage', '/dashboard/orders', '/dashboard/entitlements'].some(prefix => to === prefix || (prefix !== '/dashboard' && to.startsWith(prefix)))
+      test: (to: string) => ['/dashboard', '/dashboard/buy', '/dashboard/checkout', '/dashboard/usage', '/dashboard/orders', '/dashboard/entitlements', '/dashboard/referrals'].some(prefix => to === prefix || (prefix !== '/dashboard' && to.startsWith(prefix)))
     },
     {
       label: 'Developer',

@@ -56,7 +56,7 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
 
-    'release' => env('SP_CAMBO_RELEASE', '2026.08.27-r13-fix23-database-model-routing-playground-diagnostics'),
+    'release' => env('SP_CAMBO_RELEASE', '2026.08.28-r13-fix43-instant-referral-registration-rewards'),
 
     /*
     |--------------------------------------------------------------------------

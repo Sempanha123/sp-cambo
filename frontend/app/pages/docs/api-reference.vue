@@ -162,9 +162,9 @@ const tabs = computed(() => [
       </NuxtLink>.
     </p>
     <p>
-      <code>/v1/messages/count_tokens</code> is metered even though it returns no completion. It is
-      charged as input tokens at the alias input rate and nothing else — cheap, but not free. Counting a
-      prompt in a loop still spends quota.
+      <code>/v1/messages/count_tokens</code> is a free local utility. SP Cambo counts the model-visible
+      request locally, returns the estimate, does not reserve Tokens or Credits, and does not call
+      OmniRoute or any background provider.
     </p>
     <p>
       The gateway also answers <code>GET /health</code> without a credential. It reports whether the
@@ -259,7 +259,7 @@ const tabs = computed(() => [
       With a signed-in session:
     </p>
     <ul>
-      <li><code>POST /auth/register</code>, <code>POST /auth/login</code>, <code>POST /auth/logout</code>, <code>POST /auth/forgot-password</code>, <code>POST /auth/reset-password</code></li>
+      <li><code>POST /auth/register/code</code> sends the manual sign-up verification code; <code>POST /auth/register</code> consumes that code and creates the account. <code>POST /auth/login</code>, <code>POST /auth/logout</code>, <code>POST /auth/forgot-password</code>, <code>POST /auth/reset-password</code> handle the remaining account session flows.</li>
       <li><code>GET /me</code>, <code>PATCH /me</code>, <code>POST /me/password</code>, <code>GET /me/sessions</code>, <code>DELETE /me/sessions/{id}</code></li>
       <li><code>GET /me/balance</code>, <code>GET /me/entitlements</code>, <code>GET /me/activity</code>, <code>GET /me/usage/summary</code></li>
       <li><code>GET|POST /me/api-keys</code>, <code>POST /me/api-keys/{id}/rotate</code>, <code>PATCH /me/api-keys/{id}/status</code>, <code>GET /me/api-keys/{id}/status</code></li>

@@ -11,7 +11,7 @@ import type { AliasPricingFormState } from '~/utils/modelAliasAdmin'
  * never here.
  *
  * This is the page that resolves "Margin unknown" on `/admin/packages`. An alias whose
- * upstream cost is unverified counts as having no known cost at all, so every package
+ * SP reference cost is unverified counts as having no known cost at all, so every package
  * allowing it becomes unreviewable and can only be published with a written override.
  * Recording the upstream rates and a verification date here is what removes that.
  *
@@ -26,7 +26,7 @@ definePageMeta({
 
 useSeoMeta({
   title: 'Model pricing',
-  description: 'SP Cambo model pricing: customer rates, upstream cost and cost verification.',
+  description: 'SP Cambo model pricing: customer rates, SP reference cost and cost verification.',
   robots: 'noindex, nofollow'
 })
 
@@ -110,7 +110,7 @@ const costState = (alias: AdminModelAlias): { color: 'success' | 'warning' | 'ne
   }
 
   return alias.upstream_cost?.verified_at
-    ? { color: 'success', label: 'Cost verified' }
+    ? { color: 'success', label: 'Reference set' }
     : { color: 'warning', label: 'Cost unverified' }
 }
 
@@ -178,8 +178,8 @@ const submit = async () => {
     toast.add({
       title: `Pricing saved for ${saved.public_alias}`,
       description: saved.upstream_cost?.verified_at
-        ? 'Upstream cost is verified, so packages allowing this model can have their margin calculated.'
-        : 'Upstream cost is not verified, so packages allowing this model still have no calculable margin.',
+        ? 'SP reference cost is set, so packages allowing this model can have their margin calculated.'
+        : 'SP reference cost is not set, so packages allowing this model still have no calculable margin.',
       color: saved.upstream_cost?.verified_at ? 'success' : 'warning',
       icon: saved.upstream_cost?.verified_at ? 'i-lucide-circle-check' : 'i-lucide-circle-help'
     })
@@ -261,7 +261,7 @@ const submit = async () => {
             label="Needs cost verification"
             icon="i-lucide-circle-help"
             :value="formatCount(needingVerification.length)"
-            hint="On sale, upstream cost unverified"
+            hint="On sale, SP reference cost unverified"
             :tone="needingVerification.length > 0 ? 'warning' : 'success'"
           />
         </div>
@@ -271,7 +271,7 @@ const submit = async () => {
           color="warning"
           variant="subtle"
           icon="i-lucide-circle-help"
-          :title="`${formatCount(needingVerification.length)} model${needingVerification.length === 1 ? '' : 's'} on sale with no verified upstream cost`"
+          :title="`${formatCount(needingVerification.length)} model${needingVerification.length === 1 ? '' : 's'} on sale with no verified SP reference cost`"
           :description="`Package margin cannot be calculated for any package that allows ${needingVerification.length === 1 ? 'it' : 'them'}: ${needingVerification.map(alias => alias.public_alias).join(', ')}. Record the upstream rates and the date they were checked, and publication no longer needs a written override.`"
         />
 
@@ -369,7 +369,7 @@ const submit = async () => {
               class="p-5"
             >
               <p class="text-sm text-muted">
-                This model has no pricing record, so it has no customer rate and no known upstream cost.
+                This model has no pricing record, so it has no customer rate and no known SP reference cost.
                 It is not the same as being free — nothing has been priced at all.
               </p>
             </div>
@@ -381,7 +381,7 @@ const submit = async () => {
               <div class="overflow-x-auto">
                 <table class="w-full min-w-md text-sm">
                   <caption class="sr-only">
-                    Customer rate and upstream cost per million tokens for {{ alias.public_alias }}
+                    Customer rate and SP reference cost per million tokens for {{ alias.public_alias }}
                   </caption>
                   <thead>
                     <tr class="text-left text-xs text-dimmed">
@@ -401,7 +401,7 @@ const submit = async () => {
                         scope="col"
                         class="pb-2 text-right font-normal"
                       >
-                        Upstream cost
+                        SP reference cost
                       </th>
                     </tr>
                   </thead>
@@ -432,13 +432,13 @@ const submit = async () => {
                 v-if="alias.upstream_cost?.verified_at"
                 class="text-xs text-muted"
               >
-                Upstream cost last verified {{ formatDateTime(alias.upstream_cost.verified_at) }}.
+                SP reference cost last verified {{ formatDateTime(alias.upstream_cost.verified_at) }}.
               </p>
               <p
                 v-else
                 class="text-xs text-warning"
               >
-                Upstream cost has never been verified, so it counts as no known cost at all — whatever
+                SP reference cost has never been set, so it counts as no known cost at all — whatever
                 rates are recorded above. Every package allowing this model reports an unknown margin.
               </p>
             </div>
@@ -488,7 +488,7 @@ const submit = async () => {
               label="Currency exponent"
               name="exponent"
               required
-              help="Decimal places: USD is 2; KHR is 0."
+              help="Pricing precision. SP Cambo uses 3 for these model rates so values such as $0.075/1M remain exact; customer USD wallets still settle in cents."
             >
               <UInput
                 v-model="form.exponent"
@@ -525,7 +525,7 @@ const submit = async () => {
 
           <div class="space-y-3">
             <SpSectionHeading
-              title="Upstream cost"
+              title="SP reference cost"
               description="What SP Cambo pays for the same tokens. Package margin is calculated from these, and only while the verification below is recorded."
               :level="3"
             />
@@ -549,7 +549,7 @@ const submit = async () => {
             <div class="space-y-3 rounded-lg border border-default p-3">
               <UCheckbox
                 v-model="form.upstream_verified"
-                label="Upstream cost is verified"
+                label="SP reference cost is set"
                 description="Confirms these rates were checked against the provider's own published prices. Without it every package allowing this model reports an unknown margin, however many rates are filled in."
               />
 

@@ -248,6 +248,29 @@ describe('buy page package selection', () => {
     expect(page.text()).toContain('Starter')
   })
 
+  it('shows quota-backed credit packages in the Credits filter', async () => {
+    plane.packages = [
+      pkg({ slug: 'token-pack', name: 'Claude Token Pack', family: 'claude-token', family_label: 'Claude Token' }),
+      pkg({
+        slug: 'credit-pack',
+        name: 'Claude $100 Credits',
+        family: 'claude-credits',
+        family_label: 'Claude Credits',
+        package_kind: 'SP_CREDITS',
+        display_units: '100',
+        display_unit_label: 'SP Credits',
+        advertised_units: '10000000'
+      })
+    ]
+
+    const page = await mountBuy()
+    await clickButton(page, 'Credits')
+
+    expect(page.text()).toContain('Claude $100 Credits')
+    expect(page.text()).not.toContain('Claude Token Pack')
+    expect(page.text()).toContain('$100 Credits')
+  })
+
   it('lists packages in the order the control plane sorted them', async () => {
     plane.packages = [
       pkg({ slug: 'c', name: 'Third package', sort_order: 30 }),

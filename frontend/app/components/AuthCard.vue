@@ -17,12 +17,58 @@ const state = reactive<AuthFormState>({
   name: '',
   email: '',
   password: '',
-  password_confirmation: ''
+  password_confirmation: '',
+  verification_code: ''
 })
 const showPassword = ref(false)
 const showPasswordConfirmation = ref(false)
+const codeSent = ref(false)
+const codeSentTo = ref('')
+const resendSeconds = ref(0)
+let resendTimer: ReturnType<typeof setInterval> | null = null
 
 const isRegistration = computed(() => props.mode === 'register')
+const emailLooksValid = computed(() => /^\S+@\S+\.\S+$/.test(state.email.trim()))
+const verificationCodeValid = computed(() => /^\d{6}$/.test(state.verification_code.trim()))
+
+const stopResendTimer = () => {
+  if (resendTimer) {
+    clearInterval(resendTimer)
+    resendTimer = null
+  }
+}
+
+const startResendTimer = (seconds: number) => {
+  stopResendTimer()
+  resendSeconds.value = Math.max(0, seconds)
+  resendTimer = setInterval(() => {
+    resendSeconds.value = Math.max(0, resendSeconds.value - 1)
+    if (resendSeconds.value === 0) stopResendTimer()
+  }, 1000)
+}
+
+const requestVerificationCode = async () => {
+  if (!isRegistration.value || !emailLooksValid.value || resendSeconds.value > 0) return
+
+  const response = await auth.sendRegistrationCode(state.email)
+  if (!response) return
+
+  codeSent.value = true
+  codeSentTo.value = state.email.trim().toLowerCase()
+  state.verification_code = ''
+  startResendTimer(response.resend_after ?? 60)
+}
+
+watch(() => state.email, (next, previous) => {
+  if (!isRegistration.value || next === previous || !codeSent.value) return
+  if (next.trim().toLowerCase() !== codeSentTo.value) {
+    codeSent.value = false
+    codeSentTo.value = ''
+    state.verification_code = ''
+    resendSeconds.value = 0
+    stopResendTimer()
+  }
+})
 
 const copy = computed(() => isRegistration.value
   ? {
@@ -90,6 +136,10 @@ const validate = (values: AuthFormState): FormError[] => {
     errors.push({ name: 'password_confirmation', message: 'Passwords do not match.' })
   }
 
+  if (isRegistration.value && !/^\d{6}$/.test(values.verification_code.trim())) {
+    errors.push({ name: 'verification_code', message: 'Enter the 6-digit code sent to your email.' })
+  }
+
   return errors
 }
 
@@ -107,7 +157,10 @@ watch(() => auth.fieldErrors, (fieldErrors) => {
   }
 }, { deep: true })
 
-onBeforeUnmount(() => auth.resetErrors())
+onBeforeUnmount(() => {
+  stopResendTimer()
+  auth.resetErrors()
+})
 </script>
 
 <template>
@@ -191,7 +244,49 @@ onBeforeUnmount(() => auth.resetErrors())
             inputmode="email"
             autocomplete="email"
             placeholder="you@example.com"
+            :ui="isRegistration ? { trailing: 'pe-1' } : undefined"
+          >
+            <template
+              v-if="isRegistration"
+              #trailing
+            >
+              <UButton
+                type="button"
+                color="primary"
+                variant="soft"
+                size="xs"
+                :loading="auth.verificationPending"
+                :disabled="!emailLooksValid || auth.verificationPending || resendSeconds > 0"
+                @click.prevent="requestVerificationCode"
+              >
+                {{ resendSeconds > 0 ? `Resend ${resendSeconds}s` : (codeSent ? 'Resend code' : 'Get code') }}
+              </UButton>
+            </template>
+          </UInput>
+        </UFormField>
+
+        <UFormField
+          v-if="isRegistration"
+          label="Email verification code"
+          name="verification_code"
+          required
+        >
+          <UInput
+            v-model="state.verification_code"
+            class="w-full"
+            icon="i-lucide-badge-check"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="6-digit code"
+            :disabled="!codeSent"
+            @input="state.verification_code = state.verification_code.replace(/\D/g, '').slice(0, 6)"
           />
+          <template #help>
+            <span class="text-xs text-muted">
+              {{ codeSent ? `Code sent to ${codeSentTo}. It expires in 10 minutes.` : 'Enter your email and click Get code first.' }}
+            </span>
+          </template>
         </UFormField>
 
         <UFormField
@@ -278,7 +373,7 @@ onBeforeUnmount(() => auth.resetErrors())
           block
           size="lg"
           :loading="auth.pending"
-          :disabled="auth.pending"
+          :disabled="auth.pending || (isRegistration && (!codeSent || !verificationCodeValid))"
         >
           {{ copy.submit }}
         </UButton>

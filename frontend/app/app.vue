@@ -64,7 +64,11 @@ await auth.initialize()
     <NuxtLoadingIndicator color="var(--ui-primary)" />
 
     <NuxtLayout>
-      <NuxtPage />
+      <!--
+        Keep a small route cache so a browser-owned Playground stream is not torn
+        down by an in-app page change. The cache is intentionally bounded.
+      -->
+      <NuxtPage :keepalive="{ max: 8 }" />
     </NuxtLayout>
   </UApp>
 </template>

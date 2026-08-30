@@ -5,8 +5,6 @@ import { generateKhqr } from "../src/khqr.js";
 const env = {
   CONTROL_PLANE_BASE_URL: "http://control-plane",
   SP_CAMBO_INTERNAL_GATEWAY_SECRET: "i".repeat(32),
-  OMNIROUTE_BASE_URL: "http://omniroute:20128",
-  OMNIROUTE_API_KEY: "o".repeat(32),
   REDIS_URL: "redis://redis:6379",
 };
 
@@ -15,11 +13,9 @@ describe("configuration", () => {
     expect(() => loadConfig({ ...env, SP_CAMBO_INTERNAL_GATEWAY_SECRET: "" })).toThrow(/SP_CAMBO_INTERNAL_GATEWAY_SECRET/);
   });
   it("does not require a duplicate OmniRoute credential when routing comes from preflight", () => {
-    const config = loadConfig({ ...env, OMNIROUTE_BASE_URL: "", OMNIROUTE_API_KEY: "", GATEWAY_RATE_STORE: "memory" });
-    expect(config.omniRouteApiKey).toBe("");
+    const config = loadConfig({ ...env, GATEWAY_RATE_STORE: "memory" });
     expect(config.rateStore).toBe("memory");
   });
-  it("accepts private service-network origins as a backwards-compatible fallback", () => expect(loadConfig(env).omniRouteBaseUrl).toBe("http://omniroute:20128"));
 });
 
 it("generates verifiable official KHQR output without exposing merchant configuration", () => {

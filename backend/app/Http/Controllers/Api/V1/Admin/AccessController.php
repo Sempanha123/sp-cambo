@@ -292,6 +292,15 @@ class AccessController extends Controller
                     'reasoning_tokens' => $usage === null ? null : (string) $usage->reasoning_tokens,
                     'metered_units' => $usage === null ? null : (string) $usage->metered_units,
                     'credit_charge_minor' => $usage?->credit_charge_minor === null ? null : (string) $usage->credit_charge_minor,
+                    // Operator-only economics. Customer usage endpoints never
+                    // expose these fields.
+                    'upstream_cost_minor' => $usage?->upstream_cost_minor === null ? null : (string) $usage->upstream_cost_minor,
+                    'gross_profit_minor' => $usage?->credit_charge_minor === null || $usage?->upstream_cost_minor === null
+                        ? null
+                        : (string) ((int) $usage->credit_charge_minor - (int) $usage->upstream_cost_minor),
+                    'gross_margin_bps' => $usage?->credit_charge_minor === null || (int) $usage->credit_charge_minor <= 0 || $usage?->upstream_cost_minor === null
+                        ? null
+                        : (int) floor((((int) $usage->credit_charge_minor - (int) $usage->upstream_cost_minor) * 10_000) / (int) $usage->credit_charge_minor),
                     'currency' => $usage?->currency,
                     'currency_exponent' => $usage?->currency_exponent,
                     'duration_ms' => $durationMs,

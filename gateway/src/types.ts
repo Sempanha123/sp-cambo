@@ -12,8 +12,6 @@ export type GatewayConfig = {
   port: number;
   controlPlaneBaseUrl: string;
   internalSecret: string;
-  omniRouteBaseUrl: string;
-  omniRouteApiKey: string;
   rateStore: "memory" | "redis";
   redisUrl: string | null;
   maxBodyBytes: number;
@@ -91,6 +89,7 @@ export interface ControlPlane {
     customer_key: string;
     public_model: string;
     estimated_input_tokens: number;
+    estimated_cache_read_tokens: number;
     requested_max_output_tokens: number;
     request_bytes: number;
     request_id: string;
@@ -101,7 +100,7 @@ export interface ControlPlane {
   state?(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void>;
   settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void>;
   release(reservationId: string): Promise<void>;
-  reconcile(reservationId: string, reason: string): Promise<void>;
+  reconcile(reservationId: string, reason: string, localUsage?: Usage & { duration_ms: number }): Promise<void>;
 }
 
 export type Fetch = typeof globalThis.fetch;

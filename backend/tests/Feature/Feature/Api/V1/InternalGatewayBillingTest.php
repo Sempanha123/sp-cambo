@@ -85,7 +85,7 @@ class InternalGatewayBillingTest extends TestCase
             ->assertJsonPath('data.balances.credit_remaining', '200');
     }
 
-    public function test_preflight_authoritatively_selects_token_billing_reserves_and_settles_weighted_usage_idempotently(): void
+    public function test_preflight_authoritatively_selects_token_billing_and_settles_local_input_plus_output_idempotently(): void
     {
         [$user, $alias, $created] = $this->customer(['max_output_tokens' => 50]);
         $this->grant($user, $alias, 'TOKEN_QUOTA', 500, [
@@ -98,42 +98,56 @@ class InternalGatewayBillingTest extends TestCase
         $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret']))->assertOk();
         $reservationId = $response->json('data.reservation_id');
         $response->assertJsonPath('data.internal_model', 'private-route')->assertJsonPath('data.billing_mode', 'TOKEN_QUOTA')
-            ->assertJsonPath('data.max_output_tokens', 50)->assertJsonPath('data.reserved_units', '110');
-        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'reserved_units' => 110]);
+            ->assertJsonPath('data.max_output_tokens', 50)->assertJsonPath('data.reserved_units', '60');
+        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'reserved_units' => 60]);
 
         $usage = ['input_tokens' => 10, 'output_tokens' => 20, 'cache_write_tokens' => 0, 'reasoning_tokens' => 0, 'duration_ms' => 250];
-        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", $usage)->assertOk()->assertJsonPath('data.settled_units', '50');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", $usage)->assertOk()->assertJsonPath('data.settled_units', '30');
         $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", $usage)->assertOk();
-        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'remaining_units' => 450, 'reserved_units' => 0]);
+        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'remaining_units' => 470, 'reserved_units' => 0]);
         $this->assertDatabaseCount('usage_records', 1);
-        $this->actingAs($user)->getJson('/api/v1/me/activity')->assertOk()->assertJsonPath('data.0.metered_units', '50');
+        $this->actingAs($user)->getJson('/api/v1/me/activity')->assertOk()->assertJsonPath('data.0.metered_units', '30')
+            ->assertJsonMissingPath('data.0.internal_model')->assertJsonMissingPath('data.0.provider')->assertJsonMissingPath('data.0.route_version');
     }
 
-    public function test_reservation_conservatively_covers_cache_and_reasoning_categories(): void
+    public function test_token_quota_bills_only_sp_local_cache_at_twenty_five_percent_and_ignores_provider_only_categories(): void
     {
         [$user, $alias, $created] = $this->customer();
         $this->grant($user, $alias, 'TOKEN_QUOTA', 1_000, [
+            'local_cache_read_billing_bps' => 2_500,
             'input_weight_microunits' => 1_000_000,
             'output_weight_microunits' => 1_000_000,
-            'cache_read_weight_microunits' => 3_000_000,
-            'cache_write_weight_microunits' => 2_000_000,
-            'reasoning_weight_microunits' => 4_000_000,
+            'cache_read_weight_microunits' => 250_000,
+            'cache_write_weight_microunits' => 0,
+            'reasoning_weight_microunits' => 0,
         ]);
 
         $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
             'estimated_input_tokens' => 10,
+            'estimated_cache_read_tokens' => 100,
             'requested_max_output_tokens' => 20,
-        ]))->assertOk()->assertJsonPath('data.reserved_units', '110');
+        ]))->assertOk()->assertJsonPath('data.reserved_units', '55');
 
         $reservationId = $response->json('data.reservation_id');
         $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", [
-            'input_tokens' => 0,
-            'output_tokens' => 0,
-            'cache_read_tokens' => 10,
-            'cache_write_tokens' => 0,
-            'reasoning_tokens' => 20,
-        ])->assertOk()->assertJsonPath('data.settled_units', '110');
-        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'remaining_units' => 890, 'reserved_units' => 0]);
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+            'cache_read_tokens' => 100,
+            // These classes can be present in a protocol payload, but R43 does
+            // not let provider/backend-only counters change Token quota billing.
+            'cache_write_tokens' => 500,
+            'reasoning_tokens' => 500,
+        ])->assertOk()->assertJsonPath('data.settled_units', '55');
+
+        $this->assertDatabaseHas('entitlement_lots', ['user_id' => $user->id, 'remaining_units' => 945, 'reserved_units' => 0]);
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $reservationId,
+            'input_tokens' => 10,
+            'cache_read_tokens' => 100,
+            'output_tokens' => 20,
+            'total_tokens' => 130,
+            'metered_units' => 55,
+        ]);
     }
 
     public function test_count_tokens_preflight_reserves_input_only_and_settles_top_level_usage(): void
@@ -166,6 +180,7 @@ class InternalGatewayBillingTest extends TestCase
             'upstream_cache_read_per_million_minor' => 400_000,
             'upstream_cache_write_per_million_minor' => 400_000,
             'upstream_reasoning_per_million_minor' => 800_000,
+            'upstream_cost_verified_at' => now(),
         ]);
         $this->grant($user, $alias, 'CREDIT_BALANCE', 1_000, []);
 
@@ -185,6 +200,157 @@ class InternalGatewayBillingTest extends TestCase
             'metered_units' => 50,
             'credit_charge_minor' => 50,
             'upstream_cost_minor' => 20,
+        ]);
+    }
+
+    public function test_legacy_billing_multipliers_do_not_change_r39_local_standard_customer_settlement(): void
+    {
+        // Token-quota settlement: 10 raw input at 1.10x + 20 raw output at
+        // 1.20x => 11 + 24 = 35 SP billable units when the package weights are 1x.
+        [$quotaUser, $quotaAlias, $quotaKey] = $this->customer(['max_output_tokens' => 20]);
+        $this->grant($quotaUser, $quotaAlias, 'TOKEN_QUOTA', 1_000, [
+            'input_weight_microunits' => 1_000_000,
+            'output_weight_microunits' => 1_000_000,
+            'billing_multipliers_bps' => [
+                'input' => 11_000,
+                'output' => 12_000,
+            ],
+        ]);
+
+        $quotaPreflight = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($quotaKey['secret'], [
+            'estimated_input_tokens' => 10,
+            'requested_max_output_tokens' => 20,
+            'request_id' => 'multiplied-quota',
+            'request_fingerprint' => hash('sha256', 'multiplied-quota'),
+        ]))->assertOk()->assertJsonPath('data.reserved_units', '30');
+
+        $quotaReservation = $quotaPreflight->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$quotaReservation}/settle", [
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+        ])->assertOk()->assertJsonPath('data.settled_units', '30');
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $quotaReservation,
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+            'total_tokens' => 30,
+            'metered_units' => 30,
+        ]);
+
+        // Credit settlement uses the same published multiplier before applying the
+        // customer base rate. Upstream cost still uses the unmodified raw usage.
+        [$creditUser, $creditAlias, $creditKey] = $this->customer(['max_output_tokens' => 20]);
+        $creditAlias->forceFill(['limits' => [
+            'billing_multipliers_bps' => [
+                'input' => 11_000,
+                'output' => 12_000,
+            ],
+        ]])->save();
+        $creditAlias->pricing()->create([
+            'currency' => 'USD',
+            'exponent' => 6,
+            'input_per_million_minor' => 1_000_000,
+            'output_per_million_minor' => 2_000_000,
+            'upstream_input_per_million_minor' => 400_000,
+            'upstream_output_per_million_minor' => 800_000,
+            'upstream_cache_read_per_million_minor' => 400_000,
+            'upstream_cache_write_per_million_minor' => 400_000,
+            'upstream_reasoning_per_million_minor' => 800_000,
+            'upstream_cost_verified_at' => now(),
+        ]);
+        $this->grant($creditUser, $creditAlias, 'CREDIT_BALANCE', 1_000, []);
+
+        $creditPreflight = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($creditKey['secret'], [
+            'estimated_input_tokens' => 10,
+            'requested_max_output_tokens' => 20,
+            'request_id' => 'multiplied-credit',
+            'request_fingerprint' => hash('sha256', 'multiplied-credit'),
+        ]))->assertOk()->assertJsonPath('data.reserved_units', '50');
+
+        $creditReservation = $creditPreflight->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$creditReservation}/settle", [
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+        ])->assertOk()->assertJsonPath('data.settled_units', '50');
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $creditReservation,
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+            'total_tokens' => 30,
+            'metered_units' => 50,
+            'credit_charge_minor' => 50,
+            'upstream_cost_minor' => 20,
+        ]);
+    }
+
+    public function test_token_quota_usage_also_snapshots_private_upstream_cost_for_admin_profitability(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        $alias->pricing()->create([
+            'currency' => 'USD',
+            'exponent' => 6,
+            'input_per_million_minor' => 1_000_000,
+            'output_per_million_minor' => 2_000_000,
+            'upstream_input_per_million_minor' => 400_000,
+            'upstream_output_per_million_minor' => 800_000,
+            'upstream_cache_read_per_million_minor' => 400_000,
+            'upstream_cache_write_per_million_minor' => 400_000,
+            'upstream_reasoning_per_million_minor' => 800_000,
+            'upstream_cost_verified_at' => now(),
+        ]);
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 1_000, []);
+
+        $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
+            'estimated_input_tokens' => 10,
+            'requested_max_output_tokens' => 20,
+        ]))->assertOk()->assertJsonPath('data.billing_mode', 'TOKEN_QUOTA');
+
+        $reservationId = $response->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", [
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+        ])->assertOk()->assertJsonPath('data.settled_units', '30');
+
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $reservationId,
+            'credit_charge_minor' => null,
+            'upstream_cost_minor' => 20,
+            'currency' => 'USD',
+            'currency_exponent' => 6,
+        ]);
+    }
+
+    public function test_unverified_upstream_rates_are_not_recorded_as_real_cost(): void
+    {
+        [$user, $alias, $created] = $this->customer();
+        $alias->pricing()->create([
+            'currency' => 'USD',
+            'exponent' => 6,
+            'input_per_million_minor' => 1_000_000,
+            'output_per_million_minor' => 2_000_000,
+            'upstream_input_per_million_minor' => 400_000,
+            'upstream_output_per_million_minor' => 800_000,
+            'upstream_cache_read_per_million_minor' => 400_000,
+            'upstream_cache_write_per_million_minor' => 400_000,
+            'upstream_reasoning_per_million_minor' => 800_000,
+            'upstream_cost_verified_at' => null,
+        ]);
+        $this->grant($user, $alias, 'TOKEN_QUOTA', 1_000, []);
+
+        $response = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
+            'estimated_input_tokens' => 10,
+            'requested_max_output_tokens' => 20,
+        ]))->assertOk();
+
+        $reservationId = $response->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$reservationId}/settle", [
+            'input_tokens' => 10,
+            'output_tokens' => 20,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $reservationId,
+            'upstream_cost_minor' => null,
         ]);
     }
 
@@ -252,7 +418,7 @@ class InternalGatewayBillingTest extends TestCase
 
     public function test_invalid_key_model_protocol_size_and_depleted_balance_never_create_reservations(): void
     {
-        $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight('sk-spc-invalid'))
+        $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight('sk-invalid'))
             ->assertUnauthorized()->assertJsonPath('code', 'invalid_api_key');
         [$user, $alias, $created] = $this->customer(['max_request_bytes' => 100]);
         $this->grant($user, $alias, 'TOKEN_QUOTA', 5, []);
@@ -308,26 +474,47 @@ class InternalGatewayBillingTest extends TestCase
         ]);
     }
 
-    public function test_definite_failure_releases_and_ambiguous_failure_is_held_for_reconciliation(): void
+    public function test_r39_reconcile_uses_local_usage_or_releases_without_waiting_for_provider_usage(): void
     {
         Event::fake([CustomerStateChanged::class]);
         [$user, $alias, $created] = $this->customer();
         $this->grant($user, $alias, 'TOKEN_QUOTA', 500, []);
-        $first = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], ['request_id' => 'release-me']))->json('data.reservation_id');
-        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$first}/release")->assertOk()->assertJsonPath('data.status', 'RELEASED');
 
-        $second = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], ['request_id' => 'reconcile-me']))->json('data.reservation_id');
-        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$second}/reconcile", ['reason' => 'settlement_failed'])
-            ->assertStatus(202)->assertJsonPath('data.status', 'RECONCILIATION_REQUIRED');
-        $this->assertDatabaseHas('reservations', ['id' => $second, 'reconciliation_reason' => 'settlement_failed']);
-        $this->assertDatabaseHas('api_request_logs', ['reservation_id' => $second, 'state' => 'RECONCILING', 'error_code' => 'billing_settlement_pending']);
-        $this->assertSame(60, (int) EntitlementLot::query()->where('user_id', $user->id)->value('reserved_units'));
-        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$second}/settle", [
+        $released = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
+            'request_id' => 'reconcile-release',
+            'request_fingerprint' => hash('sha256', 'reconcile-release'),
+        ]))->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$released}/reconcile", [
+            'reason' => 'upstream_timeout',
+        ])->assertOk()->assertJsonPath('data.status', 'RELEASED');
+        $this->assertDatabaseHas('api_request_logs', ['reservation_id' => $released, 'state' => 'RELEASED', 'error_code' => null]);
+
+        $settled = $this->gateway()->postJson('/api/v1/internal/gateway/preflight', $this->preflight($created['secret'], [
+            'request_id' => 'reconcile-local-usage',
+            'request_fingerprint' => hash('sha256', 'reconcile-local-usage'),
+        ]))->json('data.reservation_id');
+        $this->gateway()->postJson("/api/v1/internal/gateway/reservations/{$settled}/reconcile", [
+            'reason' => 'settlement_failed',
+            'local_usage' => [
+                'input_tokens' => 10,
+                'output_tokens' => 20,
+                'cache_read_tokens' => 999,
+                'reasoning_tokens' => 999,
+                'duration_ms' => 250,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('data.status', 'SETTLED')
+            ->assertJsonPath('data.settled_units', '30')
+            ->assertJsonPath('data.recovered_locally', true);
+        $this->assertDatabaseHas('usage_records', [
+            'reservation_id' => $settled,
             'input_tokens' => 10,
             'output_tokens' => 20,
-        ])->assertOk()->assertJsonPath('data.status', 'SETTLED');
-        $this->assertDatabaseHas('api_request_logs', ['reservation_id' => $second, 'state' => 'SETTLED', 'error_code' => null]);
-        Event::assertDispatched(CustomerStateChanged::class, fn ($event): bool => $event->event === 'api_request.failed' && ! array_key_exists('reason', $event->safeData));
+            'cache_read_tokens' => 0,
+            'reasoning_tokens' => 0,
+            'metered_units' => 30,
+        ]);
+        $this->assertSame(0, (int) EntitlementLot::query()->where('user_id', $user->id)->sum('reserved_units'));
     }
 
     public function test_cross_terminal_gateway_operations_conflict_without_contradictory_side_effects(): void

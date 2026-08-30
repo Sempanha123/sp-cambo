@@ -332,5 +332,9 @@ class ApiKeyCheckTest extends TestCase
         $response->assertJsonPath('data.recent_requests.0.input_tokens', '100');
         $response->assertJsonPath('data.recent_requests.0.output_tokens', '20');
         $response->assertJsonPath('data.recent_requests.0.charge.minor', '125000');
+        $response->assertJsonMissingPath('data.recent_requests.0.internal_model');
+        $response->assertJsonMissingPath('data.recent_requests.0.provider');
+        $response->assertJsonMissingPath('data.recent_requests.0.provider_slug');
+        $response->assertJsonMissingPath('data.recent_requests.0.route_version');
     }
 }

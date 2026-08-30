@@ -182,7 +182,7 @@ const verdict = computed(() => {
       tone: 'neutral' as const,
       label: 'Margin unknown',
       detail: projection.value.missingCostAliases.length > 0
-        ? 'Upstream cost is not verified for every selected model, so no margin can be projected.'
+        ? 'SP reference cost is not set for every selected model, so no margin can be projected.'
         : 'Select at least one model and enter a price and quantity to project a margin.'
     }
   }
@@ -760,7 +760,7 @@ const submit = () => {
           <dl class="space-y-1">
             <div class="flex justify-between gap-3 text-sm">
               <dt class="text-muted">
-                Worst-case upstream cost
+                Worst-case SP reference cost
               </dt>
               <dd class="sp-numeric text-default">
                 {{ draftMoney(projection.worstCaseCostMinor) }}
@@ -783,7 +783,7 @@ const submit = () => {
             v-if="projection.missingCostAliases.length > 0"
             class="text-xs text-warning"
           >
-            No verified upstream cost for {{ projection.missingCostAliases.join(', ') }}. Record it on
+            No verified SP reference cost for {{ projection.missingCostAliases.join(', ') }}. Record it on
             model pricing and the margin becomes calculable.
           </p>
 

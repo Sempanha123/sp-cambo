@@ -6,7 +6,7 @@ withDefaults(defineProps<{
   hint?: string
   icon?: string
   estimated?: boolean
-  tone?: 'default' | 'warning' | 'error' | 'success'
+  tone?: 'default' | 'primary' | 'info' | 'warning' | 'error' | 'success'
 }>(), {
   hint: undefined,
   icon: undefined,
@@ -16,6 +16,8 @@ withDefaults(defineProps<{
 
 const toneClass = {
   default: 'text-highlighted',
+  primary: 'text-primary',
+  info: 'text-info',
   warning: 'text-warning',
   error: 'text-error',
   success: 'text-success'

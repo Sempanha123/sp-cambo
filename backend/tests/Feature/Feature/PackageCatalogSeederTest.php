@@ -3,51 +3,82 @@
 namespace Tests\Feature\Feature;
 
 use App\Models\AiModel;
+use App\Models\ModelAlias;
+use App\Models\Package;
+use App\Models\Provider;
+use App\Models\ProviderConnectionRevision;
 use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\SellCatalogSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use RuntimeException;
 use Tests\TestCase;
 
 class PackageCatalogSeederTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_default_database_seed_does_not_create_a_sell_catalog(): void
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config([
+            'app.key' => 'base64:'.base64_encode(str_repeat('s', 32)),
+            'services.spcambo.playground_daily_token_quota' => 20_000,
+            // This test covers the Admin-UI-only path, so no bootstrap revision.
+            'services.spcambo.omniroute_bootstrap_file' => storage_path('framework/testing/does-not-exist.json'),
+        ]);
+    }
+
+    public function test_migrate_fresh_seed_bootstraps_three_combo_catalog_without_provider_env_credentials(): void
     {
         $this->seed(DatabaseSeeder::class);
 
-        $this->assertDatabaseCount('packages', 0);
-        $this->assertDatabaseCount('providers', 0);
+        $provider = Provider::query()->where('slug', 'omniroute-primary')->sole();
+        $this->assertTrue($provider->enabled);
+        $this->assertNull($provider->active_connection_revision_id);
+        $this->assertDatabaseCount('provider_connection_revisions', 0);
+
+        $this->assertSame(
+            ['AgentRouter-claude-opus-5', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
+        );
+        $this->assertSame(9, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
+        $this->assertSame(43, Package::query()->where('enabled', true)->where('customer_visible', true)->count());
+
+        // Nothing is publicly sellable until the Admin-managed route is READY.
+        $this->assertSame(0, ModelAlias::query()->published()->count());
+        $this->assertSame(0, Package::query()->published()->count());
     }
 
-    public function test_sell_catalog_seed_requires_only_the_private_omniroute_base_url_and_token(): void
+    public function test_catalog_becomes_sellable_after_ui_managed_ready_revision_is_activated(): void
     {
-        config([
-            'services.spcambo.sell_catalog_base_url' => '',
-            'services.spcambo.sell_catalog_token' => '',
+        $this->seed(DatabaseSeeder::class);
+        $provider = Provider::query()->where('slug', 'omniroute-primary')->sole();
+
+        $revision = ProviderConnectionRevision::query()->create([
+            'provider_id' => $provider->id,
+            'route_version' => 1,
+            'origin' => 'http://127.0.0.1:20128',
+            'connection_type' => 'omniroute',
+            'credential' => 'ui-managed-test-secret',
+            'credential_suffix' => 'cret',
+            'timeout_ms' => 60000,
+            'policy_version' => 1,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+            'last_probe_status' => 'SUCCESS',
+            'last_probe_at' => now(),
         ]);
+        $provider->activateConnectionRevision($revision);
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('ANTHROPIC_BASE_URL');
-        $this->expectExceptionMessage('ANTHROPIC_AUTH_TOKEN');
-
-        $this->seed(SellCatalogSeeder::class);
+        $this->assertSame(9, ModelAlias::query()->published()->count());
+        $this->assertSame(43, Package::query()->published()->count());
+        $this->assertSame(43, Package::query()->published()->where('billing_mode', 'TOKEN_QUOTA')->count());
     }
 
-    public function test_sell_catalog_does_not_require_a_global_anthropic_model_and_keeps_exact_database_model_ids(): void
+    public function test_sell_catalog_keeps_exact_private_combo_ids(): void
     {
-        config([
-            'services.spcambo.sell_catalog_base_url' => 'http://127.0.0.1:20128/v1',
-            'services.spcambo.sell_catalog_token' => 'test-secret',
-            // A legacy/global value must not control SP Cambo routing.
-            'services.spcambo.sell_catalog_primary_model' => 'Wrong Model Should Be Ignored',
-        ]);
-
         $this->seed(SellCatalogSeeder::class);
 
         $this->assertSame(
-            ['Gemini Google AI Studio', 'OpenAI Codex'],
+            ['AgentRouter-claude-opus-5', 'Gemini Google AI Studio', 'OpenAI Codex'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
     }

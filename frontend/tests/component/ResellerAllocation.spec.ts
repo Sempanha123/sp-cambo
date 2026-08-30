@@ -73,7 +73,7 @@ const lot = (overrides: Partial<EntitlementLot> & { id: string }): EntitlementLo
 const customerKey = (overrides: Partial<ResellerCustomerKey> = {}): ResellerCustomerKey => ({
   id: 'key_test',
   label: 'Managed customer production key',
-  prefix: 'sk-spc-',
+  prefix: 'sk-',
   last_four: 'abcd',
   status: 'ACTIVE',
   created_at: iso(NOW - DAY),
@@ -564,8 +564,8 @@ describe('reseller customer page honesty', () => {
     await vm.confirmRevoke()
 
     expect(revokeCustomerKey).toHaveBeenCalledWith(CUSTOMER_ID, 'key_test')
-    expect(page.text()).toContain('sk-spc-••••••••abcd')
-    expect(page.text()).not.toContain('sk-spc-abcdefghijklmnop')
+    expect(page.text()).toContain('sk-••••••••abcd')
+    expect(page.text()).not.toContain('sk-abcdefghijklmnop')
   })
 })
 

@@ -81,11 +81,15 @@ const humanise = (value: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
+const statusKey = computed(() => (props.status ?? '').toLowerCase())
+
 const resolved = computed(() => {
-  const key = (props.status ?? '').toLowerCase()
+  const key = statusKey.value
 
   return tones[key] ?? { color: 'neutral' as Tone, label: key ? humanise(key) : 'Unknown' }
 })
+
+const isStreaming = computed(() => statusKey.value === 'streaming')
 </script>
 
 <template>
@@ -93,9 +97,17 @@ const resolved = computed(() => {
     :color="resolved.color"
     :variant="variant"
     :size="size"
-    :icon="resolved.icon"
+    :icon="isStreaming ? undefined : resolved.icon"
     class="whitespace-nowrap"
   >
-    {{ resolved.label }}
+    <span class="inline-flex items-center gap-1.5">
+      <UIcon
+        v-if="isStreaming"
+        name="i-lucide-loader-circle"
+        class="size-3.5 shrink-0 animate-spin"
+        aria-hidden="true"
+      />
+      <span>{{ resolved.label }}</span>
+    </span>
   </UBadge>
 </template>

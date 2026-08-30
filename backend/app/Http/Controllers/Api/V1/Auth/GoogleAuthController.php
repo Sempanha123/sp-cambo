@@ -155,6 +155,12 @@ class GoogleAuthController extends Controller
             }
 
             $email = Str::lower(trim($email));
+            if (! $this->googleEmailIsVerified($socialiteUser)) {
+                throw ValidationException::withMessages([
+                    'google' => ['Google did not confirm this email address, so SP Cambo cannot create or link the account.'],
+                ]);
+            }
+
             $existingUser = User::query()->where('email', $email)->first();
 
             if ($existingUser) {

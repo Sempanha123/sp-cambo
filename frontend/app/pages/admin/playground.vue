@@ -25,19 +25,25 @@ const form = reactive<PlaygroundSettingsForm>({
   allow_model_switching: true
 })
 
-watch(() => settings.data.value, (value) => {
+const publishedAliases = computed(() => (aliases.data.value ?? [])
+  .filter(alias => alias.publication_ready === true)
+  .map(alias => ({ label: alias.public_alias, value: alias.public_alias })))
+
+watch([() => settings.data.value, () => aliases.data.value], ([value]) => {
   if (!value) return
+  const published = new Set(publishedAliases.value.map(item => item.value))
+  const allowed = value.allowed_model_aliases.filter(alias => published.has(alias))
+  const defaultAlias = value.default_model_alias && allowed.includes(value.default_model_alias)
+    ? value.default_model_alias
+    : allowed[0]
+
   Object.assign(form, {
     ...value,
     gateway_base_url: value.gateway_base_url ?? '',
-    default_model_alias: value.default_model_alias ?? undefined,
-    allowed_model_aliases: [...value.allowed_model_aliases]
+    default_model_alias: defaultAlias,
+    allowed_model_aliases: allowed
   })
 }, { immediate: true })
-
-const publishedAliases = computed(() => (aliases.data.value ?? [])
-  .filter(alias => alias.enabled && alias.customer_visible)
-  .map(alias => ({ label: `${alias.display_name} · ${alias.public_alias}`, value: alias.public_alias })))
 
 const freeAliasOptions = computed(() => publishedAliases.value.filter(item => form.allowed_model_aliases.includes(item.value)))
 
@@ -110,7 +116,7 @@ const save = async () => {
 
           <UFormField
             label="Free Playground models"
-            help="Choose published customer aliases that can spend the daily free allowance."
+            help="Choose published public aliases that can spend the daily free allowance. Renamed aliases are refreshed automatically."
           >
             <USelectMenu
               v-model="form.allowed_model_aliases"
@@ -118,14 +124,14 @@ const save = async () => {
               value-key="value"
               multiple
               class="w-full"
-              placeholder="Choose published aliases"
+              placeholder="Choose public aliases"
             />
           </UFormField>
 
           <div class="grid gap-4 sm:grid-cols-2">
             <UFormField
               label="Default chat model"
-              help="The customer Playground opens with this public alias."
+              help="The customer Playground opens with this public alias. Only the alias is shown to customers in the model picker."
             >
               <USelectMenu
                 v-model="form.default_model_alias"

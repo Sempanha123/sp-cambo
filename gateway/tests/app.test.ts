@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { ControlPlaneError } from "../src/errors.js";
 import { MemoryRateStore } from "../src/rate-store.js";
-import { usageFromJson } from "../src/protocol.js";
+import { estimateTokens } from "../src/protocol.js";
 import type { ControlPlane, GatewayConfig, InspectData, PreflightData, RateLease, RateStore, Usage } from "../src/types.js";
 
-const secret = `sk-spc-${"a".repeat(48)}`;
+const secret = `sk-${"a".repeat(48)}`;
 const config: GatewayConfig = {
   host: "127.0.0.1", port: 3010, controlPlaneBaseUrl: "http://control-plane", internalSecret: "i".repeat(32), rateStore: "memory",
-  omniRouteBaseUrl: "http://omniroute", omniRouteApiKey: "o".repeat(32), redisUrl: null,
+  redisUrl: null,
   maxBodyBytes: 1024 * 1024, defaultMaxOutputTokens: 100, upstreamTimeoutMs: 1000, controlPlaneTimeoutMs: 1000,
 };
 
@@ -23,7 +23,7 @@ class FakeControlPlane implements ControlPlane {
   async preflight(input: Parameters<ControlPlane["preflight"]>[0]): Promise<PreflightData> { this.preflightCalls++; this.lastPreflight = input; if (this.preflightError) throw this.preflightError; return this.preflightData; }
   async settle(id: string, usage: Usage): Promise<void> { this.settleCalls.push({ id, usage }); if (this.settleError) throw this.settleError; }
   async release(id: string): Promise<void> { this.releases.push(id); }
-  async reconcile(id: string, reason: string): Promise<void> { this.reconciles.push(`${id}:${reason}`); }
+  async reconcile(id: string, reason: string, _localUsage?: Usage & { duration_ms: number }): Promise<void> { this.reconciles.push(`${id}:${reason}`); }
 }
 
 const apps: Array<ReturnType<typeof buildApp>> = [];
@@ -39,8 +39,15 @@ it("supports bearer and Anthropic key auth but rejects conflicting credentials",
   const [instance] = app();
   expect((await instance.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${secret}` } })).statusCode).toBe(200);
   expect((await instance.inject({ method: "GET", url: "/v1/key/status", headers: { "x-api-key": secret } })).statusCode).toBe(200);
-  const conflict = await instance.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${secret}`, "x-api-key": `sk-spc-${"b".repeat(48)}` } });
+  const conflict = await instance.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${secret}`, "x-api-key": `sk-${"b".repeat(48)}` } });
   expect(conflict.statusCode).toBe(401); expect(conflict.json().error.code).toBe("conflicting_api_keys");
+});
+
+it("keeps legacy sk-spc keys valid while new keys use sk-", async () => {
+  const [instance] = app();
+  const legacy = `sk-spc-${"c".repeat(48)}`;
+  expect((await instance.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${legacy}` } })).statusCode).toBe(200);
+  expect((await instance.inject({ method: "GET", url: "/v1/key/status", headers: { "x-api-key": legacy } })).statusCode).toBe(200);
 });
 
 it("returns safe models and non-billable key status without upstream", async () => {
@@ -70,15 +77,66 @@ describe("preflight rejection", () => {
   }
 });
 
-it("maps public model, strips customer auth and settles normalized JSON usage", async () => {
+it("accepts Claude Code context_management but strips it before private upstream routing", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const sent = JSON.parse(init.body as string);
+    expect(sent.context_management).toBeUndefined();
+    expect(sent.model).toBe("private-route");
+    return new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 2, output_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const [instance] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: auth,
+    payload: { ...body, context_management: { edits: [{ type: "clear_tool_uses_20250919" }] } },
+  });
+  expect(response.statusCode).toBe(200);
+});
+
+it("accepts Claude Code output_config but strips it before private upstream routing", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const sent = JSON.parse(init.body as string);
+    expect(sent.output_config).toBeUndefined();
+    expect(sent.model).toBe("private-route");
+    return new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 2, output_tokens: 3 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const [instance] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: auth,
+    payload: { ...body, output_config: { effort: "high" } },
+  });
+  expect(response.statusCode).toBe(200);
+});
+
+it("accepts output_config on Claude Code token-count requests and strips it upstream", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const sent = JSON.parse(init.body as string);
+    expect(sent.output_config).toBeUndefined();
+    return new Response(JSON.stringify({ input_tokens: 9 }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const [instance] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const response = await instance.inject({
+    method: "POST",
+    url: "/v1/messages/count_tokens",
+    headers: auth,
+    payload: { model: body.model, messages: body.messages, output_config: { effort: "high" } },
+  });
+  expect(response.statusCode).toBe(200);
+});
+
+it("maps public model, strips customer auth and settles SP-local JSON usage", async () => {
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
     const headers = init.headers as Record<string, string>; const sent = JSON.parse(init.body as string);
-    expect(headers.authorization).toBe(`Bearer ${config.omniRouteApiKey}`); expect(headers["x-api-key"]).toBe(config.omniRouteApiKey); expect(JSON.stringify(headers)).not.toContain(secret); expect(sent.model).toBe("private-route");
-    return new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } });
+    expect(headers.authorization).toBe(`Bearer ${control.preflightData.upstream_credential}`); expect(headers["x-api-key"]).toBe(control.preflightData.upstream_credential); expect(JSON.stringify(headers)).not.toContain(secret); expect(sent.model).toBe("private-route");
+    return new Response(JSON.stringify({ id: "msg", content: [{ type: "text", text: "hello" }], usage: { input_tokens: 5000, output_tokens: 7000, cache_read_input_tokens: 2000 } }), { status: 200, headers: { "content-type": "application/json" } });
   });
-  const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const control = new FakeControlPlane();
+  const [instance] = app(control, fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: { ...auth, "anthropic-version": "2023-06-01", cookie: secret }, payload: body });
-  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 5, output_tokens: 7, cache_read_tokens: 2 }); expect(control.releases).toHaveLength(0);
+  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(body)), output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }); expect(control.releases).toHaveLength(0);
 });
 
 
@@ -131,7 +189,7 @@ it("restores exact Claude Code tool casing in streamed Anthropic responses", asy
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: requestBody });
   expect(response.statusCode).toBe(200);
   expect(response.body).toContain('"name":"Edit"');
-  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 4, output_tokens: 6 });
+  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(requestBody)), output_tokens: 2 });
 });
 
 it("forwards Playground funding scope only to the control plane and never upstream", async () => {
@@ -154,25 +212,25 @@ it("rejects an invalid Playground funding scope before preflight", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it("returns a completed non-stream response and reconciles a failed settlement", async () => {
+it("returns a completed non-stream response and locally reconciles a failed settlement", async () => {
   const control = new FakeControlPlane(); control.settleError = new Error("control plane unavailable");
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 5, output_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } }));
   const [instance] = app(control, fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body });
   expect(response.statusCode).toBe(200); expect(response.json().id).toBe("msg");
-  expect(control.settleCalls).toHaveLength(1); expect(control.reconciles).toEqual(["reservation-1:settlement_failed"]); expect(control.releases).toHaveLength(0);
+  expect(control.settleCalls).toHaveLength(3); expect(control.reconciles).toEqual(["reservation-1:settlement_failed"]); expect(control.releases).toHaveLength(0);
 });
 
-it("forces usage in streamed Chat Completions without overwriting other stream options", async () => {
+it("removes provider usage requests from streamed Chat Completions while preserving other stream options", async () => {
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
     const sent = JSON.parse(init.body as string);
-    expect(sent.stream_options).toEqual({ include_usage: true, custom_option: "kept" });
+    expect(sent.stream_options).toEqual({ custom_option: "kept" });
     const stream = `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 4, completion_tokens: 6 } })}\n\ndata: [DONE]\n\n`;
     return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
   });
   const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/chat/completions", headers: auth, payload: { model: "claude-coding", messages: body.messages, stream: true, stream_options: { include_usage: false, custom_option: "kept" } } });
-  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 4, output_tokens: 6 }); expect(control.reconciles).toHaveLength(0);
+  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage.output_tokens).toBe(0); expect(control.settleCalls[0]?.usage.cache_read_tokens).toBe(0); expect(control.reconciles).toHaveLength(0);
 });
 
 it("accepts common Codex Responses parameters and maps only the public model", async () => {
@@ -186,7 +244,7 @@ it("accepts common Codex Responses parameters and maps only the public model", a
   expect(response.statusCode).toBe(200); expect(response.json().id).toBe("resp_1");
 });
 
-it("reconciles a streamed response when settlement fails after delivery", async () => {
+it("retries and locally reconciles a streamed response when settlement fails after delivery", async () => {
   const control = new FakeControlPlane(); control.settleError = new Error("control plane unavailable");
   const stream = `data: ${JSON.stringify({ type: "message_delta", usage: { input_tokens: 4, output_tokens: 6 } })}\n\n`;
   const fetchMock = vi.fn(async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
@@ -196,36 +254,37 @@ it("reconciles a streamed response when settlement fails after delivery", async 
 });
 
 it("sanitizes private upstream errors and releases deterministic rejections", async () => {
-  const privateError = { error: { message: `provider route private-route rejected ${config.omniRouteApiKey}`, internal_url: "http://omniroute:20128/admin", provider: "private-provider" } };
+  const control = new FakeControlPlane();
+  const privateError = { error: { message: `provider route private-route rejected ${control.preflightData.upstream_credential}`, internal_url: "http://omniroute:20128/admin", provider: "private-provider" } };
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(privateError), { status: 400, headers: { "content-type": "application/json", "x-request-id": "private-upstream-id" } }));
-  const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
+  const [instance] = app(control, fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body });
   expect(response.statusCode).toBe(400); expect(response.json().error.sp_cambo_code).toBe("upstream_rejected");
-  expect(response.body).not.toContain("private-route"); expect(response.body).not.toContain("private-provider"); expect(response.body).not.toContain("omniroute"); expect(response.body).not.toContain(config.omniRouteApiKey);
+  expect(response.body).not.toContain("private-route"); expect(response.body).not.toContain("private-provider"); expect(response.body).not.toContain("omniroute"); expect(response.body).not.toContain(control.preflightData.upstream_credential);
   expect(response.headers["x-request-id"]).not.toBe("private-upstream-id"); expect(control.releases).toEqual(["reservation-1"]);
 });
 
-it("holds reservation on ambiguous upstream 5xx", async () => {
+it("releases reservation on upstream 5xx when no public completion was delivered", async () => {
   const fetchMock = vi.fn(async () => new Response("unavailable", { status: 503 })); const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
-  expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(503); expect(control.reconciles).toEqual(["reservation-1:usage_unavailable"]); expect(control.releases).toHaveLength(0);
+  expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(503); expect(control.reconciles).toHaveLength(0); expect(control.releases).toEqual(["reservation-1"]);
 });
 
-it("holds the reservation when fetch rejects after dispatch without authoritative usage", async () => {
+it("releases the reservation when fetch rejects before any public output", async () => {
   const fetchMock = vi.fn(async () => { throw new Error("connection outcome unknown"); }); const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
-  expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(503); expect(control.reconciles).toEqual(["reservation-1:upstream_timeout"]); expect(control.releases).toHaveLength(0);
+  expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(503); expect(control.reconciles).toHaveLength(0); expect(control.releases).toEqual(["reservation-1"]);
 });
 
-it("holds the reservation when the configured upstream timeout aborts fetch", async () => {
+it("releases the reservation when the configured upstream timeout happens before output", async () => {
   const timeoutConfig = { ...config, upstreamTimeoutMs: 10 };
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
   }));
   const control = new FakeControlPlane(); const instance = buildApp(timeoutConfig, { controlPlane: control, rateStore: new MemoryRateStore(), fetchImpl: fetchMock as typeof fetch }); apps.push(instance);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body });
-  expect(response.statusCode).toBe(503); expect(control.reconciles).toEqual(["reservation-1:upstream_timeout"]); expect(control.releases).toHaveLength(0);
+  expect(response.statusCode).toBe(503); expect(control.reconciles).toHaveLength(0); expect(control.releases).toEqual(["reservation-1"]);
 });
 
-it("holds the reservation when the client disconnects after upstream dispatch", async () => {
+it("releases the reservation when the client disconnects before output", async () => {
   let fetchStarted!: () => void; const dispatched = new Promise<void>((resolve) => { fetchStarted = resolve; });
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
     fetchStarted();
@@ -242,8 +301,8 @@ it("holds the reservation when the client disconnects after upstream dispatch", 
   await dispatched;
   request.destroy();
 
-  await vi.waitFor(() => expect(control.reconciles).toEqual(["reservation-1:client_disconnect"]));
-  expect(control.releases).toHaveLength(0);
+  await vi.waitFor(() => expect(control.releases).toEqual(["reservation-1"]));
+  expect(control.reconciles).toHaveLength(0);
 });
 
 it("settles usage from SSE and never forwards customer key", async () => {
@@ -251,22 +310,33 @@ it("settles usage from SSE and never forwards customer key", async () => {
   const fetchMock = vi.fn(async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
   const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: { ...body, stream: true } });
-  expect(response.statusCode).toBe(200); expect(response.body).toContain("message_delta"); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 4, output_tokens: 6 }); expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(secret);
+  expect(response.statusCode).toBe(200); expect(response.body).toContain("message_delta"); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify({ ...body, stream: true })), output_tokens: 0 }); expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(secret);
 });
 
-it("settles count_tokens top-level usage with zero output reservation", async () => {
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ input_tokens: 17 }), { status: 200, headers: { "content-type": "application/json" } }));
+it("serves count_tokens locally for free without preflight, reservation or OmniRoute", async () => {
+  const fetchMock = vi.fn();
   const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
-  const response = await instance.inject({ method: "POST", url: "/v1/messages/count_tokens", headers: auth, payload: { model: "claude-coding", messages: body.messages } });
-  expect(response.statusCode).toBe(200); expect(response.json().input_tokens).toBe(17);
-  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 17, output_tokens: 0 }); expect(control.reconciles).toHaveLength(0);
+  const payload = { model: "claude-coding", messages: body.messages };
+  const response = await instance.inject({ method: "POST", url: "/v1/messages/count_tokens", headers: auth, payload });
+  expect(response.statusCode).toBe(200);
+  expect(response.json().input_tokens).toBe(estimateTokens(JSON.stringify(payload)));
+  expect(response.headers["x-sp-cambo-metering"]).toBe("local-cache-aware-v1");
+  expect(control.preflightCalls).toBe(0);
+  expect(control.settleCalls).toHaveLength(0);
+  expect(control.releases).toHaveLength(0);
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it("partitions OpenAI cached and reasoning subsets before settlement", async () => {
-  expect(usageFromJson({ usage: { prompt_tokens: 1000, completion_tokens: 1200, prompt_tokens_details: { cached_tokens: 800 }, completion_tokens_details: { reasoning_tokens: 1000 } } }, "/v1/chat/completions"))
-    .toEqual({ input_tokens: 200, output_tokens: 200, cache_read_tokens: 800, cache_write_tokens: 0, reasoning_tokens: 1000 });
-  expect(usageFromJson({ usage: { input_tokens: 1000, output_tokens: 1200, input_tokens_details: { cached_tokens: 800 }, output_tokens_details: { reasoning_tokens: 1000 } } }, "/v1/responses"))
-    .toEqual({ input_tokens: 200, output_tokens: 200, cache_read_tokens: 800, cache_write_tokens: 0, reasoning_tokens: 1000 });
+it("keeps a tiny direct chat in a human-scale local estimate range", async () => {
+  const tiny = estimateTokens(JSON.stringify({ model: "gemini-3.6-flash", messages: [{ role: "user", content: "hi" }] }));
+  expect(tiny).toBeGreaterThanOrEqual(10);
+  expect(tiny).toBeLessThanOrEqual(40);
+});
+
+it("does not expose provider usage parser helpers to customer billing", async () => {
+  // R42 deliberately has no provider-usage parser in the gateway billing path.
+  // The app tests below assert settlement from SP-local request/response counts.
+  expect(estimateTokens(JSON.stringify({ model: "claude-coding", messages: [{ role: "user", content: "hello" }] }))).toBeGreaterThan(0);
 });
 
 it("preserves split SSE events and holds the concurrency lease until settlement completes", async () => {
@@ -282,7 +352,7 @@ it("preserves split SSE events and holds the concurrency lease until settlement 
   const second = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body });
   expect(second.statusCode).toBe(429); expect(second.json().error.sp_cambo_code).toBe("concurrency_limit_exceeded");
   releaseSettle(); const response = await first;
-  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: 3, output_tokens: 5 });
+  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage.output_tokens).toBe(0);
 });
 
 it("preserves retry metadata and explicit parser error types", async () => {
@@ -306,7 +376,7 @@ it("returns a safe server error when an unexpected dependency failure occurs", a
   expect(response.body).not.toContain("database host");
 });
 
-it("uses the UTF-8 byte count as a conservative input-token reservation ceiling", async () => {
+it("uses the SP-local bytes-per-unit input meter for reservation", async () => {
   const control = new FakeControlPlane(); control.inspectData.limits.tokens_per_minute = null; control.inspectData.limits.max_request_bytes = config.maxBodyBytes;
   const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "msg", usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }));
   const [instance] = app(control, fetchMock as typeof fetch);
@@ -314,7 +384,7 @@ it("uses the UTF-8 byte count as a conservative input-token reservation ceiling"
   const raw = JSON.stringify(denseBody);
   await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: denseBody });
   expect(control.preflightCalls).toBe(1);
-  expect(control.lastPreflight?.estimated_input_tokens).toBe(Buffer.byteLength(raw, "utf8"));
+  expect(control.lastPreflight?.estimated_input_tokens).toBe(estimateTokens(raw));
 });
 
 it("enforces body, output, RPM, TPM, and concurrency limits before upstream", async () => {
@@ -326,23 +396,26 @@ it("enforces body, output, RPM, TPM, and concurrency limits before upstream", as
   expect((await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: body })).statusCode).toBe(429);
 });
 
-it("bounds the complete upstream operation including stalled streaming body", async () => {
-  const timeoutConfig = { ...config, upstreamTimeoutMs: 100 };
-  let streamCancelled = false;
+it("lets an established stream outlive the route connection timeout", async () => {
+  const timeoutConfig = { ...config, upstreamTimeoutMs: 25 };
   const fetchMock = vi.fn(async () => new Response(new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}\n\n'));
+      setTimeout(() => {
+        controller.enqueue(new TextEncoder().encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"finished"}}\n\n'));
+        controller.enqueue(new TextEncoder().encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.close();
+      }, 75);
     },
-    cancel() { streamCancelled = true; },
   }), { status: 200, headers: { "content-type": "text/event-stream" } }));
   const control = new FakeControlPlane();
   const instance = buildApp(timeoutConfig, { controlPlane: control, rateStore: new MemoryRateStore(), fetchImpl: fetchMock as typeof fetch });
-  const response = instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: { ...body, stream: true } });
-  await expect(response).rejects.toThrow("response destroyed before completion");
-  expect(control.reconciles).toEqual(["reservation-1:upstream_timeout"]);
+  const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: { ...body, stream: true } });
+  expect(response.statusCode).toBe(200);
+  expect(response.body).toContain("finished");
+  expect(control.reconciles).toHaveLength(0);
   expect(control.releases).toHaveLength(0);
-  expect(control.settleCalls).toHaveLength(0);
-  expect(streamCancelled).toBe(true);
+  expect(control.settleCalls).toHaveLength(1);
 });
 
 it("cancels streaming when client disconnects after headers", async () => {
@@ -368,8 +441,9 @@ it("cancels streaming when client disconnects after headers", async () => {
   await started;
   request.destroy();
 
-  await vi.waitFor(() => expect(control.reconciles).toEqual(["reservation-1:client_disconnect"]));
+  await vi.waitFor(() => expect(control.settleCalls).toHaveLength(1));
+  expect(control.reconciles).toHaveLength(0);
   expect(control.releases).toHaveLength(0);
-  expect(control.settleCalls).toHaveLength(0);
+  expect(control.settleCalls[0]?.usage.output_tokens).toBe(0);
   expect(streamCancelled).toBe(true);
 });

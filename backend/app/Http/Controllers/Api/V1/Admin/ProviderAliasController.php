@@ -7,6 +7,7 @@ use App\Models\AiModel;
 use App\Models\ModelAlias;
 use App\Models\Provider;
 use App\Services\AuditService;
+use App\Services\ModelAliasReferenceService;
 use App\Services\TelegramAnnouncementService;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
@@ -58,7 +59,7 @@ class ProviderAliasController extends Controller
         return response()->json(['data' => $this->resource($alias->load('model'), $provider)], 201);
     }
 
-    public function update(Request $request, string $provider, string $alias, AuditService $audit): JsonResponse
+    public function update(Request $request, string $provider, string $alias, AuditService $audit, ModelAliasReferenceService $references): JsonResponse
     {
         $provider = Provider::query()->findOrFail($provider);
         $modelAlias = $this->aliasForProvider($provider, $alias);
@@ -66,16 +67,30 @@ class ProviderAliasController extends Controller
         $this->ensureChatProtocol($data['capabilities']);
         $model = AiModel::query()->where('provider_id', $provider->id)->findOrFail($data['model_id']);
         $before = $this->resource($modelAlias->load('model'), $provider);
+        $oldPublicAlias = (string) $modelAlias->public_alias;
+        $newPublicAlias = strtolower(trim($data['public_alias']));
+        $existingLimits = is_array($modelAlias->limits) ? $modelAlias->limits : [];
+        foreach (['billing_unit_label', 'billing_multipliers_bps', 'billing_usage_classes', 'context_tokens', 'max_request_bytes', 'max_output_tokens'] as $preservedKey) {
+            if (array_key_exists($preservedKey, $existingLimits) && ! array_key_exists($preservedKey, $data['limits'])) {
+                $data['limits'][$preservedKey] = $existingLimits[$preservedKey];
+            }
+        }
 
-        $modelAlias->update([
-            'ai_model_id' => $model->id,
-            'public_alias' => strtolower(trim($data['public_alias'])),
-            'display_name' => trim($data['display_name']),
-            'capabilities' => $data['capabilities'],
-            'limits' => $data['limits'],
-            'enabled' => (bool) $data['enabled'],
-            'customer_visible' => (bool) $data['customer_visible'],
-        ]);
+        DB::transaction(function () use ($modelAlias, $model, $data, $oldPublicAlias, $newPublicAlias, $references): void {
+            $modelAlias->update([
+                'ai_model_id' => $model->id,
+                'public_alias' => $newPublicAlias,
+                'display_name' => trim($data['display_name']),
+                'capabilities' => $data['capabilities'],
+                'limits' => $data['limits'],
+                'enabled' => (bool) $data['enabled'],
+                'customer_visible' => (bool) $data['customer_visible'],
+            ]);
+
+            if ($oldPublicAlias !== $newPublicAlias) {
+                $references->rename($oldPublicAlias, $newPublicAlias);
+            }
+        });
 
         $audit->record($request->user(), 'provider_alias.updated', 'model_alias', $modelAlias->id,
             'Updated provider public alias.', ['before' => $before, 'after' => $this->resource($modelAlias->fresh('model'), $provider)]);

@@ -937,7 +937,7 @@ class TelegramCommerceService
             $message = str_replace($secret, '[redacted]', $message);
         }
 
-        $message = preg_replace('/sk-spc-[a-z0-9]+/i', '[redacted]', $message) ?: 'Telegram delivery failed.';
+        $message = preg_replace('/sk-(?:spc-)?[a-z0-9]+/i', '[redacted]', $message) ?: 'Telegram delivery failed.';
 
         return Str::limit($message, 1000, '…');
     }

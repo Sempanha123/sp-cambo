@@ -21,6 +21,8 @@ const packages = await useSpResource('catalog:packages', () => api.catalog.packa
 
 const selectedSlug = ref<string | null>(null)
 const quantity = ref(1)
+const familyFilter = ref<'all' | 'claude' | 'codex' | 'gemini'>('all')
+const modeFilter = ref<'all' | 'SP_TOKENS' | 'SP_CREDITS'>('all')
 
 /** `?package=<slug>` deep-links from the public pricing page. */
 watch([() => route.query.package, packages.data], ([slug, list]) => {
@@ -32,18 +34,57 @@ watch([() => route.query.package, packages.data], ([slug, list]) => {
 
   if (requested) {
     selectedSlug.value = requested.slug
+    familyFilter.value = packageFamily(requested)
+    modeFilter.value = packageKind(requested)
   } else if (!selectedSlug.value) {
-    selectedSlug.value = (list.find(item => item.featured) ?? list[0])?.slug ?? null
+    selectedSlug.value = (list.find(item => item.featured && !isSoldOut(item)) ?? list.find(item => !isSoldOut(item)) ?? list[0])?.slug ?? null
   }
 }, { immediate: true })
 
 const sorted = computed(() => [...(packages.data.value ?? [])].sort((a, b) => a.sort_order - b.sort_order))
+const familyFilters = [
+  { value: 'all' as const, label: 'All models' },
+  { value: 'claude' as const, label: 'Claude' },
+  { value: 'codex' as const, label: 'GPT / Codex' },
+  { value: 'gemini' as const, label: 'Gemini' }
+]
+function packageFamily(item: PublicPackage): 'claude' | 'codex' | 'gemini' {
+  const value = `${item.family} ${item.family_label} ${item.allowed_model_aliases.join(' ')}`.toLowerCase()
+  if (value.includes('claude') || value.includes('opus') || value.includes('sonnet') || value.includes('haiku')) return 'claude'
+  if (value.includes('gemini')) return 'gemini'
+  return 'codex'
+}
+function packageKind(item: PublicPackage): 'SP_TOKENS' | 'SP_CREDITS' {
+  if (item.package_kind === 'SP_CREDITS' || ['Credits', 'SP Credits'].includes(item.display_unit_label ?? '')) return 'SP_CREDITS'
+  return 'SP_TOKENS'
+}
+const filteredPackages = computed(() => sorted.value.filter(item =>
+  (familyFilter.value === 'all' || packageFamily(item) === familyFilter.value)
+  && (modeFilter.value === 'all' || packageKind(item) === modeFilter.value)
+))
+function isSoldOut(item: PublicPackage) { return item.stock_remaining !== null && BigInt(item.stock_remaining) <= 0n }
+const stockLabel = (item: PublicPackage) => item.stock_remaining === null
+  ? 'Available'
+  : isSoldOut(item)
+    ? 'Sold out'
+    : `${formatUnits(item.stock_remaining)} left`
+const primaryModel = (item: PublicPackage) => item.allowed_model_aliases[0] || item.family_label
 
 const selected = computed<PublicPackage | null>(() =>
   sorted.value.find(item => item.slug === selectedSlug.value) ?? null
 )
 
+// Keep the order summary synchronized with what the customer can currently see.
+// This prevents a stale token package from remaining selected after switching to Credits.
+watch([filteredPackages, familyFilter, modeFilter], ([visible]) => {
+  const currentStillVisible = visible.some(item => item.slug === selectedSlug.value && !isSoldOut(item))
+  if (currentStillVisible) return
+
+  selectedSlug.value = (visible.find(item => !isSoldOut(item)) ?? visible[0])?.slug ?? null
+}, { immediate: true })
+
 const select = (item: PublicPackage) => {
+  if (isSoldOut(item)) return
   selectedSlug.value = item.slug
   promotion.value = null
   promoError.value = null
@@ -168,12 +209,23 @@ const placeOrder = async () => {
   }
 }
 
+const customerLabel = (value: string | null | undefined) => (value ?? '')
+  .replaceAll('SP Tokens', 'Tokens')
+  .replaceAll('SP Credits', 'Credits')
+  .replaceAll('SP billable tokens', 'Tokens')
+  .replaceAll('SP billable units', 'Tokens')
+
 const packageGrantLabel = (item: PublicPackage): string => {
+  if (item.display_units && item.display_unit_label) {
+    const label = customerLabel(item.display_unit_label)
+    return label === 'Credits' ? `$${formatUnits(item.display_units)} Credits` : `${formatUnits(item.display_units)} ${label}`
+  }
+
   if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
     return `${formatMoney(item.credit_amount)} credit`
   }
 
-  return `${formatUnits(item.advertised_units)} ${item.unit_label}`
+  return `${formatUnits(item.advertised_units)} ${customerLabel(item.unit_label)}`
 }
 
 const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, value }))
@@ -205,48 +257,82 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
         <section class="space-y-4">
           <SpSectionHeading
             title="Choose a package"
-            description="Every figure below is published by SP Cambo. Lifetimes run in exact seconds from the moment payment is confirmed."
+            description="Choose your model family first, then pick tokens or credits. Sold-out packages stay visible so you can compare prices."
           />
 
+          <div class="space-y-3 rounded-2xl border border-default bg-elevated/25 p-3 sm:p-4">
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="family in familyFilters"
+                :key="family.value"
+                type="button"
+                class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition"
+                :class="familyFilter === family.value ? 'border-primary/50 bg-primary/10 text-highlighted' : 'border-default bg-default/35 text-muted hover:border-primary/30 hover:text-default'"
+                @click="familyFilter = family.value"
+              >
+                <SpModelLogo v-if="family.value !== 'all'" :model="family.label" :label="family.label" size="xs" />
+                <UIcon v-else name="i-lucide-layout-grid" class="size-4" />
+                <span>{{ family.label }}</span>
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-2 border-t border-default pt-3">
+              <UButton size="xs" :color="modeFilter === 'all' ? 'primary' : 'neutral'" :variant="modeFilter === 'all' ? 'soft' : 'ghost'" icon="i-lucide-layers-3" @click="modeFilter = 'all'">All packages</UButton>
+              <UButton size="xs" :color="modeFilter === 'SP_TOKENS' ? 'primary' : 'neutral'" :variant="modeFilter === 'SP_TOKENS' ? 'soft' : 'ghost'" icon="i-lucide-gauge" @click="modeFilter = 'SP_TOKENS'">Tokens</UButton>
+              <UButton size="xs" :color="modeFilter === 'SP_CREDITS' ? 'primary' : 'neutral'" :variant="modeFilter === 'SP_CREDITS' ? 'soft' : 'ghost'" icon="i-lucide-wallet-cards" @click="modeFilter = 'SP_CREDITS'">Credits</UButton>
+              <span class="ms-auto self-center text-xs text-muted">{{ filteredPackages.length }} shown</span>
+            </div>
+          </div>
+          <div class="rounded-xl border border-success/20 bg-success/5 p-4">
+            <div class="flex items-start gap-3">
+              <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+                <UIcon name="i-lucide-sparkles" class="size-4" />
+              </div>
+              <div>
+                <p class="text-sm font-semibold text-highlighted">Smart reuse included with every package</p>
+                <p class="mt-1 text-xs leading-5 text-muted">Repeated prompt context can be recognized automatically and charged at 25% of the normal Token rate, helping long chats, coding sessions and agent workflows cost less while keeping pricing predictable.</p>
+                <p class="mt-1 text-[11px] leading-4 text-dimmed">New input/output is metered normally. Larger bundles have a lower effective purchase price. $1 Credit = 100,000 billable Tokens. Credits are platform usage credits, not withdrawable cash.</p>
+              </div>
+            </div>
+          </div>
+
+          <p v-if="filteredPackages.length === 0" class="rounded-xl border border-dashed border-default px-5 py-10 text-center text-sm text-muted">
+            No packages match this model and package type.
+          </p>
+
           <ul
+            v-else
             class="grid gap-3 sm:grid-cols-2"
             role="radiogroup"
             aria-label="Packages"
           >
             <li
-              v-for="item in sorted"
+              v-for="item in filteredPackages"
               :key="item.slug"
             >
               <button
                 type="button"
                 role="radio"
                 :aria-checked="item.slug === selectedSlug"
-                class="sp-catalog-option w-full rounded-lg border p-4 text-left transition-colors"
-                :class="item.slug === selectedSlug
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
-                  : 'border-default bg-elevated/30 hover:border-accented'"
+                class="sp-catalog-option w-full rounded-2xl border p-4 text-left transition"
+                :class="[
+                  item.slug === selectedSlug ? 'border-primary bg-primary/5 ring-1 ring-primary/40' : 'border-default bg-elevated/30 hover:border-accented',
+                  isSoldOut(item) ? 'cursor-not-allowed opacity-55' : 'hover:-translate-y-0.5'
+                ]"
+                :disabled="isSoldOut(item)"
                 @click="select(item)"
               >
                 <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    <p class="truncate font-medium text-highlighted">
-                      {{ item.name }}
-                    </p>
-                    <p
-                      v-if="item.subtitle"
-                      class="truncate text-xs text-muted"
-                    >
-                      {{ item.subtitle }}
-                    </p>
+                  <div class="flex min-w-0 items-start gap-3">
+                    <SpModelLogo :model="primaryModel(item)" :label="item.family_label" size="md" />
+                    <div class="min-w-0">
+                      <p class="truncate font-semibold text-highlighted">{{ customerLabel(item.name) }}</p>
+                      <p v-if="item.subtitle" class="truncate text-xs text-muted">{{ customerLabel(item.subtitle) }}</p>
+                      <div class="mt-1.5 flex flex-wrap gap-1.5">
+                        <UBadge :color="isSoldOut(item) ? 'error' : 'success'" variant="subtle" size="xs">{{ stockLabel(item) }}</UBadge>
+                        <UBadge v-if="item.badge" color="primary" variant="subtle" size="xs">{{ item.badge }}</UBadge>
+                      </div>
+                    </div>
                   </div>
-                  <UBadge
-                    v-if="item.badge"
-                    color="primary"
-                    variant="subtle"
-                    size="sm"
-                  >
-                    {{ item.badge }}
-                  </UBadge>
                 </div>
 
                 <p class="sp-numeric mt-3 text-xl font-semibold text-highlighted">
@@ -271,12 +357,15 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                     </dd>
                   </div>
                   <div class="flex justify-between gap-2">
-                    <dt>Family</dt>
-                    <dd class="text-default">
-                      {{ item.family_label }}
-                    </dd>
+                    <dt>Model family</dt>
+                    <dd class="text-default">{{ item.family_label }}</dd>
                   </div>
                 </dl>
+
+                <div v-if="item.allowed_model_aliases.length" class="mt-3 flex flex-wrap gap-1.5">
+                  <SpModelBadge v-for="alias in item.allowed_model_aliases.slice(0, 3)" :key="alias" :model="alias" compact />
+                  <UBadge v-if="item.allowed_model_aliases.length > 3" color="neutral" variant="outline" size="xs">+{{ item.allowed_model_aliases.length - 3 }}</UBadge>
+                </div>
               </button>
             </li>
           </ul>
@@ -295,7 +384,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                     Package
                   </dt>
                   <dd class="text-right text-default">
-                    {{ selected.name }}
+                    {{ customerLabel(selected.name) }}
                   </dd>
                 </div>
                 <div class="flex justify-between gap-3">
@@ -456,6 +545,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
                 block
                 size="lg"
                 :loading="placing"
+                :disabled="selected ? isSoldOut(selected) : true"
                 icon="i-lucide-qr-code"
                 @click="placeOrder"
               >

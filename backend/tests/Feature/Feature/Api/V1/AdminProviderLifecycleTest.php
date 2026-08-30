@@ -5,6 +5,8 @@ namespace Tests\Feature\Feature\Api\V1;
 use App\Models\AiModel;
 use App\Models\ModelAlias;
 use App\Models\Package;
+use App\Models\PlaygroundChat;
+use App\Models\PlaygroundSetting;
 use App\Models\Permission;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
@@ -52,6 +54,21 @@ class AdminProviderLifecycleTest extends TestCase
     {
         $admin = $this->admin();
         [$provider, , $model, $alias] = $this->catalog();
+        PlaygroundSetting::current()->forceFill([
+            'allowed_model_aliases' => [$alias->public_alias],
+            'default_model_alias' => $alias->public_alias,
+        ])->save();
+        PlaygroundChat::query()->create([
+            'user_id' => $admin->id,
+            'client_key' => 'alias-rename-test',
+            'title' => 'Alias rename test',
+            'model_alias' => $alias->public_alias,
+            'system_prompt' => '',
+            'messages' => [['role' => 'user', 'content' => 'hello']],
+            'message_count' => 1,
+            'last_message_at' => now(),
+            'expires_at' => now()->addDays(30),
+        ]);
 
         $this->actingAs($admin)
             ->putJson("/api/v1/admin/providers/{$provider->id}/aliases/{$alias->id}", [
@@ -93,6 +110,10 @@ class AdminProviderLifecycleTest extends TestCase
         $this->assertTrue((bool) $alias->capabilities['messages_api']);
         $this->assertFalse((bool) $alias->capabilities['responses_api']);
         $this->assertTrue($alias->customer_visible);
+        $setting = PlaygroundSetting::current()->fresh();
+        $this->assertSame(['sp-test-model-edited'], $setting->allowed_model_aliases);
+        $this->assertSame('sp-test-model-edited', $setting->default_model_alias);
+        $this->assertSame('sp-test-model-edited', PlaygroundChat::query()->where('user_id', $admin->id)->value('model_alias'));
     }
 
     public function test_provider_alias_edit_rejects_protocol_less_public_model(): void

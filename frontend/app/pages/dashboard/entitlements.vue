@@ -17,6 +17,16 @@ const api = useSpApi()
 const balance = await useSpResource('dashboard:balance', () => api.account.balance(), { server: false })
 const lots = await useSpResource('dashboard:entitlements', () => api.account.entitlements(), { server: false })
 
+const reuseSavings = await useSpResource(
+  'dashboard:entitlements-reuse-savings',
+  () => api.account.usageSummary({
+    from: new Date(Date.now() - 30 * 24 * 3600_000).toISOString(),
+    to: new Date().toISOString(),
+    bucket: 'day'
+  }),
+  { server: false }
+)
+
 const redeemCode = ref('')
 const redeeming = ref(false)
 const redeemError = ref<string | null>(null)
@@ -85,9 +95,24 @@ const tokenPercent = computed(() => {
   return quota ? percentOfUnits(quota.remaining_units, quota.original_units) : null
 })
 
+const formatSpCreditBalance = (value: string | null | undefined) => {
+  if (value == null) return '$0'
+  const amount = Number(value)
+  return Number.isFinite(amount)
+    ? `$${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 5 })}`
+    : value
+}
+
+const customerUnitLabel = (value: string | null | undefined) => (value ?? 'Tokens')
+  .replaceAll('SP billable tokens', 'Tokens')
+  .replaceAll('SP billable units', 'Tokens')
+  .replaceAll('SP Tokens', 'Tokens')
+  .replaceAll('SP Credits', 'Credits')
+
 const refreshAll = () => {
   balance.refresh()
   lots.refresh()
+  reuseSavings.refresh()
 }
 </script>
 
@@ -102,7 +127,7 @@ const refreshAll = () => {
         color="neutral"
         variant="ghost"
         icon="i-lucide-refresh-cw"
-        :loading="lots.loading.value || balance.loading.value"
+        :loading="lots.loading.value || balance.loading.value || reuseSavings.loading.value"
         @click="refreshAll"
       >
         Refresh
@@ -133,24 +158,27 @@ const refreshAll = () => {
           class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
         >
           <SpMetric
-            label="Tokens remaining"
+            label="Total Tokens"
             icon="i-lucide-hourglass"
             :value="formatUnits(balance.data.value.token_quota.remaining_units)"
-            :hint="tokenPercent === null ? undefined : `${tokenPercent}% of purchased quota`"
+            :hint="tokenPercent === null ? undefined : `${tokenPercent}% of purchased quota · purchased Token quota`"
             :tone="isUnitsDepleted(balance.data.value.token_quota.remaining_units) ? 'warning' : 'default'"
           />
           <SpMetric
-            label="Tokens reserved"
-            icon="i-lucide-lock"
-            :value="formatUnits(balance.data.value.token_quota.reserved_units)"
-            hint="Held for requests in flight"
+            label="Credits"
+            icon="i-lucide-wallet-cards"
+            :value="formatSpCreditBalance(balance.data.value.sp_credit_quota?.remaining)"
+            :hint="balance.data.value.sp_credit_quota
+              ? `${formatSpCreditBalance(balance.data.value.sp_credit_quota.reserved)} reserved · $1 Credit = ${formatUnits(balance.data.value.sp_credit_quota.billable_units_per_credit)} Tokens`
+              : 'Dollar-denominated platform Credits'"
+            :tone="Number(balance.data.value.sp_credit_quota?.remaining ?? 0) <= 0 ? 'warning' : 'default'"
           />
           <SpMetric
-            label="Credit balance"
-            icon="i-lucide-wallet"
+            label="Wallet credit"
+            icon="i-lucide-circle-dollar-sign"
             :value="formatMoney(balance.data.value.credit_balance.remaining)"
             :hint="isZeroMoney(balance.data.value.credit_balance.reserved)
-              ? undefined
+              ? 'Money credit from rewards or wallet funding'
               : `${formatMoney(balance.data.value.credit_balance.reserved)} reserved`"
             :tone="isZeroMoney(balance.data.value.credit_balance.remaining) ? 'warning' : 'default'"
           />
@@ -167,6 +195,15 @@ const refreshAll = () => {
         </div>
       </SpAsyncSection>
     </section>
+
+    <UAlert
+      v-if="reuseSavings.data.value && Number(reuseSavings.data.value.saved_tokens) > 0"
+      icon="i-lucide-sparkles"
+      color="success"
+      variant="subtle"
+      title="Your balance went further with smart reuse"
+      :description="`${formatUnits(reuseSavings.data.value.saved_tokens)} Tokens saved in the last 30 days · ${Number(reuseSavings.data.value.savings_rate_percent).toFixed(1)}% average savings on locally metered Token usage.`"
+    />
 
     <section class="space-y-4">
       <SpSectionHeading
@@ -255,7 +292,7 @@ const refreshAll = () => {
               <div class="min-w-0 space-y-1">
                 <div class="flex flex-wrap items-center gap-2">
                   <h3 class="truncate font-medium text-highlighted">
-                    {{ lot.package_name }}
+                    {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
                   </h3>
                   <SpStatusBadge :status="lot.status.toLowerCase()" />
                   <UBadge :color="accessTone(lot)" variant="subtle" size="sm">{{ accessLabel(lot) }}</UBadge>
@@ -291,7 +328,7 @@ const refreshAll = () => {
                     : formatUnits(lot.remaining_units) }}
                 </p>
                 <p class="text-xs text-muted">
-                  {{ lot.billing_mode === 'CREDIT_BALANCE' ? 'remaining' : `${lot.unit_label} remaining` }}
+                  {{ lot.billing_mode === 'CREDIT_BALANCE' ? 'remaining' : `${customerUnitLabel(lot.unit_label)} remaining` }}
                 </p>
               </div>
             </div>
@@ -353,16 +390,12 @@ const refreshAll = () => {
             <div class="mt-4 flex flex-wrap items-center gap-1.5 border-t border-default pt-3">
               <span class="text-xs text-dimmed">Models:</span>
               <template v-if="lot.allowed_model_aliases.length > 0">
-                <UBadge
+                <SpModelBadge
                   v-for="alias in lot.allowed_model_aliases"
                   :key="alias"
-                  color="neutral"
-                  variant="subtle"
-                  size="sm"
-                  class="font-mono"
-                >
-                  {{ alias }}
-                </UBadge>
+                  :model="alias"
+                  compact
+                />
               </template>
               <span
                 v-else
@@ -392,10 +425,10 @@ const refreshAll = () => {
         >
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-highlighted">
-              {{ lot.package_name }}
+              {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
             </p>
             <p class="text-xs text-muted">
-              {{ formatUnits(lot.original_units) }} {{ lot.unit_label }} · {{ lot.family_label }}
+              {{ formatUnits(lot.original_units) }} {{ customerUnitLabel(lot.unit_label) }} · {{ lot.family_label }}
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -446,10 +479,10 @@ const refreshAll = () => {
         >
           <div class="min-w-0">
             <p class="truncate text-sm text-default">
-              {{ lot.package_name }}
+              {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
             </p>
             <p class="text-xs text-muted">
-              {{ formatUnits(lot.original_units) }} {{ lot.unit_label }} purchased ·
+              {{ formatUnits(lot.original_units) }} {{ customerUnitLabel(lot.unit_label) }} purchased ·
               {{ lot.expires_at ? `ended ${formatDateTime(lot.expires_at)}` : 'no expiry recorded' }}
             </p>
           </div>

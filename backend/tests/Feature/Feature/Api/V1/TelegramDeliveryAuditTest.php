@@ -279,7 +279,7 @@ class AuditTelegramBotClient extends TelegramBotClient
     public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): void
     {
         $this->messages[] = $text;
-        if (preg_match('/sk-spc-[a-z0-9]+/', $text, $matches)) {
+        if (preg_match('/sk-[a-z0-9]+/', $text, $matches)) {
             $this->secrets[] = $matches[0];
         }
 

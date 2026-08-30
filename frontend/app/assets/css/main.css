@@ -1383,8 +1383,29 @@
 
   .sp-dashboard-content pre {
     border-radius: .9rem;
-    background: color-mix(in oklab, var(--sp-surface-0) 82%, #050913 18%) !important;
+    background: var(--sp-code-surface) !important;
+    color: var(--sp-code-foreground) !important;
     box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent);
+  }
+
+  /*
+   * Playground code must remain readable in both color schemes. Earlier builds
+   * mixed a light-mode pre background with a hard-coded light text utility,
+   * which produced the washed-out block seen in the customer screenshot.
+   */
+  .sp-playground-code {
+    background: var(--sp-code-surface) !important;
+    color: var(--sp-code-foreground) !important;
+  }
+
+  .sp-playground-code .sp-code-block__header {
+    background: var(--sp-code-header) !important;
+    color: var(--sp-code-header-foreground) !important;
+  }
+
+  .sp-playground-code pre,
+  .sp-playground-code code {
+    color: inherit !important;
   }
 
   /* Playground: chat canvas, run setup and telemetry read as one workspace. */

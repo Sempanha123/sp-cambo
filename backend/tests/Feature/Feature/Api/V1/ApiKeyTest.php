@@ -24,7 +24,9 @@ class ApiKeyTest extends TestCase
         $secret = (string) $created->json('data.secret');
         $key = $user->apiKeys()->firstOrFail();
 
-        $this->assertStringStartsWith('sk-spc-', $secret);
+        $this->assertStringStartsWith('sk-', $secret);
+        $this->assertStringNotContainsString('sk-spc-', $secret);
+        $this->assertSame('sk-', $key->prefix);
         $this->assertDatabaseMissing('api_keys', ['lookup_digest' => $secret]);
         $this->assertSame(app(ApiKeySecretService::class)->digest($secret), $key->lookup_digest);
         $this->assertNotSame($secret, $key->getRawOriginal('secret_ciphertext'));

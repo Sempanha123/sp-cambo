@@ -102,7 +102,7 @@ const createKeyResponse = `{
     "key": {
       "id": "918",
       "label": "Sokha production",
-      "prefix": "sk-spc-",
+      "prefix": "sk-",
       "last_four": "4f2b",
       "status": "ACTIVE",
       "created_at": "2026-08-22T04:10:55+00:00",
@@ -110,7 +110,7 @@ const createKeyResponse = `{
       "expires_at": "2027-01-31T23:59:59+00:00",
       "allowed_model_aliases": ["${MODEL_ALIAS_PLACEHOLDER}"]
     },
-    "secret": "sk-spc-…shown-exactly-once…"
+    "secret": "sk-…shown-exactly-once…"
   }
 }`
 
@@ -194,7 +194,7 @@ const errorRows = [
       everything your account is permitted to do, including creating and revoking management keys.
     </p>
     <p>
-      An <strong><code>sk-spc-</code> inference key</strong> belongs to one of your customers and calls
+      An <strong><code>sk-</code> inference key</strong> belongs to one of your customers and calls
       the inference gateway. It cannot reach this API.
     </p>
     <p>

@@ -232,11 +232,50 @@ class ProviderConnectionRevisionController extends Controller
             ->findOrFail($revision);
 
         $probeFingerprint = $this->probeFingerprint($revision);
-        $internalModel = $provider->models()->where('enabled', true)->orderBy('created_at')->value('internal_model_id');
-        $probe = $probeService->probe($revision, is_string($internalModel) ? $internalModel : null);
-        $attempts = $probe['attempts'];
-        $success = $probe['success'];
-        $successfulEndpointKind = $probe['endpoint_kind'];
+
+        // R20: the provider route comes from the Admin-managed database revision,
+        // and READY means every enabled private model configured for that provider
+        // can actually serve at least one supported inference protocol. This keeps
+        // the seeded OpenAI Codex + Gemini catalog from becoming sellable when only
+        // one of the two private OmniRoute model IDs is healthy.
+        $internalModels = $provider->models()
+            ->where('enabled', true)
+            ->orderBy('created_at')
+            ->pluck('internal_model_id')
+            ->filter(fn ($value): bool => is_string($value) && trim($value) !== '')
+            ->map(fn ($value): string => trim((string) $value))
+            ->values();
+
+        $modelProbeResults = [];
+        $attempts = [];
+
+        if ($internalModels->isEmpty()) {
+            $probe = $probeService->probe($revision, null);
+            $modelProbeResults['__connection__'] = $probe;
+            $attempts = $probe['attempts'];
+            $success = (bool) $probe['success'];
+            $successfulEndpointKind = $probe['endpoint_kind'];
+        } else {
+            foreach ($internalModels as $internalModel) {
+                $probe = $probeService->probe($revision, $internalModel);
+                $modelProbeResults[$internalModel] = $probe;
+
+                foreach ($probe['attempts'] as $attempt) {
+                    $attempts[] = [
+                        'kind' => $internalModel.' / '.$attempt['kind'],
+                        'status' => $attempt['status'],
+                    ];
+                }
+            }
+
+            $success = collect($modelProbeResults)
+                ->every(fn (array $result): bool => (bool) ($result['success'] ?? false));
+            $successfulEndpointKind = collect($modelProbeResults)
+                ->pluck('endpoint_kind')
+                ->filter(fn ($value): bool => is_string($value) && $value !== '')
+                ->first();
+        }
+
         [$revision, $canPromote, $autoActivated] = DB::transaction(function () use (
             $request,
             $provider,
@@ -244,6 +283,7 @@ class ProviderConnectionRevisionController extends Controller
             $probeFingerprint,
             $success,
             $attempts,
+            $modelProbeResults,
             $audit
         ): array {
             $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
@@ -257,6 +297,39 @@ class ProviderConnectionRevisionController extends Controller
                     'The connection revision changed while it was being probed. Probe the current revision again.',
                     'provider_revision_changed_during_probe'
                 );
+            }
+
+            // Persist the exact protocols verified for each configured private
+            // model. Public model discovery/docs then advertise only protocols
+            // this Admin-selected provider revision actually proved.
+            foreach ($modelProbeResults as $internalModel => $result) {
+                if ($internalModel === '__connection__' || ! (bool) ($result['success'] ?? false)) {
+                    continue;
+                }
+
+                $endpointKinds = collect($result['endpoint_kinds'] ?? [])
+                    ->filter(fn ($kind): bool => is_string($kind) && in_array($kind, ['messages', 'responses', 'chat_completions'], true))
+                    ->values()
+                    ->all();
+                $playgroundProtocol = in_array('chat_completions', $endpointKinds, true)
+                    ? 'chat_completions'
+                    : (in_array('messages', $endpointKinds, true)
+                        ? 'messages'
+                        : (in_array('responses', $endpointKinds, true) ? 'responses' : null));
+
+                $model = $lockedProvider->models()->where('internal_model_id', $internalModel)->first();
+                if (! $model) {
+                    continue;
+                }
+
+                foreach ($model->aliases()->get() as $alias) {
+                    $capabilities = is_array($alias->capabilities) ? $alias->capabilities : [];
+                    $capabilities['messages_api'] = in_array('messages', $endpointKinds, true);
+                    $capabilities['responses_api'] = in_array('responses', $endpointKinds, true);
+                    $capabilities['chat_completions_api'] = in_array('chat_completions', $endpointKinds, true);
+                    $capabilities['playground_protocol'] = $playgroundProtocol;
+                    $alias->forceFill(['capabilities' => $capabilities])->save();
+                }
             }
 
             $canPromote = $success

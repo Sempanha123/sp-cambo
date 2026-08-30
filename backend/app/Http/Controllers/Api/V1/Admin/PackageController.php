@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ModelAlias;
 use App\Models\Package;
 use App\Services\AuditService;
 use App\Services\PackageProfitabilityService;
@@ -25,6 +26,7 @@ class PackageController extends Controller
     {
         $data = $this->validated($request);
         $data['limits'] ??= [];
+        $data = $this->hydrateBillingMultipliers($data);
         $package = DB::transaction(function () use ($request, $data, $profitability, $audit): Package {
             $aliases = $data['allowed_model_alias_ids'];
             unset($data['allowed_model_alias_ids']);
@@ -50,6 +52,7 @@ class PackageController extends Controller
     {
         $data = $this->validated($request, $package);
         $data['limits'] ??= [];
+        $data = $this->hydrateBillingMultipliers($data);
         $beforeAnnouncement = [
             ...$package->only(['enabled', 'customer_visible', 'auto_creates_api_key', 'price_minor', 'advertised_units', 'duration_seconds', 'name', 'subtitle']),
             'stock_quantity' => $package->stock_quantity,
@@ -96,6 +99,38 @@ class PackageController extends Controller
         }
 
         return response()->json(['data' => $this->resource($fresh, $profitability)]);
+    }
+
+    /**
+     * The package editor exposes token category weights, while the model catalogue
+     * owns the small customer service multiplier. For a single-model token package,
+     * snapshot that model's published multiplier into new package purchases. If a
+     * package spans multiple models, leave it out so preflight uses the selected
+     * alias's own multiplier instead of applying one model's policy to another.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private function hydrateBillingMultipliers(array $data): array
+    {
+        if (($data['billing_mode'] ?? null) !== 'TOKEN_QUOTA') {
+            return $data;
+        }
+
+        $rules = is_array($data['billing_rules'] ?? null) ? $data['billing_rules'] : [];
+        unset($rules['billing_multipliers_bps']);
+        $ids = array_values($data['allowed_model_alias_ids'] ?? []);
+        if (count($ids) === 1) {
+            $alias = ModelAlias::query()->find($ids[0]);
+            $limits = $alias && is_array($alias->limits) ? $alias->limits : [];
+            if (is_array($limits['billing_multipliers_bps'] ?? null)) {
+                $rules['billing_multipliers_bps'] = $limits['billing_multipliers_bps'];
+            }
+        }
+
+        $data['billing_rules'] = $rules === [] ? null : $rules;
+
+        return $data;
     }
 
     private function isTelegramSellable(Package $package): bool

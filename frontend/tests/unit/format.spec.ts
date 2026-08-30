@@ -280,14 +280,14 @@ describe('parseUnits, sumUnits and compareUnits', () => {
 
 describe('maskApiKey', () => {
   it('shows only the prefix and last four characters', () => {
-    const masked = maskApiKey('sk-spc-', '9f2a')
+    const masked = maskApiKey('sk-', '9f2a')
 
-    expect(masked.startsWith('sk-spc-')).toBe(true)
+    expect(masked.startsWith('sk-')).toBe(true)
     expect(masked.endsWith('9f2a')).toBe(true)
   })
 
   it('never reproduces anything resembling a full secret', () => {
-    const masked = maskApiKey('sk-spc-', '9f2a')
+    const masked = maskApiKey('sk-', '9f2a')
 
     expect(masked).not.toContain('secret')
     expect(masked.replace(/[^a-z0-9]/gi, '').length).toBeLessThan(24)

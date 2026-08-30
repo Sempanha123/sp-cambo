@@ -78,6 +78,11 @@ export interface PublicModel {
     requests_per_minute: number | null
     tokens_per_minute: number | null
     concurrency: number | null
+    /** Customer-facing unit name used by SP Cambo local request/response settlement. */
+    billing_unit_label?: string
+    /** 10,000 bps = 1.00x. R43 new input/output settles at 1.00x; locally reused input uses the published 0.25x smart-reuse rate. */
+    billing_multipliers_bps?: Partial<Record<'input' | 'output' | 'cache_read' | 'cache_write' | 'reasoning', number>>
+    billing_usage_classes?: Array<'input' | 'output' | 'cache_read' | 'cache_write' | 'reasoning'>
   }
   status: 'available' | 'degraded' | 'unavailable'
 }
@@ -96,6 +101,12 @@ export interface PublicPackage {
   advertised_units: string
   /** Human unit label defined by admin, e.g. "tokens" or "credits". */
   unit_label: string
+  /** Optional marketing quantity. It never changes the entitlement or billing math. */
+  display_units?: string | null
+  /** Optional marketing unit label, e.g. Credits. */
+  display_unit_label?: string | null
+  /** Customer-facing package class. Settlement mode can still be TOKEN_QUOTA for quota-backed Credits. */
+  package_kind?: 'SP_TOKENS' | 'SP_CREDITS' | 'WALLET_CREDIT'
   /** Exact funded money for CREDIT_BALANCE packages; null for token quota packages. */
   credit_amount: MoneyAmount | null
   price: MoneyAmount
@@ -129,6 +140,7 @@ export interface PlaygroundModel {
 
 export interface PlaygroundChatSummary {
   id: number
+  client_key: string | null
   title: string
   model_alias: string | null
   message_count: number
@@ -160,6 +172,8 @@ export interface PlaygroundQuota {
   fallback_model_aliases: string[]
   available_model_aliases: string[]
   available_models: PlaygroundModel[]
+  /** Complete published customer-facing catalogue. Locked rows remain visible in the picker. */
+  catalog_models?: Array<PlaygroundModel & { available: boolean, lock_reason: string | null }>
   funded_model_statuses?: Array<{
     public_alias: string
     display_name: string
@@ -198,6 +212,13 @@ export interface BalanceSummary {
   credit_balance: {
     remaining: MoneyAmount
     reserved: MoneyAmount
+  }
+  /** SP Credit quota is quota-backed, not cash. 1 SP Credit = the published local-unit size. */
+  sp_credit_quota?: {
+    remaining: string
+    reserved: string
+    original: string
+    billable_units_per_credit: string
   }
   /** Earliest expiry across allocated/legacy spendable lots, ISO-8601 UTC. */
   next_expires_at: string | null
@@ -245,7 +266,7 @@ export type ApiKeyStatus = 'ACTIVE' | 'DISABLED' | 'REVOKED' | 'EXPIRED'
 export interface ApiKeySummary {
   id: string
   label: string
-  /** Safe display prefix, e.g. `sk-spc-`. */
+  /** Safe display prefix, e.g. `sk-`. */
   prefix: string
   last_four: string
   status: ApiKeyStatus
@@ -266,10 +287,10 @@ export interface ApiKeySummary {
 
 export interface ApiKeyDetails {
   key: ApiKeySummary
-  balance_source: 'no_spendable_balance' | 'legacy_account_entitlements' | 'dedicated_and_legacy_entitlements'
-  token_quota_remaining: string
+  balance_source: 'loading' | 'no_spendable_balance' | 'legacy_account_entitlements' | 'dedicated_and_legacy_entitlements'
+  token_quota_remaining: string | null
   credit_balances: MoneyAmount[]
-  funding_status?: 'ready' | 'unavailable'
+  funding_status?: 'deferred' | 'ready' | 'unavailable'
   funding_message?: string | null
   funding_diagnostic_id?: string | null
   funding: Array<{
@@ -329,10 +350,6 @@ export type RequestState
 export interface RequestActivity {
   id: string
   public_model: string
-  internal_model: string | null
-  provider: string | null
-  provider_slug: string | null
-  route_version: number | null
   api_key_id: string | null
   api_key_label: string
   api_key_prefix: string
@@ -342,18 +359,24 @@ export interface RequestActivity {
   finished_at: string | null
   duration_ms: number | null
   /**
-   * Provider-reported request metadata. A null category is unsettled or unreported;
-   * zero is a recorded zero. The server-recorded total must never be replaced with a
-   * browser-calculated sum, including for historical rows that predate its capture.
+   * SP Cambo local tokenizer-like estimates. These are intentionally provider-
+   * independent and are not presented as exact OpenAI/Anthropic/Google tokenizer
+   * counts. A null category means the request has not settled yet.
    */
   input_tokens: number | null
   output_tokens: number | null
   cache_read_tokens: number | null
+  /** Tokens actually saved by SP Cambo smart reuse for this settled request. */
+  saved_tokens: string | null
+  /** Actual Token-quota units charged for this request; null when unsettled. */
+  billed_tokens: string | null
+  savings_rate_percent: number | null
   cache_write_tokens: number | null
   reasoning_tokens: number | null
   total_tokens: number | null
   reserved_units: string | null
   metered_units: string | null
+  sp_credits_used: string | null
   credit_charge: MoneyAmount | null
   /** True while the numbers above are interim estimates. */
   estimated: boolean
@@ -366,19 +389,34 @@ export interface UsageSummary {
   requests: number
   input_tokens: number
   output_tokens: number
+  cached_input_tokens: number
+  saved_tokens: string
+  billed_tokens: string
+  savings_rate_percent: number
+  credits_saved: string
   metered_units: string
+  sp_credits_used: string
   credit_charge: MoneyAmount
   buckets: Array<{
     at: string
     requests: number
     input_tokens: number
     output_tokens: number
+    cached_input_tokens: number
+    saved_tokens: string
+    billed_tokens: string
+    savings_rate_percent: number
     metered_units: string
   }>
   by_model: Array<{
     public_model: string
     requests: number
+    cached_input_tokens: number
+    saved_tokens: string
+    billed_tokens: string
+    savings_rate_percent: number
     metered_units: string
+    sp_credits_used: string
     credit_charge: MoneyAmount
   }>
 }

@@ -5,7 +5,7 @@ import { enableAutoUnmount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import type { ApiKeyCreated, ApiKeySummary } from '~/types/commerce'
 import { SpApiError } from '~/utils/spApiError'
-import ApiKeysPage from '~/pages/dashboard/api-keys.vue'
+import ApiKeysPage from '~/pages/dashboard/api-keys/index.vue'
 import SpApiKeyRevealModal from '~/components/SpApiKeyRevealModal.vue'
 
 /**
@@ -19,15 +19,15 @@ import SpApiKeyRevealModal from '~/components/SpApiKeyRevealModal.vue'
  *
  * Both values below are test fixtures and must never be real keys.
  */
-const CREATED_SECRET = 'sk-spc-created-000000000000000000000000'
-const ROTATED_SECRET = 'sk-spc-rotated-111111111111111111111111'
-const RECOVERED_SECRET = 'sk-spc-recovered-2222222222222222222222'
+const CREATED_SECRET = 'sk-created-000000000000000000000000'
+const ROTATED_SECRET = 'sk-rotated-111111111111111111111111'
+const RECOVERED_SECRET = 'sk-recovered-2222222222222222222222'
 
 const NOW = Date.parse('2026-08-21T10:00:00.000Z')
 
 const summary = (overrides: Partial<ApiKeySummary> & { id: string }): ApiKeySummary => ({
   label: `Key ${overrides.id}`,
-  prefix: 'sk-spc-',
+  prefix: 'sk-',
   last_four: 'ab12',
   status: 'ACTIVE',
   created_at: new Date(NOW - 86_400_000).toISOString(),
@@ -287,12 +287,12 @@ describe('api keys secure reveal', () => {
   })
 
   it('shows only a masked key in the list', async () => {
-    plane.keys = [summary({ id: 'key1', label: 'Production key', prefix: 'sk-spc-', last_four: 'ab12' })]
+    plane.keys = [summary({ id: 'key1', label: 'Production key', prefix: 'sk-', last_four: 'ab12' })]
 
     const page = await mountKeys()
 
     expect(page.text()).toContain('Production key')
-    expect(page.text()).toContain('sk-spc-')
+    expect(page.text()).toContain('sk-')
     expect(page.text()).toContain('ab12')
     expect(page.text()).not.toContain(CREATED_SECRET)
     // Stated on the page, so the customer knows the list is not hiding a copy.

@@ -34,6 +34,32 @@ export interface AdminRevenue {
   by_currency: MoneyAmount[]
 }
 
+
+export interface AdminPrivateFinanceCurrency {
+  currency: string
+  exponent: number
+  fulfilled_sales_revenue_minor: string
+  customer_usage_value_minor: string
+  upstream_cost_minor: string
+  /** Sales revenue minus measured upstream cost incurred so far. */
+  gross_position_minor: string
+  /** Only CREDIT_BALANCE requests have per-request customer revenue. */
+  known_credit_profit_minor: string
+  known_credit_margin_bps: number | null
+  settled_records: number
+  costed_records: number
+  unknown_cost_records: number
+  token_quota_records: number
+}
+
+export interface AdminPrivateFinance {
+  visibility: 'ADMIN_ONLY'
+  by_currency: AdminPrivateFinanceCurrency[]
+  unknown_upstream_cost_records: number
+  costed_usage_records: number
+  note: string
+}
+
 export interface AdminOverview {
   updated_at: string
   users: {
@@ -49,6 +75,8 @@ export interface AdminOverview {
     by_status: Record<string, number>
   }
   fulfilled_revenue: AdminRevenue
+  /** Operator-only provider cost/profitability data. Never returned by customer endpoints. */
+  private_finance: AdminPrivateFinance
   entitlements: {
     active_lots: number
   }
@@ -813,6 +841,10 @@ export interface AdminUsageRequest {
   reasoning_tokens: string | null
   metered_units: string | null
   credit_charge_minor: string | null
+  /** Admin-only provider economics. */
+  upstream_cost_minor: string | null
+  gross_profit_minor: string | null
+  gross_margin_bps: number | null
   currency: string | null
   currency_exponent: number | null
   duration_ms: number | null

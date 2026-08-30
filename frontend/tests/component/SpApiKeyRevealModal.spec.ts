@@ -13,7 +13,7 @@ import SpApiKeyRevealModal from '~/components/SpApiKeyRevealModal.vue'
  *
  * The value below is a test fixture. It is not, and must never be, a real key.
  */
-const SECRET = 'sk-spc-test-0000000000000000000000000000'
+const SECRET = 'sk-test-0000000000000000000000000000'
 
 enableAutoUnmount(afterEach)
 

@@ -16,7 +16,7 @@
  */
 
 /** Stand-in for a customer key. A real secret is shown only at creation, never here. */
-export const API_KEY_PLACEHOLDER = 'sk-spc-your-key'
+export const API_KEY_PLACEHOLDER = 'sk-your-key'
 
 /** Stand-in until the catalogue publishes real aliases via `GET /catalog/models`. */
 export const MODEL_ALIAS_PLACEHOLDER = '<your-model-alias>'

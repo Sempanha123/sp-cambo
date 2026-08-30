@@ -15,7 +15,7 @@ class SecurityTelemetryTest extends TestCase
     public function test_audit_service_redacts_secret_metadata_before_persistence(): void
     {
         $user = User::factory()->create();
-        $secret = 'sk-spc-abcdefghijklmnop123456';
+        $secret = 'sk-abcdefghijklmnop123456';
 
         app(AuditService::class)->record($user, 'security.test', 'test', '1', "rotated {$secret}", [
             'api_key' => $secret,

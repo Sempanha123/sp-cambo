@@ -62,20 +62,42 @@ const lifecycle = [
       Two billing modes
     </h2>
     <p>
-      <strong>Token quota</strong> packages grant a number of metered tokens. The package decides which
-      token categories count — input, output, cache reads and writes, reasoning — and which models are
-      eligible.
+      <strong>Token quota</strong> packages grant Tokens. New model-visible input and generated output
+      consume Tokens 1:1. When SP Cambo locally recognizes a repeated prompt prefix, those cached input
+      Tokens consume 0.25× instead. There is no hidden output weight or provider-controlled multiplier.
     </p>
     <p>
-      <strong>Credit balance</strong> packages grant monetary credit, and each model has its own
-      per-million input, output and cache pricing. Credit is the right shape when you want one balance
-      across models of different costs.
+      <strong>Credit balance</strong> is money-style wallet credit and is priced from the same local
+      input/output counts. Dollar-denominated quota Credit packages shown in the catalogue use the
+      published conversion <code>$1 Credit = 100,000 Tokens</code>.
     </p>
     <p>
       Which mode a package uses is stated on the
       <NuxtLink to="/pricing">
         pricing page
       </NuxtLink>, along with the aliases it covers.
+    </p>
+
+    <h2 id="billable-units">
+      Local cache-aware metering
+    </h2>
+    <p>
+      SP Cambo measures model-visible input and delivered output at its own public gateway. New input
+      and output are 1:1. A repeated prompt prefix detected by SP Cambo's local cache is billed at
+      <code>0.25×</code>. For example, 20,000 new input Tokens + 80,000 cached input Tokens + 500 output
+      Tokens settles as <code>20,000 + 20,000 + 500 = 40,500 Tokens</code>.
+    </p>
+    <p>
+      The local cache is scoped to the API key, public model and API protocol. It requires at least
+      1,024 matching Tokens and uses a five-minute reuse window. Only SHA-256 segment hashes and token
+      estimates are kept in the gateway cache; prompt text is not stored there. Failed/rejected
+      inference attempts do not seed the cache.
+    </p>
+    <p>
+      OmniRoute/provider usage, provider cache hits, reasoning counters and cost counters are never
+      accepted as customer billing input. The local count is tokenizer-like and deterministic, so it
+      can differ somewhat from a vendor's private tokenizer while remaining stable for the same public
+      request/response.
     </p>
 
     <h2 id="lifecycle">
@@ -124,9 +146,9 @@ const lifecycle = [
       Reserve, execute, settle
     </h2>
     <p>
-      SP Cambo does not check your balance and then hope. Each request reserves a safe maximum before
-      the upstream call, executes, then settles the actual metered usage and releases the remainder in
-      one atomic step.
+      SP Cambo does not check your balance and then hope. Each request reserves a safe local maximum
+      before inference, taking any SP Cambo local-cache discount into account, then settles the locally
+      metered usage and releases the remainder in one atomic step.
     </p>
     <p>
       This is why concurrent requests cannot overspend a nearly-empty package, and why a large

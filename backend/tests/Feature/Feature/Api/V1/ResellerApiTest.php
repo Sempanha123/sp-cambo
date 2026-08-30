@@ -105,7 +105,7 @@ class ResellerApiTest extends TestCase
         $managedId = $this->actingAs($reseller)->postJson('/api/v1/reseller/customers', ['name' => 'Key Customer', 'email' => 'key-customer@example.test', 'password' => 'Strong!Password123', 'password_confirmation' => 'Strong!Password123', 'label' => 'Key Customer'])->assertCreated()->json('data.id');
         $created = $this->actingAs($reseller)->postJson("/api/v1/reseller/customers/{$managedId}/api-keys", ['label' => 'Customer CLI', 'allowed_model_aliases' => [$alias->public_alias]])->assertCreated();
         $keyId = $created->json('data.key.id');
-        $this->assertStringStartsWith('sk-spc-', $created->json('data.secret'));
+        $this->assertStringStartsWith('sk-', $created->json('data.secret'));
         $this->actingAs($reseller)->getJson("/api/v1/reseller/customers/{$managedId}/api-keys")->assertOk()->assertJsonMissingPath('data.0.secret');
         $this->actingAs($attacker)->postJson("/api/v1/reseller/customers/{$managedId}/api-keys/{$keyId}/revoke")->assertNotFound();
         $this->actingAs($reseller)->postJson("/api/v1/reseller/customers/{$managedId}/api-keys/{$keyId}/revoke")->assertOk()->assertJsonPath('data.status', 'REVOKED');
