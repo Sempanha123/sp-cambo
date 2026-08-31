@@ -1,65 +1,36 @@
-# SP Cambo Global UI R4
+# SP Cambo Dashboard Mobile + Fixed Profile R6
 
-R4 is the first package that applies the new SP Cambo visual system to the
-shared layouts, not only the homepage.
+This is a full-file replacement package for the two problems shown in the screenshots.
 
-## What is global now
+## Fixed
 
-### Every route
-Mounted once from `app.vue`:
-- moving aurora
-- neural/network lines
-- particles
-- technical grid
-- moving light beams
-- reduced-motion support
+### Phone `/dashboard/buy`
+- stops the dashboard panel from becoming wider than the phone
+- fixes cropped package/filter content on the right
+- makes flex/grid children shrink with `min-width: 0`
+- keeps package values inside cards
+- allows descriptions to wrap on phones
+- keeps the package list one column below the existing `sm` breakpoint
+- preserves the R4/R5 visual classes and model artwork
 
-### Public pages
-Through `default.vue` and `public.vue`:
-- glass header/footer
-- moving header accent
-- global grid/orbs
-- glass elevated surfaces
-- improved cards/hover depth
-- consistent technical lighting
+### Dashboard profile/account
+- dashboard group is exactly `100dvh`
+- page content scrolls inside its panel
+- sidebar stays viewport-height
+- only sidebar navigation scrolls if needed
+- account/profile dropdown stays visible at the bottom of the sidebar
+- no need to scroll to the bottom of a long Buy/Models/Admin page to reach the profile button
 
-This covers pages such as Home, Pricing, Models, Docs, Status, Key Checker and
-other routes using those shared layouts.
+## Full files
 
-### Auth
-Through `auth.vue`:
-- global animated background
-- animated auth showcase
-- glass sign-in/register/recovery area
-- moving scan texture
-- floating ambient orbs
-
-### Dashboard / Admin / Reseller
-Through `dashboard.vue`:
-- calmer global motion
-- glass sidebar
-- highlighted active navigation
-- global technical grid
-- subtle cards/tables/focus effects
-- Playground keeps a calmer readable surface
-
-Admin and reseller are included because their navigation is already hosted by
-the shared dashboard layout.
-
-## Files
-
-- `frontend/app/app.vue`
-- `frontend/app/components/SpGlobalMotionBackground.vue`
-- `frontend/app/assets/css/sp-global-r4.css`
-- `frontend/app/layouts/default.vue`
-- `frontend/app/layouts/public.vue`
-- `frontend/app/layouts/auth.vue`
 - `frontend/app/layouts/dashboard.vue`
-- `frontend/app/pages/index.vue`
+- `frontend/app/components/SpDashboardPage.vue`
+
+No backend changes and no migration.
 
 ## Apply
 
-Extract the ZIP over the SP Cambo project root and allow overwrite.
+Extract over the project root and allow overwrite.
 
 Then:
 
@@ -69,24 +40,13 @@ npm run typecheck
 npm run build
 ```
 
-Recommended test routes:
+Test at approximately 390px, 430px and 500px widths:
 
 ```text
-/
-/pricing
-/models
-/docs
-/status
-/public/key-checker
-/login
-/register
-/dashboard
 /dashboard/buy
-/dashboard/api-keys
+/dashboard/models
 /dashboard/playground
-/admin
-/reseller
 ```
 
-R4 intentionally uses stronger motion on public/auth pages and a calmer visual
-layer on dashboard/admin/reseller so tables, forms and chat remain readable.
+On desktop, open a very long Buy page and confirm the account/profile button is
+still immediately visible at the bottom-left while only the main panel scrolls.
