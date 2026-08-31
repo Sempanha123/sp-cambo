@@ -138,6 +138,9 @@ export default defineNuxtConfig({
       // list below for names that can be selected dynamically.
       scan: true,
       icons: [
+        'simple-icons:anthropic',
+        'simple-icons:openai',
+        'simple-icons:googlegemini',
         'lucide:activity',
         'lucide:arrow-left',
         'lucide:arrow-right',
