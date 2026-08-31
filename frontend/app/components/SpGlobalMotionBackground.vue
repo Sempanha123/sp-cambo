@@ -6,8 +6,21 @@ const isPrivateSurface = computed(() => privatePrefixes.some(prefix => route.pat
 const isHome = computed(() => route.path === '/')
 const isShowcase = computed(() => route.path === '/models' || route.path === '/pricing')
 
-const stars = Array.from({ length: 26 }, (_, index) => index)
-const particles = Array.from({ length: 12 }, (_, index) => index)
+const stars = Array.from({ length: 26 }, (_, index) => ({
+  id: index,
+  x: (index * 67) % 97,
+  y: (index * 43) % 91,
+  duration: 8 + (index * 0.31),
+  delay: -(index * 0.19)
+}))
+
+const particles = Array.from({ length: 12 }, (_, index) => ({
+  id: index,
+  x: (index * 79) % 92,
+  y: (index * 37) % 86,
+  duration: 12 + (index * 0.6),
+  delay: -(index * 0.37)
+}))
 
 const links = [
   { x1: 3, y1: 14, x2: 18, y2: 23, delay: '-1s' },
@@ -66,16 +79,26 @@ const links = [
 
     <span
       v-for="star in stars"
-      :key="`star-${star}`"
+      :key="`star-${star.id}`"
       class="sp-r8-bg__star"
-      :style="{ '--i': star }"
+      :style="{
+        left: `${star.x}%`,
+        top: `${star.y}%`,
+        animationDuration: `${star.duration}s`,
+        animationDelay: `${star.delay}s`
+      }"
     />
 
     <span
       v-for="particle in particles"
-      :key="`particle-${particle}`"
+      :key="`particle-${particle.id}`"
       class="sp-r8-bg__particle"
-      :style="{ '--i': particle }"
+      :style="{
+        left: `${particle.x}%`,
+        top: `${particle.y}%`,
+        animationDuration: `${particle.duration}s`,
+        animationDelay: `${particle.delay}s`
+      }"
     />
 
     <div class="sp-r8-bg__scan" />
@@ -232,18 +255,17 @@ const links = [
 }
 
 .sp-r8-bg__star {
-  --x: calc((var(--i) * 67) % 97);
-  --y: calc((var(--i) * 43) % 91);
   position: absolute;
-  left: calc(var(--x) * 1%);
-  top: calc(var(--y) * 1%);
   width: 2px;
   height: 2px;
   border-radius: 9999px;
   opacity: calc(.52 * var(--sp-r8-strength));
   background: rgb(151 177 255 / .76);
   box-shadow: 0 0 12px rgb(87 130 255 / .55);
-  animation: sp-r8-star calc(8s + (var(--i) * .31s)) ease-in-out infinite alternate;
+  animation-name: sp-r8-star;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
 }
 
 .sp-r8-bg__star:nth-of-type(4n) {
@@ -253,17 +275,16 @@ const links = [
 }
 
 .sp-r8-bg__particle {
-  --x: calc((var(--i) * 79) % 92);
-  --y: calc((var(--i) * 37) % 86);
   position: absolute;
-  left: calc(var(--x) * 1%);
-  top: calc(var(--y) * 1%);
   width: 5px;
   height: 5px;
   border: 1px solid rgb(115 151 255 / calc(.28 * var(--sp-r8-strength)));
   border-radius: 9999px;
   opacity: calc(.38 * var(--sp-r8-strength));
-  animation: sp-r8-particle calc(12s + (var(--i) * .6s)) ease-in-out infinite alternate;
+  animation-name: sp-r8-particle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
 }
 
 .sp-r8-bg__scan {
