@@ -118,15 +118,27 @@ trait TelegramCommerceWalletFeatures
 
         Cache::put('telegram:promo-input:'.$account->id, $token, now()->addMinutes(10));
 
+        $km = $this->isKhmer($account);
+        $hasPromotion = trim((string) ($checkout['promotion_code'] ?? '')) !== '';
+
+        $buttons = $hasPromotion
+            ? [[
+                ['text' => $km ? '⬅️ រក្សា Promo ចាស់' : '⬅️ Keep Current', 'callback_data' => 'promocancel:'.$token],
+                ['text' => $km ? '🗑 ដក Promo' : '🗑 Remove Promo', 'callback_data' => 'promoclear:'.$token],
+            ]]
+            : [[
+                ['text' => $km ? '❌ បោះបង់' : '❌ Cancel', 'callback_data' => 'promocancel:'.$token],
+                ['text' => $km ? '🚫 មិនប្រើ Promo' : '🚫 No Promo', 'callback_data' => 'promoskip:'.$token],
+            ]];
+
+        $buttons[] = [['text' => '🏠 Home', 'callback_data' => 'home']];
+
         $this->bot->sendMessage(
             $account->chat_id,
-            $this->isKhmer($account)
-                ? "🎟 PROMO CODE\n\nផ្ញើ Promo Code របស់អ្នកឥឡូវនេះ។\nឧទាហរណ៍: SAVE10"
-                : "🎟 PROMO CODE\n\nSend your promotion code now.\nExample: SAVE10",
-            ['inline_keyboard' => [[
-                ['text' => '❌ Cancel', 'callback_data' => 'promocancel:'.$token],
-                ['text' => '🏠 Home', 'callback_data' => 'home'],
-            ]]],
+            $km
+                ? "🎟✨ PROMO CODE\n\nវាយ Promo Code ហើយផ្ញើមក bot។\nឧទាហរណ៍: SAVE10\n\nបើមិនចង់ប្រើ Promo អ្នកអាចចុចប៊ូតុងខាងក្រោម។"
+                : "🎟✨ PROMO CODE\n\nType your promotion code and send it to the bot.\nExample: SAVE10\n\nYou can also cancel or continue without a promo below.",
+            ['inline_keyboard' => $buttons],
         );
     }
 
@@ -171,9 +183,18 @@ trait TelegramCommerceWalletFeatures
         );
 
         if (! $promotion['valid']) {
+            $km = $this->isKhmer($account);
+
             $this->bot->sendMessage(
                 $account->chat_id,
-                '❌ '.$promotion['reason']."\n\n".($this->isKhmer($account) ? 'សូមផ្ញើ Code មួយទៀត។' : 'Send another promotion code.'),
+                '❌ '.$promotion['reason']."\n\n".($km ? 'អ្នកអាចផ្ញើ Code មួយទៀត ឬបន្តដោយមិនប្រើ Promo។' : 'Send another code, or continue without a promotion.'),
+                ['inline_keyboard' => [
+                    [
+                        ['text' => $km ? '🔁 សាក Code ផ្សេង' : '🔁 Try Another', 'callback_data' => 'promo:'.$token],
+                        ['text' => $km ? '🚫 មិនប្រើ Promo' : '🚫 No Promo', 'callback_data' => 'promoskip:'.$token],
+                    ],
+                    [['text' => $km ? '⬅️ Checkout' : '⬅️ Checkout', 'callback_data' => 'promocancel:'.$token]],
+                ]],
             );
             return true;
         }
@@ -202,6 +223,20 @@ trait TelegramCommerceWalletFeatures
 
     public function cancelPromotionInput(TelegramAccount $account, string $token): void
     {
+        Cache::forget('telegram:promo-input:'.$account->id);
+        $this->showCheckout($account, $token);
+    }
+
+    public function skipPromotionInput(TelegramAccount $account, string $token): void
+    {
+        $key = 'telegram:checkout:'.$token;
+        $checkout = Cache::get($key);
+
+        if (is_array($checkout) && ($checkout['account_id'] ?? null) === (string) $account->id) {
+            $checkout['promotion_code'] = null;
+            Cache::put($key, $checkout, now()->addMinutes(12));
+        }
+
         Cache::forget('telegram:promo-input:'.$account->id);
         $this->showCheckout($account, $token);
     }

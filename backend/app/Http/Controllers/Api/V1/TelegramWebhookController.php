@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\TelegramAccount;
 use App\Services\TelegramBotClient;
 use App\Services\TelegramCommerceService;
+use App\Services\TelegramStorefrontUiService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use RuntimeException;
@@ -13,7 +14,7 @@ use Throwable;
 
 class TelegramWebhookController extends Controller
 {
-    public function __invoke(Request $request, TelegramCommerceService $telegram, TelegramBotClient $bot): JsonResponse
+    public function __invoke(Request $request, TelegramCommerceService $telegram, TelegramStorefrontUiService $ui, TelegramBotClient $bot): JsonResponse
     {
         $expected = (string) config('services.telegram.webhook_secret');
         $actual = (string) $request->header('X-Telegram-Bot-Api-Secret-Token', '');
@@ -65,7 +66,7 @@ class TelegramWebhookController extends Controller
             );
 
             if (is_array($callback)) {
-                $this->handleCallback($telegram, $bot, $account, trim((string) data_get($callback, 'data', '')), $callbackId, $updateId);
+                $this->handleCallback($telegram, $ui, $bot, $account, trim((string) data_get($callback, 'data', '')), $callbackId, $updateId);
                 return response()->json(['ok' => true]);
             }
 
@@ -81,18 +82,18 @@ class TelegramWebhookController extends Controller
             if ($command === '/start') {
                 $startArg = mb_strtolower($argument);
                 if ($startArg === 'store') {
-                    $telegram->sendStorefront($account);
+                    $ui->sendStorefront($account);
                 } elseif (str_starts_with($startArg, 'package_')) {
                     $slug = substr($argument, strlen('package_'));
                     if ($slug !== '' && preg_match('/^[A-Za-z0-9_-]{1,48}$/', $slug) === 1) {
                         $package = \App\Models\Package::query()->published()->where('slug', $slug)->first();
                         if ($package) {
-                            $telegram->sendProduct($account, (int) $package->id);
+                            $ui->sendProduct($account, (int) $package->id);
                         } else {
-                            $telegram->sendStorefront($account);
+                            $ui->sendStorefront($account);
                         }
                     } else {
-                        $telegram->sendStorefront($account);
+                        $ui->sendStorefront($account);
                     }
                 } else {
                     $telegram->sendCompactHome($account);
@@ -100,7 +101,7 @@ class TelegramWebhookController extends Controller
             } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, [
                 '🛍 store', '🛍 ហាង', '🛍 buy', '🛍 ទិញ', '🛍 buy package', '🛍 ទិញកញ្ចប់', '🛍✨ buy package', '🛍✨ ទិញកញ្ចប់',
             ])) {
-                $telegram->sendStorefront($account);
+                $ui->sendStorefront($account);
             } elseif ($command === '/buy' && $argument !== '') {
                 $package = \App\Models\Package::query()->published()->where('slug', trim($argument))->first();
                 if (! $package || ! $package->auto_creates_api_key) {
@@ -122,7 +123,7 @@ class TelegramWebhookController extends Controller
             } elseif ($command === '/keys' || $command === '/apikeys' || $this->matches($normalized, ['🔑 api keys', '🔑 my api keys', '🔑 api keys របស់ខ្ញុំ'])) {
                 $telegram->sendApiKeys($account);
             } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 my orders', '🧾 ការបញ្ជាទិញ', '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
-                $telegram->sendOrders($account);
+                $ui->sendOrders($account);
             } elseif ($command === '/models' || $this->matches($normalized, ['🧠 models', '🧠 ម៉ូដែល'])) {
                 $telegram->sendModels($account);
             } elseif ($command === '/language' || $this->matches($normalized, ['🌐 language', '🌐 ភាសា'])) {
@@ -151,6 +152,7 @@ class TelegramWebhookController extends Controller
 
     private function handleCallback(
         TelegramCommerceService $telegram,
+        TelegramStorefrontUiService $ui,
         TelegramBotClient $bot,
         TelegramAccount $account,
         string $data,
@@ -172,14 +174,14 @@ class TelegramWebhookController extends Controller
         }
         if ($data === 'store' || str_starts_with($data, 'store:')) {
             $page = $data === 'store' ? 1 : max(1, (int) substr($data, 6));
-            $telegram->sendStorefront($account, $page);
+            $ui->sendStorefront($account, $page);
             $ack($bot, $callbackId, 'Store opened');
             return;
         }
         if (str_starts_with($data, 'pkg:')) {
             $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
             if ($packageId === false) throw new RuntimeException('That package button is invalid.');
-            $telegram->sendProduct($account, (int) $packageId);
+            $ui->sendProduct($account, (int) $packageId);
             $ack($bot, $callbackId);
             return;
         }
@@ -203,6 +205,11 @@ class TelegramWebhookController extends Controller
         if (str_starts_with($data, 'promocancel:')) {
             $telegram->cancelPromotionInput($account, substr($data, 12));
             $ack($bot, $callbackId);
+            return;
+        }
+        if (str_starts_with($data, 'promoskip:')) {
+            $telegram->skipPromotionInput($account, substr($data, 10));
+            $ack($bot, $callbackId, 'Continuing without promo');
             return;
         }
         if (str_starts_with($data, 'payw:')) {
@@ -260,8 +267,13 @@ class TelegramWebhookController extends Controller
             $ack($bot, $callbackId);
             return;
         }
-        if ($data === 'orders') {
-            $telegram->sendOrders($account);
+        if ($data === 'orders' || $data === 'orders:completed') {
+            $ui->sendOrders($account, 'completed');
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'orders:pending') {
+            $ui->sendOrders($account, 'pending');
             $ack($bot, $callbackId);
             return;
         }
