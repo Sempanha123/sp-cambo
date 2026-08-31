@@ -13,11 +13,24 @@ useHead({
   titleTemplate: title => title ? `${title} · ${siteName}` : siteName,
   htmlAttrs: { lang: 'en' },
   meta: [
-    { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+    {
+      name: 'viewport',
+      content: 'width=device-width, initial-scale=1, viewport-fit=cover'
+    },
     { name: 'format-detection', content: 'telephone=no' }
   ],
   link: [
-    { rel: 'icon', href: '/favicon.ico' }
+    {
+      rel: 'icon',
+      type: 'image/png',
+      sizes: '512x512',
+      href: '/brand/sp-cambo-logo.png'
+    },
+    {
+      rel: 'apple-touch-icon',
+      sizes: '192x192',
+      href: '/brand/sp-cambo-logo-192.png'
+    }
   ]
 })
 

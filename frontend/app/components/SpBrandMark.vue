@@ -1,8 +1,4 @@
 <script setup lang="ts">
-/**
- * SP Cambo brand mark: a terminal prompt glyph inside a precise rounded square.
- * The mark reads as developer infrastructure rather than a consumer app icon.
- */
 withDefaults(defineProps<{
   size?: number
 }>(), {
@@ -11,36 +7,21 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <svg
-    :width="size"
-    :height="size"
-    viewBox="0 0 32 32"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
+  <span
+    class="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[22%] border border-primary/20 bg-black shadow-sm"
+    :style="{
+      width: `${size}px`,
+      height: `${size}px`
+    }"
     aria-hidden="true"
-    focusable="false"
   >
-    <rect
-      x="0.75"
-      y="0.75"
-      width="30.5"
-      height="30.5"
-      rx="7.25"
-      class="fill-primary/10 stroke-primary/35"
-      stroke-width="1.5"
-    />
-    <path
-      d="M10.5 11.5 L15 16 L10.5 20.5"
-      class="stroke-primary"
-      stroke-width="2.25"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    />
-    <path
-      d="M17.5 21 H22"
-      style="stroke: var(--sp-khmer-gold)"
-      stroke-width="2.25"
-      stroke-linecap="round"
-    />
-  </svg>
+    <img
+      src="/brand/sp-cambo-logo.png"
+      alt=""
+      class="size-full object-cover"
+      width="512"
+      height="512"
+      decoding="async"
+    >
+  </span>
 </template>

@@ -866,9 +866,9 @@ onBeforeUnmount(() => {
           </aside>
         </div>
 
-        <div class="flex h-[calc(100dvh-7rem)] min-h-[32rem] min-w-0 flex-col sm:h-[calc(100dvh-7.5rem)] lg:h-[calc(100dvh-7.25rem)] xl:flex-row">
-          <section class="flex min-w-0 flex-1 flex-col bg-default/10">
-            <header class="flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated/35 px-3 py-2.5 sm:px-4">
+        <div class="flex h-[calc(100dvh-7rem)] min-h-0 min-w-0 flex-col sm:h-[calc(100dvh-7.5rem)] lg:h-[calc(100dvh-7.25rem)] xl:flex-row">
+          <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-default/10">
+            <header class="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-default bg-elevated/35 px-3 py-2.5 sm:px-4">
               <div class="flex min-w-0 flex-1 items-center gap-2">
                 <SpModelLogo v-if="selectedAlias" :model="selectedAlias" :label="selectedModel?.display_name" size="sm" class="hidden sm:inline-flex" />
                 <USelectMenu
@@ -895,7 +895,11 @@ onBeforeUnmount(() => {
               </div>
             </header>
 
-            <div ref="chatScroll" class="min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth">
+            <div
+              ref="chatScroll"
+              class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain scroll-smooth"
+              style="-webkit-overflow-scrolling: touch;"
+            >
               <div class="mx-auto w-full max-w-5xl px-4 py-7 sm:px-6 lg:px-8">
                 <div v-if="messages.length === 0" class="mx-auto flex min-h-[28rem] max-w-3xl flex-col items-center justify-center text-center">
                   <SpModelLogo v-if="selectedAlias" :model="selectedAlias" :label="selectedModel?.display_name" size="lg" class="mb-4" />
@@ -919,7 +923,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <div v-else class="space-y-7 pb-4">
+                <div v-else class="space-y-7 pb-6 sm:pb-4">
                   <SpPlaygroundMessage
                     v-for="(message, index) in messages"
                     :key="index"
@@ -935,7 +939,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="sticky bottom-0 z-20 bg-gradient-to-t from-default via-default/96 to-transparent px-2.5 pb-[max(.65rem,env(safe-area-inset-bottom))] pt-5 sm:px-4 sm:pb-3 sm:pt-6">
+            <div class="relative z-20 shrink-0 bg-gradient-to-t from-default via-default/96 to-transparent px-2.5 pb-[max(.65rem,env(safe-area-inset-bottom))] pt-3 sm:px-4 sm:pb-3 sm:pt-5">
               <div class="mx-auto w-full max-w-4xl">
                 <UAlert
                   v-if="errorMessage"
@@ -960,9 +964,10 @@ onBeforeUnmount(() => {
                     data-playground-composer
                     :rows="1"
                     autoresize
-                    class="w-full text-[16px] sm:text-sm"
+                    class="max-h-[38dvh] w-full overflow-y-auto text-[16px] sm:max-h-64 sm:text-sm"
                     placeholder="Message SP Cambo…"
                     :disabled="!quota.data.value?.enabled"
+                    @focus="scrollToBottom('auto')"
                     @keydown.enter.exact.prevent="send"
                   />
                   <div class="mt-1.5 flex items-center justify-between gap-2 px-1 pb-0.5">

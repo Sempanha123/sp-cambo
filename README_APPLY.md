@@ -1,30 +1,55 @@
-# SP Cambo Telegram Store UX R3
+# SP Cambo Playground Mobile + Website Logo R1
 
-Copy/merge the `backend/` folder into the SP Cambo repository.
+This package fixes the phone-size Playground scrolling problem and updates the
+website brand mark/favicon to the supplied SP Cambo gold logo.
 
-R3 changes:
-- Credit packages never show their internal token backing in Store or product detail.
-- Credit packages use the existing `billing_rules.package_kind = SP_CREDITS` and
-  `billing_rules.display_units`; no fake/hard-coded credit catalog is introduced.
-- Store package buttons are compact 2-column rows for clearer buying with less scrolling.
-- Promo-code input now has clear Cancel / No Promo / Remove Promo controls.
-- Invalid promo codes keep easy Try Another / No Promo / Checkout buttons.
-- My Orders defaults to completed successful purchases only.
-- Pending orders are separated behind a `Pending (N)` button.
-- Pending view shows friendly states and compact per-order Check buttons.
-- Keeps R2 Home-only inline navigation, compact wallet top-ups, KHQR real-expiry display,
-  and automatic QR cleanup.
+## What changes
 
-No new migration is required beyond the QR-tracking migration already included from R2.
+### Playground mobile
+- Removes the 32rem minimum height that can make the internal chat taller than a phone viewport.
+- Makes the chat section a real `min-height: 0` flex column.
+- Makes the model header non-shrinking.
+- Makes the chat area a dedicated touch-scroll surface.
+- Removes `position: sticky` from the composer so it no longer paints over the latest response.
+- Keeps the composer as a normal `shrink-0` flex item.
+- Limits textarea auto-growth on phones so a long draft cannot consume the whole chat.
+- Scrolls to the latest message when the composer gains focus.
+- Keeps safe-area padding for iPhone-style bottom insets.
 
-After copying files:
+### Logo
+- Uses the exact supplied SP Cambo gold logo, optimized to 512x512.
+- Replaces the old terminal-glyph `SpBrandMark` everywhere that component is used.
+- Updates the website favicon/apple-touch icon.
+- Adds `viewport-fit=cover` for better mobile safe-area handling.
 
-```bash
-cd backend
-php artisan migrate
-php artisan optimize:clear
-php artisan test
+## Apply
+
+From the SP Cambo repository root:
+
+```powershell
+# First copy the frontend/ folder from this ZIP into your project root.
+# Allow it to overwrite the matching app.vue and SpBrandMark.vue files.
+
+git apply --check .\playground-mobile-fix.patch
+git apply .\playground-mobile-fix.patch
+
+cd frontend
+npm run typecheck
+npm run build
 ```
 
-Production queue note:
-Delayed KHQR deletion needs a real queue driver such as `database` or `redis`.
+If `git apply --check` reports that the Playground file has changed locally since
+the ZIP was made, do not force it. Keep your local file and manually apply only
+the five small class/template changes shown in the patch.
+
+## Production
+
+After pushing/pulling the frontend changes:
+
+```bash
+cd /var/www/sp-cambo/frontend
+npm ci
+npm run typecheck
+npm run build
+sudo systemctl restart sp-cambo-frontend
+```
