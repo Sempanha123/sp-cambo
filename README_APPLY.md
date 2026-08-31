@@ -1,17 +1,17 @@
-# SP Cambo Telegram Checkout Upgrade
+# SP Cambo Telegram Store UI R2
 
-This ZIP preserves repository-relative paths. Copy/merge the `backend/` folder into your SP Cambo repo.
+This ZIP keeps repository-relative paths. Copy/merge the `backend/` folder into the SP Cambo repository.
 
 Included changes:
-- Real PromotionService-backed promo code entry at Telegram checkout.
-- Discount preview and final server-side revalidation through OrderService.
-- FREE/100% promo checkout without KHQR or wallet debit.
-- Compact 3-column Telegram home keyboard.
-- Compact 3-column top-up amount buttons.
-- Compact KHQR buttons and real expiry countdown text.
-- Telegram QR message tracking.
-- Delayed queue job that removes the KHQR message at its real expiry time.
-- QR is also removed immediately when a top-up is confirmed, or when a checked purchase is delivered.
+- Home navigation is now an inline keyboard attached to the Home message.
+- The full navigation menu appears only on Home; it does not stay pinned under other screens.
+- Removed the Home `Updates` button to reduce clutter. The existing `/updates` command remains available for compatibility.
+- Home layout is compact: 3 columns, then 3 columns, then 2 columns.
+- A one-time cleanup removes the old persistent ReplyKeyboard from users who saw the previous bot layout.
+- Store/product/wallet/checkout/KHQR screens keep their own message-attached inline buttons.
+- Keeps the previous real PromotionService checkout integration.
+- Keeps compact 3-column wallet top-up amounts.
+- Keeps KHQR real-expiry countdown and automatic expired-QR deletion.
 
 After copying files:
 
@@ -22,4 +22,4 @@ php artisan optimize:clear
 php artisan test
 ```
 
-Production queue note: automatic expiry deletion uses Laravel's queue delay. Your production queue must not use the `sync` driver. The code intentionally does not dispatch the delayed deletion job when `queue.default=sync`, because sync would delete the QR immediately.
+Production queue note: delayed KHQR deletion requires a real queue driver such as database or redis. Do not use `sync` for the production queue if you want expiry cleanup to run automatically.

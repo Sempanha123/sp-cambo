@@ -18,6 +18,8 @@ trait TelegramCommerceWalletFeatures
 {
     public function sendCompactHome(TelegramAccount $account): void
     {
+        $this->removeLegacyReplyKeyboardOnce($account);
+
         $balance = $this->balanceSnapshot($account);
         $wallet = $this->storeWallet->summary($account->user);
         $walletText = $this->money($wallet['balance_minor'], $wallet['currency'], $wallet['exponent']);
@@ -25,31 +27,60 @@ trait TelegramCommerceWalletFeatures
         $name = trim((string) ($account->user?->name ?: $account->username ?: 'SP Cambo customer'));
 
         $text = $km
-            ? "🤖✨ SP CAMBO AI STORE\n\n👋 សួស្តី {$name}\n👛 Wallet: {$walletText} · 🪙 {$balance['tokens']} Tokens\n💳 API Credit: {$balance['credit']}"
-            : "🤖✨ SP CAMBO AI STORE\n\n👋 Welcome {$name}\n👛 Wallet: {$walletText} · 🪙 {$balance['tokens']} Tokens\n💳 API Credit: {$balance['credit']}";
+            ? "🤖✨ SP CAMBO AI STORE\n\n👋 សួស្តី {$name}\n👛 Wallet: {$walletText} · 🪙 {$balance['tokens']} Tokens\n💳 API Credit: {$balance['credit']}\n\nជ្រើសរើសមុខងារខាងក្រោម 👇"
+            : "🤖✨ SP CAMBO AI STORE\n\n👋 Welcome {$name}\n👛 Wallet: {$walletText} · 🪙 {$balance['tokens']} Tokens\n💳 API Credit: {$balance['credit']}\n\nChoose an action below 👇";
 
+        // Home is the only screen that shows the complete navigation menu.
+        // Inline buttons stay attached to this message instead of occupying the
+        // Telegram composer area while the customer is browsing or checking out.
         $this->bot->sendMessage($account->chat_id, $text, [
-            'keyboard' => [
+            'inline_keyboard' => [
                 [
-                    ['text' => $km ? '🛍 ទិញ' : '🛍 Buy'],
-                    ['text' => '👛 Wallet'],
-                    ['text' => $km ? '💰 សមតុល្យ' : '💰 Balance'],
+                    ['text' => $km ? '🛍 ទិញ' : '🛍 Buy', 'callback_data' => 'store:1'],
+                    ['text' => '👛 Wallet', 'callback_data' => 'wallet'],
+                    ['text' => $km ? '💰 សមតុល្យ' : '💰 Balance', 'callback_data' => 'balance'],
                 ],
                 [
-                    ['text' => '🔑 API Keys'],
-                    ['text' => $km ? '🧾 ការបញ្ជាទិញ' : '🧾 Orders'],
-                    ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models'],
+                    ['text' => '🔑 API Keys', 'callback_data' => 'keys'],
+                    ['text' => $km ? '🧾 ការបញ្ជាទិញ' : '🧾 Orders', 'callback_data' => 'orders'],
+                    ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models', 'callback_data' => 'models'],
                 ],
                 [
-                    ['text' => $km ? '🔔 ព័ត៌មាន' : '🔔 Updates'],
-                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language'],
-                    ['text' => $km ? '📞 ជំនួយ' : '📞 Support'],
+                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language', 'callback_data' => 'language'],
+                    ['text' => $km ? '📞 ជំនួយ' : '📞 Support', 'callback_data' => 'support'],
                 ],
             ],
-            'resize_keyboard' => true,
-            'is_persistent' => true,
-            'input_field_placeholder' => $km ? '✨ ជ្រើសមុខងារ…' : '✨ Choose an action…',
         ]);
+    }
+
+    /**
+     * Remove the old persistent ReplyKeyboard once per account after upgrading
+     * to the message-attached inline Home menu. The tiny cleanup message is
+     * immediately deleted, so users do not keep a permanent bottom keyboard.
+     */
+    private function removeLegacyReplyKeyboardOnce(TelegramAccount $account): void
+    {
+        $cacheKey = 'telegram:inline-home:reply-keyboard-removed:v1:'.$account->id;
+        if (Cache::get($cacheKey) === true) {
+            return;
+        }
+
+        try {
+            $message = $this->bot->sendMessage(
+                $account->chat_id,
+                '✨',
+                ['remove_keyboard' => true],
+            );
+
+            $messageId = (int) ($message['message_id'] ?? 0);
+            if ($messageId > 0) {
+                $this->bot->deleteMessage($account->chat_id, $messageId);
+            }
+
+            Cache::put($cacheKey, true, now()->addDays(30));
+        } catch (Throwable $exception) {
+            report($exception);
+        }
     }
 
     public function sendCheckout(TelegramAccount $account, int $packageId): void
