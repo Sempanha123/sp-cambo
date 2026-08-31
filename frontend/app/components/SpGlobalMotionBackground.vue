@@ -4,19 +4,22 @@ const route = useRoute()
 const privatePrefixes = ['/dashboard', '/admin', '/reseller']
 const isPrivateSurface = computed(() => privatePrefixes.some(prefix => route.path.startsWith(prefix)))
 const isHome = computed(() => route.path === '/')
+const isShowcase = computed(() => route.path === '/models' || route.path === '/pricing')
 
-const stars = Array.from({ length: 22 }, (_, index) => index)
+const stars = Array.from({ length: 26 }, (_, index) => index)
+const particles = Array.from({ length: 12 }, (_, index) => index)
+
 const links = [
-  { x1: 4, y1: 14, x2: 18, y2: 23, delay: '-1s' },
+  { x1: 3, y1: 14, x2: 18, y2: 23, delay: '-1s' },
   { x1: 18, y1: 23, x2: 34, y2: 11, delay: '-2.4s' },
   { x1: 34, y1: 11, x2: 49, y2: 27, delay: '-0.7s' },
   { x1: 49, y1: 27, x2: 67, y2: 15, delay: '-3.1s' },
-  { x1: 67, y1: 15, x2: 86, y2: 25, delay: '-1.8s' },
-  { x1: 9, y1: 52, x2: 25, y2: 43, delay: '-4.0s' },
+  { x1: 67, y1: 15, x2: 87, y2: 24, delay: '-1.8s' },
+  { x1: 8, y1: 52, x2: 25, y2: 43, delay: '-4s' },
   { x1: 25, y1: 43, x2: 43, y2: 58, delay: '-1.1s' },
   { x1: 43, y1: 58, x2: 62, y2: 44, delay: '-2.8s' },
-  { x1: 62, y1: 44, x2: 82, y2: 58, delay: '-0.3s' },
-  { x1: 12, y1: 82, x2: 31, y2: 70, delay: '-3.5s' },
+  { x1: 62, y1: 44, x2: 83, y2: 58, delay: '-0.3s' },
+  { x1: 11, y1: 82, x2: 31, y2: 70, delay: '-3.5s' },
   { x1: 31, y1: 70, x2: 51, y2: 85, delay: '-1.6s' },
   { x1: 51, y1: 85, x2: 72, y2: 72, delay: '-4.4s' },
   { x1: 72, y1: 72, x2: 92, y2: 84, delay: '-2.1s' }
@@ -25,26 +28,28 @@ const links = [
 
 <template>
   <div
-    class="sp-global-motion"
+    class="sp-r8-bg"
     :class="{
-      'sp-global-motion--home': isHome,
-      'sp-global-motion--calm': isPrivateSurface
+      'sp-r8-bg--home': isHome,
+      'sp-r8-bg--showcase': isShowcase,
+      'sp-r8-bg--private': isPrivateSurface
     }"
     aria-hidden="true"
   >
-    <div class="sp-global-base" />
-    <div class="sp-global-grid" />
-    <div class="sp-global-vignette" />
+    <div class="sp-r8-bg__base" />
+    <div class="sp-r8-bg__mesh" />
+    <div class="sp-r8-bg__vignette" />
 
-    <div class="sp-global-aurora sp-global-aurora--one" />
-    <div class="sp-global-aurora sp-global-aurora--two" />
-    <div class="sp-global-aurora sp-global-aurora--three" />
+    <div class="sp-r8-bg__aurora sp-r8-bg__aurora--a" />
+    <div class="sp-r8-bg__aurora sp-r8-bg__aurora--b" />
+    <div class="sp-r8-bg__aurora sp-r8-bg__aurora--c" />
 
-    <div class="sp-global-beam sp-global-beam--one" />
-    <div class="sp-global-beam sp-global-beam--two" />
+    <div class="sp-r8-bg__wave sp-r8-bg__wave--a" />
+    <div class="sp-r8-bg__wave sp-r8-bg__wave--b" />
+    <div class="sp-r8-bg__wave sp-r8-bg__wave--c" />
 
     <svg
-      class="sp-global-network"
+      class="sp-r8-bg__network"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >
@@ -61,272 +66,326 @@ const links = [
 
     <span
       v-for="star in stars"
-      :key="star"
-      class="sp-global-star"
-      :style="{ '--star-index': star }"
+      :key="`star-${star}`"
+      class="sp-r8-bg__star"
+      :style="{ '--i': star }"
     />
 
-    <div class="sp-global-scan" />
+    <span
+      v-for="particle in particles"
+      :key="`particle-${particle}`"
+      class="sp-r8-bg__particle"
+      :style="{ '--i': particle }"
+    />
+
+    <div class="sp-r8-bg__scan" />
   </div>
 </template>
 
 <style>
-.sp-global-motion {
+.sp-r8-bg {
+  --sp-r8-strength: .52;
   position: fixed;
   inset: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
   background: var(--ui-bg);
-  --sp-global-strength: 0.55;
 }
 
-.sp-global-motion--home {
-  --sp-global-strength: 0.82;
+.sp-r8-bg--home {
+  --sp-r8-strength: .82;
 }
 
-.sp-global-motion--calm {
-  --sp-global-strength: 0.34;
+.sp-r8-bg--showcase {
+  --sp-r8-strength: .68;
 }
 
-.sp-global-base,
-.sp-global-grid,
-.sp-global-vignette,
-.sp-global-scan,
-.sp-global-network,
-.sp-global-aurora,
-.sp-global-beam {
+.sp-r8-bg--private {
+  --sp-r8-strength: .28;
+}
+
+.sp-r8-bg__base,
+.sp-r8-bg__mesh,
+.sp-r8-bg__vignette,
+.sp-r8-bg__aurora,
+.sp-r8-bg__wave,
+.sp-r8-bg__network,
+.sp-r8-bg__scan {
   position: absolute;
 }
 
-.sp-global-base {
+.sp-r8-bg__base {
   inset: 0;
   background:
-    radial-gradient(circle at 8% 8%, rgb(68 105 255 / calc(0.10 * var(--sp-global-strength))), transparent 28rem),
-    radial-gradient(circle at 92% 16%, rgb(129 78 255 / calc(0.085 * var(--sp-global-strength))), transparent 30rem),
-    radial-gradient(circle at 54% 78%, rgb(52 184 255 / calc(0.065 * var(--sp-global-strength))), transparent 34rem);
+    radial-gradient(circle at 8% 8%, rgb(45 102 255 / calc(.095 * var(--sp-r8-strength))), transparent 29rem),
+    radial-gradient(circle at 92% 14%, rgb(114 63 255 / calc(.078 * var(--sp-r8-strength))), transparent 31rem),
+    radial-gradient(circle at 50% 78%, rgb(18 171 255 / calc(.052 * var(--sp-r8-strength))), transparent 34rem),
+    linear-gradient(to bottom, rgb(3 14 34 / .14), transparent 38rem);
 }
 
-.sp-global-grid {
+.sp-r8-bg__mesh {
   inset: 0;
-  opacity: calc(0.26 * var(--sp-global-strength));
+  opacity: calc(.19 * var(--sp-r8-strength));
   background-image:
-    linear-gradient(rgb(107 132 255 / 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(107 132 255 / 0.055) 1px, transparent 1px);
-  background-size: 58px 58px;
-  mask-image: linear-gradient(to bottom, black, transparent 92%);
+    linear-gradient(rgb(92 125 255 / .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(92 125 255 / .05) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black 0%, black 48%, transparent 95%);
 }
 
-.sp-global-vignette {
+.sp-r8-bg__vignette {
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 48%, rgb(0 0 0 / 0.16) 120%);
+  background:
+    radial-gradient(ellipse at 50% 10%, transparent 0 36%, rgb(0 0 0 / .06) 100%),
+    linear-gradient(to bottom, transparent 0 70%, rgb(0 0 0 / .07));
 }
 
-.sp-global-aurora {
+.sp-r8-bg__aurora {
   left: -18%;
-  width: 138%;
-  height: 15rem;
+  width: 136%;
+  height: 13rem;
   border-radius: 50%;
-  opacity: calc(0.12 * var(--sp-global-strength));
-  filter: blur(42px);
+  filter: blur(44px);
   mix-blend-mode: screen;
+  opacity: calc(.09 * var(--sp-r8-strength));
   will-change: transform;
 }
 
-.sp-global-aurora--one {
+.sp-r8-bg__aurora--a {
   top: 4%;
-  background: linear-gradient(90deg, transparent, rgb(63 105 255 / 0.9), rgb(123 77 255 / 0.75), transparent);
+  background: linear-gradient(90deg, transparent, rgb(48 105 255 / .78), rgb(121 70 255 / .64), transparent);
   transform: rotate(-8deg);
-  animation: sp-global-aurora-one 18s ease-in-out infinite alternate;
+  animation: sp-r8-aurora-a 18s ease-in-out infinite alternate;
 }
 
-.sp-global-aurora--two {
-  top: 42%;
-  background: linear-gradient(90deg, transparent, rgb(42 189 255 / 0.72), rgb(78 103 255 / 0.78), transparent);
+.sp-r8-bg__aurora--b {
+  top: 39%;
+  background: linear-gradient(90deg, transparent, rgb(27 179 255 / .58), rgb(67 95 255 / .68), transparent);
   transform: rotate(6deg);
-  animation: sp-global-aurora-two 23s ease-in-out infinite alternate-reverse;
+  animation: sp-r8-aurora-b 23s ease-in-out infinite alternate-reverse;
 }
 
-.sp-global-aurora--three {
-  top: 78%;
-  background: linear-gradient(90deg, transparent, rgb(126 77 255 / 0.68), rgb(53 181 255 / 0.55), transparent);
-  transform: rotate(-4deg);
-  animation: sp-global-aurora-three 27s ease-in-out infinite alternate;
-}
-
-.sp-global-beam {
-  width: 1px;
-  height: 54vh;
-  opacity: calc(0.18 * var(--sp-global-strength));
-  background: linear-gradient(to bottom, transparent, rgb(116 146 255 / 0.75), rgb(67 196 255 / 0.58), transparent);
-  box-shadow: 0 0 28px rgb(74 125 255 / 0.36);
-}
-
-.sp-global-beam--one {
-  left: 20%;
-  top: 8%;
-  transform: rotate(24deg);
-  animation: sp-global-beam-one 19s ease-in-out infinite alternate;
-}
-
-.sp-global-beam--two {
-  right: 18%;
-  top: 49%;
-  transform: rotate(-28deg);
-  animation: sp-global-beam-two 22s ease-in-out infinite alternate-reverse;
-}
-
-.sp-global-network {
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: calc(0.2 * var(--sp-global-strength));
-}
-
-.sp-global-network line {
-  stroke: rgb(111 140 255 / 0.42);
-  stroke-width: 0.07;
-  stroke-dasharray: 1.2 2.4;
-  vector-effect: non-scaling-stroke;
-  animation: sp-global-network-flow 7s linear infinite;
-}
-
-.sp-global-star {
-  --sx: calc((var(--star-index) * 67) % 97);
-  --sy: calc((var(--star-index) * 43) % 91);
-  position: absolute;
-  left: calc(var(--sx) * 1%);
-  top: calc(var(--sy) * 1%);
-  width: 3px;
-  height: 3px;
-  border-radius: 9999px;
-  opacity: calc(0.6 * var(--sp-global-strength));
-  background: rgb(147 167 255 / 0.68);
-  box-shadow: 0 0 16px rgb(98 129 255 / 0.58);
-  animation: sp-global-star-float calc(8s + (var(--star-index) * 0.36s)) ease-in-out infinite alternate;
-}
-
-.sp-global-star:nth-of-type(3n) {
-  width: 2px;
-  height: 2px;
-  background: rgb(90 200 255 / 0.62);
-}
-
-.sp-global-scan {
-  inset: 0;
-  opacity: calc(0.08 * var(--sp-global-strength));
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 10px,
-    rgb(117 141 255 / 0.12) 11px,
-    transparent 12px
-  );
-  animation: sp-global-scan 15s linear infinite;
+.sp-r8-bg__aurora--c {
+  top: 76%;
+  background: linear-gradient(90deg, transparent, rgb(111 68 255 / .52), rgb(31 172 255 / .45), transparent);
+  transform: rotate(-3deg);
+  animation: sp-r8-aurora-c 28s ease-in-out infinite alternate;
 }
 
 /*
- * Existing layouts used opaque shell backgrounds. The global backdrop becomes
- * the single atmosphere layer, while pages/cards keep their own semantic
- * elevated surfaces for readability.
+ * Lively curved light paths inspired by the index-page motion language.
+ * They are CSS-only, intentionally dim so long pages remain comfortable.
  */
+.sp-r8-bg__wave {
+  width: 72rem;
+  height: 18rem;
+  border: 1px solid transparent;
+  border-top-color: rgb(74 126 255 / calc(.22 * var(--sp-r8-strength)));
+  border-radius: 50%;
+  filter: drop-shadow(0 0 7px rgb(57 115 255 / .18));
+}
+
+.sp-r8-bg__wave::after {
+  position: absolute;
+  content: "";
+  inset: 12px 4%;
+  border: 1px solid transparent;
+  border-top-color: rgb(100 72 255 / calc(.14 * var(--sp-r8-strength)));
+  border-radius: 50%;
+}
+
+.sp-r8-bg__wave--a {
+  left: -18rem;
+  top: 19%;
+  transform: rotate(-9deg);
+  animation: sp-r8-wave-a 19s ease-in-out infinite alternate;
+}
+
+.sp-r8-bg__wave--b {
+  right: -20rem;
+  top: 46%;
+  transform: rotate(8deg);
+  animation: sp-r8-wave-b 24s ease-in-out infinite alternate-reverse;
+}
+
+.sp-r8-bg__wave--c {
+  left: 16%;
+  bottom: -7rem;
+  transform: rotate(-4deg) scale(.9);
+  animation: sp-r8-wave-c 27s ease-in-out infinite alternate;
+}
+
+.sp-r8-bg__network {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: calc(.12 * var(--sp-r8-strength));
+}
+
+.sp-r8-bg__network line {
+  stroke: rgb(100 138 255 / .34);
+  stroke-width: .065;
+  stroke-dasharray: 1.2 2.8;
+  vector-effect: non-scaling-stroke;
+  animation: sp-r8-network 8s linear infinite;
+}
+
+.sp-r8-bg__star {
+  --x: calc((var(--i) * 67) % 97);
+  --y: calc((var(--i) * 43) % 91);
+  position: absolute;
+  left: calc(var(--x) * 1%);
+  top: calc(var(--y) * 1%);
+  width: 2px;
+  height: 2px;
+  border-radius: 9999px;
+  opacity: calc(.52 * var(--sp-r8-strength));
+  background: rgb(151 177 255 / .76);
+  box-shadow: 0 0 12px rgb(87 130 255 / .55);
+  animation: sp-r8-star calc(8s + (var(--i) * .31s)) ease-in-out infinite alternate;
+}
+
+.sp-r8-bg__star:nth-of-type(4n) {
+  width: 3px;
+  height: 3px;
+  background: rgb(73 194 255 / .72);
+}
+
+.sp-r8-bg__particle {
+  --x: calc((var(--i) * 79) % 92);
+  --y: calc((var(--i) * 37) % 86);
+  position: absolute;
+  left: calc(var(--x) * 1%);
+  top: calc(var(--y) * 1%);
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgb(115 151 255 / calc(.28 * var(--sp-r8-strength)));
+  border-radius: 9999px;
+  opacity: calc(.38 * var(--sp-r8-strength));
+  animation: sp-r8-particle calc(12s + (var(--i) * .6s)) ease-in-out infinite alternate;
+}
+
+.sp-r8-bg__scan {
+  inset: 0;
+  opacity: calc(.035 * var(--sp-r8-strength));
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 12px,
+    rgb(111 145 255 / .11) 13px,
+    transparent 14px
+  );
+  animation: sp-r8-scan 18s linear infinite;
+}
+
+/* Existing page shells become transparent enough for the shared atmosphere. */
 .sp-global-stage .sp-shell-aurora,
 .sp-global-stage .sp-auth-shell,
 .sp-global-stage .sp-dashboard-shell {
   background-color: transparent !important;
 }
 
-.sp-global-stage .sp-shell-aurora {
-  background-image:
-    radial-gradient(ellipse 78% 52% at 12% -16%, var(--sp-aurora-primary-wash), transparent 72%),
-    radial-gradient(ellipse 62% 46% at 96% 8%, var(--sp-aurora-secondary-wash), transparent 74%) !important;
-}
-
 .sp-global-stage .sp-site-header {
-  background-color: color-mix(in oklab, var(--ui-bg) 78%, transparent);
-  backdrop-filter: blur(18px) saturate(120%);
+  background-color: color-mix(in oklab, var(--ui-bg) 82%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(118%);
 }
 
 .sp-global-stage .sp-public-footer {
-  background-color: color-mix(in oklab, var(--ui-bg) 62%, transparent) !important;
+  background-color: color-mix(in oklab, var(--ui-bg) 70%, transparent) !important;
   backdrop-filter: blur(14px);
 }
 
-/* Keep dense private pages calmer while still showing the global atmosphere. */
-.sp-global-motion--calm .sp-global-network,
-.sp-global-motion--calm .sp-global-scan {
-  opacity: 0.025;
+/* Dashboard stays calm and readable. */
+.sp-r8-bg--private .sp-r8-bg__network,
+.sp-r8-bg--private .sp-r8-bg__scan,
+.sp-r8-bg--private .sp-r8-bg__particle {
+  opacity: .018;
 }
 
-.sp-global-motion--calm .sp-global-beam {
-  opacity: 0.035;
+.sp-r8-bg--private .sp-r8-bg__wave {
+  opacity: .30;
 }
 
-@keyframes sp-global-aurora-one {
-  from { transform: translate3d(-5%, 0, 0) rotate(-8deg) scaleX(0.92); }
-  to { transform: translate3d(8%, 4rem, 0) rotate(-3deg) scaleX(1.08); }
+@keyframes sp-r8-aurora-a {
+  from { transform: translate3d(-5%, 0, 0) rotate(-8deg) scaleX(.94); }
+  to { transform: translate3d(7%, 3.5rem, 0) rotate(-4deg) scaleX(1.06); }
 }
 
-@keyframes sp-global-aurora-two {
-  from { transform: translate3d(7%, 0, 0) rotate(6deg) scaleX(1.05); }
-  to { transform: translate3d(-7%, -3rem, 0) rotate(1deg) scaleX(0.92); }
+@keyframes sp-r8-aurora-b {
+  from { transform: translate3d(7%, 0, 0) rotate(6deg) scaleX(1.04); }
+  to { transform: translate3d(-7%, -3rem, 0) rotate(2deg) scaleX(.93); }
 }
 
-@keyframes sp-global-aurora-three {
-  from { transform: translate3d(-4%, 0, 0) rotate(-4deg); }
-  to { transform: translate3d(6%, -4rem, 0) rotate(2deg); }
+@keyframes sp-r8-aurora-c {
+  from { transform: translate3d(-3%, 0, 0) rotate(-3deg); }
+  to { transform: translate3d(5%, -4rem, 0) rotate(2deg); }
 }
 
-@keyframes sp-global-beam-one {
-  from { transform: translate3d(-8rem, 0, 0) rotate(24deg); }
-  to { transform: translate3d(10rem, 4rem, 0) rotate(24deg); }
+@keyframes sp-r8-wave-a {
+  from { transform: translate3d(-4rem, 0, 0) rotate(-9deg) scaleX(.95); }
+  to { transform: translate3d(7rem, 2rem, 0) rotate(-5deg) scaleX(1.06); }
 }
 
-@keyframes sp-global-beam-two {
-  from { transform: translate3d(8rem, 0, 0) rotate(-28deg); }
-  to { transform: translate3d(-10rem, -4rem, 0) rotate(-28deg); }
+@keyframes sp-r8-wave-b {
+  from { transform: translate3d(5rem, 0, 0) rotate(8deg); }
+  to { transform: translate3d(-8rem, -2rem, 0) rotate(4deg); }
 }
 
-@keyframes sp-global-network-flow {
+@keyframes sp-r8-wave-c {
+  from { transform: translate3d(-3rem, 0, 0) rotate(-4deg) scale(.88); }
+  to { transform: translate3d(5rem, -2rem, 0) rotate(1deg) scale(.96); }
+}
+
+@keyframes sp-r8-network {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -14; }
+  to { stroke-dashoffset: -16; }
 }
 
-@keyframes sp-global-star-float {
-  from { transform: translate3d(0, 0, 0); opacity: 0.12; }
-  to { transform: translate3d(18px, -28px, 0); opacity: 0.72; }
+@keyframes sp-r8-star {
+  from { transform: translate3d(0, 0, 0); opacity: .08; }
+  to { transform: translate3d(14px, -20px, 0); opacity: .62; }
 }
 
-@keyframes sp-global-scan {
+@keyframes sp-r8-particle {
+  from { transform: translate3d(0, 0, 0) scale(.75); }
+  to { transform: translate3d(22px, -34px, 0) scale(1.08); }
+}
+
+@keyframes sp-r8-scan {
   from { background-position-y: 0; }
-  to { background-position-y: 260px; }
+  to { background-position-y: 280px; }
 }
 
 @media (max-width: 767px) {
-  .sp-global-motion {
-    --sp-global-strength: 0.38;
+  .sp-r8-bg {
+    --sp-r8-strength: .34;
   }
 
-  .sp-global-motion--home {
-    --sp-global-strength: 0.5;
+  .sp-r8-bg--home,
+  .sp-r8-bg--showcase {
+    --sp-r8-strength: .45;
   }
 
-  .sp-global-network,
-  .sp-global-beam,
-  .sp-global-scan {
-    opacity: 0.025;
+  .sp-r8-bg__network,
+  .sp-r8-bg__scan {
+    opacity: .02;
   }
 
-  .sp-global-star:nth-child(n + 17) {
+  .sp-r8-bg__wave {
+    opacity: .35;
+  }
+
+  .sp-r8-bg__particle:nth-child(n + 7) {
     display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sp-global-motion *,
-  .sp-global-motion *::before,
-  .sp-global-motion *::after {
-    animation-duration: 0.001ms !important;
+  .sp-r8-bg *,
+  .sp-r8-bg *::before,
+  .sp-r8-bg *::after {
+    animation-duration: .001ms !important;
     animation-iteration-count: 1 !important;
   }
 }

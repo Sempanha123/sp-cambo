@@ -1,0 +1,861 @@
+/*
+  SP Cambo Dashboard UI R9
+  ------------------------
+  Low-glare, code-built dashboard style derived from the R8 public design:
+  fewer hard borders, calmer glass surfaces, live background, fixed sidebar
+  profile control, and mobile-safe shrinking.
+*/
+
+.sp-r9-dashboard-shell {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+.sp-r9-dashboard-group {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.sp-r9-dashboard-group > * {
+  min-width: 0;
+}
+
+.sp-r9-dashboard-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sp-r9-dashboard-atmosphere__grid {
+  position: absolute;
+  inset: 0;
+  opacity: .12;
+  background-image:
+    linear-gradient(rgb(93 126 255 / .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(93 126 255 / .045) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 94%);
+}
+
+.sp-r9-dashboard-atmosphere__glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(44px);
+  opacity: .075;
+  will-change: transform;
+}
+
+.sp-r9-dashboard-atmosphere__glow--a {
+  width: 30rem;
+  height: 30rem;
+  left: -15rem;
+  top: 3%;
+  background: radial-gradient(circle, rgb(62 111 255), transparent 68%);
+  animation: sp-r9-dash-glow-a 18s ease-in-out infinite alternate;
+}
+
+.sp-r9-dashboard-atmosphere__glow--b {
+  width: 34rem;
+  height: 34rem;
+  right: -16rem;
+  bottom: -7rem;
+  background: radial-gradient(circle, rgb(110 71 255), transparent 68%);
+  animation: sp-r9-dash-glow-b 23s ease-in-out infinite alternate-reverse;
+}
+
+.sp-r9-dashboard-atmosphere__line {
+  position: absolute;
+  width: 68rem;
+  height: 13rem;
+  border: 1px solid transparent;
+  border-top-color: rgb(71 124 255 / .07);
+  border-radius: 50%;
+  filter: drop-shadow(0 0 6px rgb(64 116 255 / .09));
+}
+
+.sp-r9-dashboard-atmosphere__line::after {
+  position: absolute;
+  content: "";
+  inset: 10px 4%;
+  border: 1px solid transparent;
+  border-top-color: rgb(110 75 255 / .045);
+  border-radius: 50%;
+}
+
+.sp-r9-dashboard-atmosphere__line--a {
+  left: -20rem;
+  top: 29%;
+  transform: rotate(-8deg);
+  animation: sp-r9-dash-line-a 22s ease-in-out infinite alternate;
+}
+
+.sp-r9-dashboard-atmosphere__line--b {
+  right: -22rem;
+  top: 65%;
+  transform: rotate(7deg);
+  animation: sp-r9-dash-line-b 27s ease-in-out infinite alternate-reverse;
+}
+
+/* Sidebar stays inside the viewport and owns its own nav scroll. */
+.sp-r9-dashboard-sidebar {
+  position: sticky !important;
+  top: 0;
+  align-self: flex-start;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  max-height: 100dvh !important;
+  overflow: hidden;
+  border-right-color: rgb(255 255 255 / .04) !important;
+  background:
+    linear-gradient(180deg, rgb(67 103 255 / .022), transparent 26%),
+    color-mix(in oklab, var(--ui-bg) 82%, transparent) !important;
+  box-shadow:
+    inset -1px 0 0 rgb(255 255 255 / .018),
+    14px 0 40px -38px rgb(64 105 255 / .16);
+  backdrop-filter: blur(20px) saturate(116%);
+}
+
+.sp-r9-sidebar-brand {
+  position: relative;
+}
+
+.sp-r9-sidebar-brand::after {
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 20%;
+  bottom: -.6rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(87 132 255 / .24), transparent);
+}
+
+.sp-r9-sidebar-nav {
+  min-width: 0;
+  min-height: 0;
+  max-height: calc(100dvh - 9.25rem);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(95 126 255 / .14) transparent;
+}
+
+.sp-r9-sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sp-r9-sidebar-nav::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgb(95 126 255 / .14);
+}
+
+.sp-dashboard-nav-label {
+  padding-inline: .35rem;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ui-text-dimmed) !important;
+}
+
+.sp-r9-dashboard-nav a,
+.sp-r9-dashboard-nav button {
+  border: 1px solid transparent;
+  border-radius: .72rem;
+  transition:
+    border-color .18s ease,
+    background-color .18s ease,
+    color .18s ease,
+    transform .18s ease;
+}
+
+.sp-r9-dashboard-nav a:hover,
+.sp-r9-dashboard-nav button:hover {
+  background-color: rgb(255 255 255 / .018);
+}
+
+.sp-r9-dashboard-nav a[aria-current="page"],
+.sp-r9-dashboard-nav a[data-active="true"],
+.sp-r9-dashboard-nav button[aria-current="page"] {
+  position: relative;
+  border-color: rgb(84 130 255 / .14) !important;
+  background:
+    linear-gradient(90deg, rgb(69 112 255 / .09), rgb(84 74 255 / .025)) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .025),
+    0 10px 24px -20px rgb(65 105 255 / .25);
+}
+
+.sp-r9-dashboard-nav a[aria-current="page"]::before,
+.sp-r9-dashboard-nav a[data-active="true"]::before,
+.sp-r9-dashboard-nav button[aria-current="page"]::before {
+  position: absolute;
+  content: "";
+  left: -1px;
+  top: 22%;
+  bottom: 22%;
+  width: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(to bottom, rgb(82 137 255), rgb(92 91 255));
+  box-shadow: 0 0 10px rgb(78 126 255 / .28);
+}
+
+.sp-r9-sidebar-account {
+  position: relative;
+  z-index: 8;
+  flex: 0 0 auto;
+  width: 100%;
+  padding-bottom: max(.25rem, env(safe-area-inset-bottom));
+  background:
+    linear-gradient(
+      to top,
+      color-mix(in oklab, var(--ui-bg) 94%, transparent),
+      color-mix(in oklab, var(--ui-bg) 78%, transparent) 72%,
+      transparent
+    );
+  backdrop-filter: blur(14px);
+}
+
+.sp-r9-account-button {
+  border-color: rgb(255 255 255 / .05) !important;
+  background-color: rgb(255 255 255 / .025) !important;
+}
+
+/* Dashboard navbar/content shell */
+.sp-r9-dashboard-group .sp-dashboard-navbar {
+  border-bottom-color: rgb(255 255 255 / .04) !important;
+  background-color: color-mix(in oklab, var(--ui-bg) 74%, transparent);
+  backdrop-filter: blur(18px) saturate(116%);
+}
+
+.sp-r9-dashboard-group .sp-dashboard-navbar::after {
+  position: absolute;
+  content: "";
+  left: 6%;
+  right: 6%;
+  bottom: -1px;
+  height: 1px;
+  opacity: .34;
+  background: linear-gradient(90deg, transparent, rgb(80 128 255 / .28), transparent);
+}
+
+.sp-r9-dashboard-group .sp-dashboard-page,
+.sp-r9-dashboard-group .sp-dashboard-content,
+.sp-r9-dashboard-group .sp-dashboard-content > *,
+.sp-r9-dashboard-group .sp-dashboard-content section,
+.sp-r9-dashboard-group .sp-dashboard-content aside,
+.sp-r9-dashboard-group .sp-dashboard-content ul,
+.sp-r9-dashboard-group .sp-dashboard-content li {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+.sp-r9-dashboard-group .sp-dashboard-page {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.sp-r9-dashboard-group .sp-dashboard-content {
+  width: 100%;
+  overflow-x: clip;
+}
+
+/* Page intro = one calm highlight, not a large glowing box. */
+.sp-r9-dashboard-group .sp-dashboard-intro {
+  position: relative;
+  border: 1px solid rgb(255 255 255 / .038) !important;
+  background:
+    radial-gradient(circle at 3% 50%, rgb(67 117 255 / .065), transparent 12rem),
+    color-mix(in oklab, var(--ui-bg-elevated) 34%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .018);
+  backdrop-filter: blur(13px);
+}
+
+.sp-r9-dashboard-group .sp-page-lead-icon {
+  border-color: rgb(82 129 255 / .12) !important;
+  background-color: rgb(70 112 255 / .07) !important;
+}
+
+/* Generic surfaces across every dashboard/admin/reseller page. */
+.sp-r9-dashboard-group :where(.sp-premium-card, .sp-app-card, .sp-dashboard-section, .sp-metric-tile, .sp-catalog-option) {
+  border-color: rgb(255 255 255 / .04) !important;
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / .012), transparent 48%),
+    color-mix(in oklab, var(--ui-bg-elevated) 38%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .018),
+    0 18px 42px -38px rgb(60 104 255 / .16);
+  backdrop-filter: blur(13px);
+}
+
+.sp-r9-dashboard-group :where(.sp-premium-card, .sp-app-card, .sp-catalog-option) {
+  transition:
+    transform .22s ease,
+    border-color .22s ease,
+    background-color .22s ease,
+    box-shadow .22s ease;
+}
+
+.sp-r9-dashboard-group :where(.sp-premium-card, .sp-app-card, .sp-catalog-option):hover {
+  transform: translateY(-2px);
+  border-color: rgb(78 126 255 / .14) !important;
+  box-shadow: 0 20px 45px -38px rgb(68 107 255 / .22);
+}
+
+/* Selected package gets a calm outline instead of a bright full blue card. */
+.sp-r9-dashboard-group .sp-catalog-option[aria-checked="true"] {
+  border-color: rgb(84 131 255 / .26) !important;
+  background:
+    linear-gradient(145deg, rgb(69 111 255 / .055), transparent 48%),
+    color-mix(in oklab, var(--ui-bg-elevated) 42%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .025),
+    0 0 0 1px rgb(83 128 255 / .08) !important;
+}
+
+/* Soften nested borders that caused the "boxes inside boxes" look. */
+.sp-r9-dashboard-group :where(.rounded-lg, .rounded-xl, .rounded-2xl).border-default,
+.sp-r9-dashboard-group :where(.rounded-lg, .rounded-xl, .rounded-2xl).border {
+  border-color: rgb(255 255 255 / .04);
+}
+
+.sp-r9-dashboard-group .divide-default > :not(:last-child),
+.sp-r9-dashboard-group .divide-default\/60 > :not(:last-child) {
+  border-color: rgb(255 255 255 / .035);
+}
+
+/* Tables and lists: spacing and surface contrast do the separation. */
+.sp-r9-dashboard-group table {
+  border-color: rgb(255 255 255 / .04);
+}
+
+.sp-r9-dashboard-group thead {
+  background-color: color-mix(in oklab, var(--ui-bg-muted) 62%, transparent);
+}
+
+.sp-r9-dashboard-group tbody tr {
+  transition: background-color .16s ease;
+}
+
+.sp-r9-dashboard-group tbody tr:hover {
+  background-color: rgb(73 117 255 / .025);
+}
+
+/* Inputs and selectors get a mild focus halo, not a neon ring. */
+.sp-r9-dashboard-group :where(input, textarea, select):focus {
+  box-shadow: 0 0 0 3px rgb(75 121 255 / .07);
+}
+
+/* Buy page */
+.sp-r9-dashboard-group .sp-catalog-option {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.sp-r9-dashboard-group .sp-catalog-option > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sp-r9-dashboard-group .sp-catalog-option dl > div {
+  min-width: 0;
+}
+
+.sp-r9-dashboard-group .sp-catalog-option dd {
+  min-width: 0;
+  max-width: 68%;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.sp-r9-dashboard-group .sp-dashboard-content .grid {
+  min-width: 0;
+}
+
+.sp-r9-dashboard-group .sp-dashboard-content button,
+.sp-r9-dashboard-group .sp-dashboard-content a,
+.sp-r9-dashboard-group .sp-dashboard-content input,
+.sp-r9-dashboard-group .sp-dashboard-content textarea,
+.sp-r9-dashboard-group .sp-dashboard-content select {
+  max-width: 100%;
+}
+
+/* Usage page */
+.sp-r9-usage-panel,
+.sp-r9-usage-chart,
+.sp-r9-usage-list {
+  border: 1px solid rgb(255 255 255 / .04);
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / .012), transparent 45%),
+    color-mix(in oklab, var(--ui-bg-elevated) 34%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .018);
+  backdrop-filter: blur(13px);
+}
+
+.sp-r9-usage-list > * + * {
+  border-top: 1px solid rgb(255 255 255 / .035);
+}
+
+.sp-r9-usage-row {
+  background: transparent;
+  transition: background-color .16s ease;
+}
+
+.sp-r9-usage-row:hover {
+  background-color: rgb(70 115 255 / .022);
+}
+
+/* Mobile */
+@media (max-width: 639px) {
+  .sp-r9-dashboard-shell,
+  .sp-r9-dashboard-group {
+    width: 100dvw;
+    max-width: 100dvw;
+  }
+
+  .sp-r9-dashboard-group .sp-dashboard-page {
+    width: 100dvw;
+    min-width: 0 !important;
+    max-width: 100dvw;
+  }
+
+  .sp-r9-dashboard-group .sp-dashboard-content {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    padding-inline: .72rem;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+    overflow-x: hidden;
+  }
+
+  .sp-r9-dashboard-group .sp-dashboard-intro {
+    padding: .82rem;
+    border-radius: .9rem;
+  }
+
+  .sp-r9-dashboard-group .sp-page-lead-icon {
+    width: 2.2rem;
+    height: 2.2rem;
+  }
+
+  .sp-r9-dashboard-group .sp-catalog-option {
+    padding: .82rem !important;
+    border-radius: .9rem !important;
+  }
+
+  .sp-r9-dashboard-group .sp-catalog-option p.truncate {
+    white-space: normal;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .sp-r9-dashboard-group .sp-catalog-option dl > div {
+    align-items: flex-start;
+    gap: .65rem;
+  }
+
+  .sp-r9-dashboard-group .sp-catalog-option dd {
+    max-width: 62%;
+  }
+
+  .sp-r9-dashboard-group .sp-dashboard-content .flex.flex-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .sp-r9-dashboard-group .sp-dashboard-content .flex.flex-wrap > * {
+    min-width: 0;
+  }
+
+  .sp-r9-sidebar-account {
+    padding-bottom: max(.5rem, env(safe-area-inset-bottom));
+  }
+
+  .sp-r9-dashboard-atmosphere__grid {
+    opacity: .055;
+    background-size: 56px 56px;
+  }
+
+  .sp-r9-dashboard-atmosphere__line {
+    opacity: .45;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .sp-r9-dashboard-group .sp-dashboard-content {
+    padding-inline: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-r9-dashboard-shell *,
+  .sp-r9-dashboard-shell *::before,
+  .sp-r9-dashboard-shell *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes sp-r9-dash-glow-a {
+  from { transform: translate3d(0, 0, 0) scale(.92); }
+  to { transform: translate3d(6rem, 4rem, 0) scale(1.1); }
+}
+
+@keyframes sp-r9-dash-glow-b {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-7rem, -3rem, 0) scale(1.12); }
+}
+
+@keyframes sp-r9-dash-line-a {
+  from { transform: translate3d(-4rem, 0, 0) rotate(-8deg); }
+  to { transform: translate3d(7rem, 2rem, 0) rotate(-4deg); }
+}
+
+@keyframes sp-r9-dash-line-b {
+  from { transform: translate3d(5rem, 0, 0) rotate(7deg); }
+  to { transform: translate3d(-8rem, -2rem, 0) rotate(3deg); }
+}
+
+/* ========================================================================== */
+/* R11 — ULTRA-SMOOTH COLLAPSED SIDEBAR                                       */
+/* ========================================================================== */
+
+/* Left edge sensing zone while the real sidebar is collapsed. */
+.sp-r11-sidebar-edge-zone {
+  position: fixed;
+  z-index: 73;
+  left: 0;
+  top: 4rem;
+  bottom: 0;
+  width: 12px;
+  cursor: e-resize;
+}
+
+.sp-r11-sidebar-edge-zone::after {
+  position: absolute;
+  content: "";
+  left: 0;
+  top: 14%;
+  bottom: 14%;
+  width: 2px;
+  border-radius: 9999px;
+  opacity: .22;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(81 142 255 / .58),
+    rgb(102 89 255 / .42),
+    transparent
+  );
+  transition:
+    width .2s ease,
+    opacity .2s ease,
+    box-shadow .2s ease;
+}
+
+.sp-r11-sidebar-edge-zone:hover::after {
+  width: 3px;
+  opacity: .78;
+  box-shadow: 0 0 16px rgb(72 128 255 / .34);
+}
+
+/* Persistent collapsed handle. */
+.sp-r11-sidebar-edge-trigger {
+  position: fixed;
+  z-index: 74;
+  left: 0;
+  top: 50%;
+  align-items: center;
+  gap: .42rem;
+  min-width: 2.2rem;
+  height: 3.15rem;
+  padding: 0 .48rem 0 .42rem;
+  overflow: hidden;
+  transform: translateY(-50%) translateX(-.22rem);
+  border: 1px solid rgb(94 140 255 / .15);
+  border-left: 0;
+  border-radius: 0 .9rem .9rem 0;
+  color: rgb(170 193 255);
+  background:
+    linear-gradient(135deg, rgb(69 113 255 / .10), rgb(91 74 255 / .045)),
+    color-mix(in oklab, var(--ui-bg) 88%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .04),
+    10px 0 30px -20px rgb(66 111 255 / .42);
+  backdrop-filter: blur(18px) saturate(118%);
+  cursor: pointer;
+  transition:
+    transform .24s cubic-bezier(.2,.8,.2,1),
+    min-width .24s cubic-bezier(.2,.8,.2,1),
+    border-color .2s ease,
+    box-shadow .2s ease,
+    background-color .2s ease;
+}
+
+.sp-r11-sidebar-edge-trigger__pulse {
+  position: absolute;
+  left: 0;
+  top: 24%;
+  bottom: 24%;
+  width: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(to bottom, rgb(77 157 255), rgb(106 84 255));
+  box-shadow: 0 0 13px rgb(75 133 255 / .42);
+  animation: sp-r11-edge-pulse 2.8s ease-in-out infinite;
+}
+
+.sp-r11-sidebar-edge-trigger__label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(-4px);
+  white-space: nowrap;
+  font-size: .66rem;
+  font-weight: 650;
+  color: var(--ui-text-default);
+  transition:
+    max-width .24s cubic-bezier(.2,.8,.2,1),
+    opacity .18s ease,
+    transform .24s cubic-bezier(.2,.8,.2,1);
+}
+
+.sp-r11-sidebar-edge-trigger:hover,
+.sp-r11-sidebar-edge-trigger:focus-visible {
+  min-width: 5.35rem;
+  transform: translateY(-50%) translateX(0);
+  border-color: rgb(99 145 255 / .28);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .055),
+    10px 0 32px -18px rgb(68 113 255 / .54);
+  outline: none;
+}
+
+.sp-r11-sidebar-edge-trigger:hover .sp-r11-sidebar-edge-trigger__label,
+.sp-r11-sidebar-edge-trigger:focus-visible .sp-r11-sidebar-edge-trigger__label {
+  max-width: 3.1rem;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Dedicated collapse button inside the real sidebar. */
+.sp-r11-sidebar-control {
+  flex: none;
+  border: 1px solid transparent;
+  color: var(--ui-text-muted);
+  transition:
+    transform .2s cubic-bezier(.2,.8,.2,1),
+    color .18s ease,
+    border-color .18s ease,
+    background-color .18s ease,
+    box-shadow .18s ease;
+}
+
+.sp-r11-sidebar-control:hover {
+  transform: translateX(-1px);
+  border-color: rgb(92 137 255 / .13);
+  color: rgb(172 193 255);
+  background: rgb(73 117 255 / .065) !important;
+  box-shadow: 0 8px 20px -15px rgb(69 113 255 / .34);
+}
+
+/* Hover-preview overlay. The real collapsed state is left untouched. */
+.sp-r11-sidebar-preview {
+  position: fixed;
+  z-index: 82;
+  left: .55rem;
+  top: .55rem;
+  bottom: .55rem;
+  width: min(18rem, calc(100vw - 2rem));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgb(94 137 255 / .12);
+  border-radius: 1.1rem;
+  background:
+    radial-gradient(circle at 22% 0%, rgb(70 112 255 / .07), transparent 12rem),
+    color-mix(in oklab, var(--ui-bg) 92%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .04),
+    24px 0 70px -34px rgb(17 37 89 / .72);
+  backdrop-filter: blur(24px) saturate(122%);
+}
+
+.sp-r11-sidebar-preview::before {
+  position: absolute;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / .018), transparent 32%),
+    linear-gradient(90deg, rgb(72 123 255 / .025), transparent 55%);
+}
+
+.sp-r11-sidebar-preview__header,
+.sp-r11-sidebar-preview__footer,
+.sp-r11-sidebar-preview__nav {
+  position: relative;
+  z-index: 1;
+}
+
+.sp-r11-sidebar-preview__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: .75rem;
+  justify-content: space-between;
+  min-height: 4.1rem;
+  padding: .75rem .8rem;
+  border-bottom: 1px solid rgb(255 255 255 / .03);
+}
+
+.sp-r11-sidebar-preview__nav {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: .7rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(95 126 255 / .14) transparent;
+}
+
+.sp-r11-sidebar-preview__nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sp-r11-sidebar-preview__nav::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgb(95 126 255 / .14);
+}
+
+.sp-r11-sidebar-preview__footer {
+  flex: none;
+  padding: .65rem;
+  border-top: 1px solid rgb(255 255 255 / .03);
+  background: color-mix(in oklab, var(--ui-bg) 82%, transparent);
+}
+
+/* Vue transition classes: opacity + transform + subtle scale = much smoother. */
+.sp-r11-sidebar-preview-enter-active,
+.sp-r11-sidebar-preview-leave-active {
+  transition:
+    opacity .22s ease,
+    transform .26s cubic-bezier(.2,.8,.2,1),
+    filter .22s ease;
+  transform-origin: left center;
+}
+
+.sp-r11-sidebar-preview-enter-from,
+.sp-r11-sidebar-preview-leave-to {
+  opacity: 0;
+  transform: translateX(-18px) scale(.985);
+  filter: blur(2px);
+}
+
+.sp-r11-sidebar-preview-enter-to,
+.sp-r11-sidebar-preview-leave-from {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  filter: blur(0);
+}
+
+/* Subtle page shade while hover preview is open. */
+.sp-r11-dashboard-shell--previewing::after {
+  position: fixed;
+  content: "";
+  z-index: 78;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgb(2 9 24 / .18), transparent 34%),
+    rgb(0 0 0 / .025);
+  backdrop-filter: blur(.35px);
+}
+
+/* Smooth the actual pinned sidebar as well. */
+.sp-r11-dashboard-sidebar {
+  transition:
+    width .28s cubic-bezier(.2,.8,.2,1),
+    min-width .28s cubic-bezier(.2,.8,.2,1),
+    max-width .28s cubic-bezier(.2,.8,.2,1),
+    box-shadow .22s ease,
+    background-color .22s ease !important;
+}
+
+/* Profile remains clearly separated and always reachable in pinned sidebar. */
+.sp-r11-dashboard-sidebar .sp-r9-sidebar-account {
+  border-top: 1px solid rgb(255 255 255 / .025);
+  padding-top: .45rem;
+}
+
+/* R10/R11 shared body-spacing improvements. */
+.sp-r11-dashboard-group .sp-dashboard-content > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sp-r11-dashboard-group :where(
+  .sp-dashboard-section,
+  .sp-metric-tile,
+  .sp-catalog-option,
+  .sp-r9-usage-panel,
+  .sp-r9-usage-chart,
+  .sp-r9-usage-list
+) {
+  scroll-margin-top: 5rem;
+}
+
+.sp-r11-dashboard-group article.rounded-lg.border,
+.sp-r11-dashboard-group article.rounded-xl.border,
+.sp-r11-dashboard-group article.rounded-2xl.border {
+  border-color: rgb(255 255 255 / .04);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .018),
+    0 16px 38px -36px rgb(58 103 255 / .14);
+}
+
+@keyframes sp-r11-edge-pulse {
+  0%, 100% {
+    opacity: .4;
+    transform: scaleY(.72);
+  }
+  50% {
+    opacity: .96;
+    transform: scaleY(1);
+  }
+}
+
+@media (max-width: 1023px) {
+  .sp-r11-sidebar-edge-zone,
+  .sp-r11-sidebar-edge-trigger,
+  .sp-r11-sidebar-preview {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-r11-sidebar-edge-trigger__pulse {
+    animation: none !important;
+  }
+
+  .sp-r11-sidebar-preview-enter-active,
+  .sp-r11-sidebar-preview-leave-active,
+  .sp-r11-dashboard-sidebar {
+    transition-duration: .001ms !important;
+  }
+}

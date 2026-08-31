@@ -24,8 +24,6 @@ const formatSpCredits = (value: string | null | undefined) => {
 
 const modelUi = (alias: string) => modelPresentation(alias)
 
-/** ----------------------------------------------------------------- range */
-
 const ranges = [
   { label: 'Last 24 hours', value: '24h', hours: 24, bucket: 'hour' as const },
   { label: 'Last 7 days', value: '7d', hours: 24 * 7, bucket: 'day' as const },
@@ -33,17 +31,11 @@ const ranges = [
 ]
 
 const rangeValue = ref('7d')
-
 const range = computed(() => ranges.find(item => item.value === rangeValue.value) ?? ranges[1]!)
 
-/**
- * Range boundaries are computed here only to ask the server for a window. Every
- * figure inside that window is calculated and returned by the control plane.
- */
 const windowBounds = () => {
   const to = new Date()
   const from = new Date(to.getTime() - range.value.hours * 3600_000)
-
   return { from: from.toISOString(), to: to.toISOString() }
 }
 
@@ -62,22 +54,16 @@ const balance = await useSpResource(
 const savingsRateLabel = computed(() => `${Number(summary.data.value?.savings_rate_percent ?? 0).toFixed(1)}%`)
 const hasSmartSavings = computed(() => Number(summary.data.value?.saved_tokens ?? 0) > 0)
 
-/** --------------------------------------------------------------- filters */
-
 const modelFilter = ref<string | undefined>(undefined)
 const keyFilter = ref<string | undefined>(undefined)
 const activityLimit = ref(25)
 const liveRefresh = ref(true)
 const liveClock = ref(Date.now())
+
 let activityTimer: ReturnType<typeof setInterval> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let summaryTimer: ReturnType<typeof setInterval> | undefined
 
-/**
- * The key list is both the selector's safe display metadata and the client-side
- * guard for `?key=` deep links. The backend still scopes `key_id` by account;
- * validation here keeps stale, malformed, or foreign IDs out of a request URL.
- */
 const keys = await useSpResource(
   'dashboard:usage-api-keys',
   () => api.account.apiKeys(),
@@ -85,24 +71,19 @@ const keys = await useSpResource(
 )
 
 watch([() => route.query.key, keys.data], ([requestedId, list]) => {
-  if (!list) {
-    return
-  }
+  if (!list) return
 
   const requested = typeof requestedId === 'string'
     ? list.find(key => key.id === requestedId)
     : undefined
 
-  if (requested) {
-    keyFilter.value = requested.id
-  }
+  if (requested) keyFilter.value = requested.id
 }, { immediate: true })
 
 const selectedKey = computed(() =>
   (keys.data.value ?? []).find(key => key.id === keyFilter.value) ?? null
 )
 
-/** A changed or missing key must never survive a refreshed owned-key list. */
 watch(keys.data, (list) => {
   if (keyFilter.value && !list?.some(key => key.id === keyFilter.value)) {
     keyFilter.value = undefined
@@ -142,36 +123,25 @@ const activityEmptyDescription = computed(() => selectedKey.value
   : 'Once a request runs against your key it appears here within seconds.'
 )
 
-/** ---------------------------------------------------------------- chart */
-
 const buckets = computed(() => summary.data.value?.buckets ?? [])
-
-/** Scale is set by the busiest bucket, compared exactly rather than as a float. */
 const peakUnits = computed(() => peakBucketUnits(buckets.value.map(bucket => bucket.billed_tokens)))
-
 const barHeight = (units: string) => barHeightPercent(units, peakUnits.value)
 
 const bucketLabel = (iso: string) => {
   const date = new Date(iso)
-
-  if (Number.isNaN(date.getTime())) {
-    return '—'
-  }
+  if (Number.isNaN(date.getTime())) return '—'
 
   return range.value.bucket === 'hour'
     ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date)
     : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date)
 }
 
-/** Sparse axis: first, middle and last bucket, so labels never overlap. */
 const axisIndexes = computed(() => axisLabelIndexes(buckets.value.length))
-
 const hasUsage = computed(() => buckets.value.some(bucket => !isUnitsDepleted(bucket.billed_tokens)))
-
-/** -------------------------------------------------------------- activity */
 
 const liveStates: RequestActivity['state'][] = ['reserved', 'connecting', 'streaming']
 const liveRequests = computed(() => (activity.data.value ?? []).filter(item => liveStates.includes(item.state)))
+
 const displayDuration = (item: RequestActivity) => {
   if (item.duration_ms !== null) return formatLatency(item.duration_ms)
   if (!liveStates.includes(item.state)) return '—'
@@ -179,13 +149,14 @@ const displayDuration = (item: RequestActivity) => {
   return `${(elapsedMs / 1000).toFixed(1)} s live`
 }
 
-const stateTone = (item: RequestActivity) => {
-  if (item.state === 'reconciling') return 'text-warning'
-  if (item.state === 'failed' || item.state === 'released') return 'text-error'
-  if (item.state === 'settled') return 'text-success'
-  return item.estimated ? 'text-warning' : 'text-primary'
-}
-const tokenValueTone = (label: string) => label === 'Input' || label === 'Saved' ? 'text-success' : label === 'Output' ? 'text-error' : label === 'Reused input' ? 'text-info' : 'text-primary'
+const tokenValueTone = (label: string) =>
+  label === 'Input' || label === 'Saved'
+    ? 'text-success'
+    : label === 'Output'
+      ? 'text-error'
+      : label === 'Reused input'
+        ? 'text-info'
+        : 'text-primary'
 
 const refreshAll = () => {
   summary.refresh()
@@ -198,13 +169,16 @@ onMounted(() => {
   activityTimer = setInterval(() => {
     if (liveRefresh.value) void activity.refresh()
   }, 3000)
+
   summaryTimer = setInterval(() => {
     if (liveRefresh.value) void summary.refresh()
   }, 12000)
+
   clockTimer = setInterval(() => {
     liveClock.value = Date.now()
   }, 1000)
 })
+
 onBeforeUnmount(() => {
   if (activityTimer) clearInterval(activityTimer)
   if (summaryTimer) clearInterval(summaryTimer)
@@ -223,23 +197,29 @@ onBeforeUnmount(() => {
         v-if="liveRequests.length"
         color="warning"
         variant="subtle"
+        size="sm"
       >
-        <UIcon name="i-lucide-loader-circle" class="mr-1 size-3.5 animate-spin" aria-hidden="true" />{{ liveRequests.length }} running
+        <UIcon name="i-lucide-loader-circle" class="mr-1 size-3 animate-spin" />
+        {{ liveRequests.length }} running
       </UBadge>
+
       <USwitch
         v-model="liveRefresh"
         label="Live"
       />
+
       <USelectMenu
         v-model="rangeValue"
         :items="ranges"
         value-key="value"
-        class="w-44"
+        class="w-36 sm:w-44"
       />
+
       <UButton
         color="neutral"
         variant="ghost"
         icon="i-lucide-refresh-cw"
+        size="sm"
         :loading="summary.loading.value || balance.loading.value || keys.loading.value || activity.loading.value"
         @click="refreshAll"
       >
@@ -262,9 +242,9 @@ onBeforeUnmount(() => {
       >
         <div
           v-if="summary.data.value"
-          class="space-y-6"
+          class="space-y-4"
         >
-          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <SpMetric
               label="Available Tokens"
               icon="i-lucide-wallet-cards"
@@ -273,7 +253,7 @@ onBeforeUnmount(() => {
               hint="Current spendable Token balance"
             />
             <SpMetric
-              label="Saved by smart reuse"
+              label="Saved by reuse"
               icon="i-lucide-sparkles"
               tone="success"
               :value="formatUnits(summary.data.value.saved_tokens)"
@@ -284,21 +264,21 @@ onBeforeUnmount(() => {
               icon="i-lucide-gauge"
               tone="info"
               :value="formatUnits(summary.data.value.billed_tokens)"
-              hint="Actual settled Token-quota charge in this period"
+              hint="Actual settled charge"
             />
             <SpMetric
               label="Average savings"
               icon="i-lucide-percent"
               tone="success"
               :value="savingsRateLabel"
-              hint="Repeated context is discounted by 75% versus new input"
+              hint="Smart-reuse discount"
             />
             <SpMetric
               label="Reused context"
               icon="i-lucide-refresh-cw"
               tone="primary"
               :value="formatUnits(summary.data.value.cached_input_tokens)"
-              hint="Repeated local prompt prefix recognized"
+              hint="Repeated prompt prefix"
             />
             <SpMetric
               label="Requests"
@@ -316,15 +296,21 @@ onBeforeUnmount(() => {
             :title="hasSmartSavings ? 'Smart reuse is saving your balance' : 'Smart reuse is active'"
             :description="hasSmartSavings
               ? `${formatUnits(summary.data.value.cached_input_tokens)} of repeated context was recognized in this period, saving ${formatUnits(summary.data.value.saved_tokens)} Tokens (${savingsRateLabel}).`
-              : 'When a recent request repeats a large prompt prefix, SP Cambo bills that reused context at 25% of the normal Token rate. No provider usage counter controls your balance.'"
+              : 'When a recent request repeats a large prompt prefix, SP Cambo bills that reused context at 25% of the normal Token rate.'"
           />
 
-          <div class="rounded-lg border border-default bg-elevated/30 p-5">
+          <div class="sp-r9-usage-chart rounded-xl p-4">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 class="font-medium text-highlighted">
-                Charged Tokens over time
-              </h2>
-              <p class="text-xs text-dimmed">
+              <div>
+                <h2 class="text-sm font-medium text-highlighted">
+                  Charged Tokens over time
+                </h2>
+                <p class="mt-1 text-[11px] text-muted">
+                  Settled customer charge only.
+                </p>
+              </div>
+
+              <p class="text-[10px] text-dimmed">
                 {{ formatDateTime(summary.data.value.range.from) }} →
                 {{ formatDateTime(summary.data.value.range.to) }}
               </p>
@@ -332,41 +318,40 @@ onBeforeUnmount(() => {
 
             <p
               v-if="buckets.length === 0 || !hasUsage"
-              class="mt-6 text-center text-sm text-muted"
+              class="py-10 text-center text-sm text-muted"
             >
               No charged activity in this range.
             </p>
 
             <template v-else>
-              <ul class="mt-5 flex h-40 items-end gap-px">
+              <ul class="mt-5 flex h-36 items-end gap-1">
                 <li
                   v-for="bucket in buckets"
                   :key="bucket.at"
-                  class="group relative flex h-full flex-1 items-end"
+                  class="group relative flex h-full min-w-0 flex-1 items-end"
                 >
                   <div
-                    class="w-full rounded-t bg-primary/70 transition-colors group-hover:bg-primary"
+                    class="sp-r9-usage-bar w-full rounded-t"
                     :style="{ height: `${barHeight(bucket.billed_tokens)}%` }"
                   />
                   <span class="sr-only">
-                    {{ bucketLabel(bucket.at) }}: {{ formatUnits(bucket.billed_tokens) }} charged Tokens across
-                    {{ formatCount(bucket.requests) }} requests
+                    {{ bucketLabel(bucket.at) }}: {{ formatUnits(bucket.billed_tokens) }}
                   </span>
+
                   <div
-                    class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 rounded-md border border-default bg-default px-2.5 py-1.5 text-xs whitespace-nowrap shadow-lg group-hover:block"
-                    role="presentation"
+                    class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 rounded-lg border border-white/5 bg-default/95 px-2.5 py-1.5 text-xs whitespace-nowrap shadow-xl group-hover:block"
                   >
-                    <p class="font-medium text-highlighted">
-                      {{ bucketLabel(bucket.at) }}
-                    </p>
+                    <p class="font-medium text-highlighted">{{ bucketLabel(bucket.at) }}</p>
                     <p class="sp-numeric text-muted">
-                      {{ formatUnits(bucket.billed_tokens) }} charged · {{ formatUnits(bucket.saved_tokens) }} saved · {{ formatCount(bucket.requests) }} req
+                      {{ formatUnits(bucket.billed_tokens) }} charged ·
+                      {{ formatUnits(bucket.saved_tokens) }} saved ·
+                      {{ formatCount(bucket.requests) }} req
                     </p>
                   </div>
                 </li>
               </ul>
 
-              <div class="mt-2 flex justify-between text-xs text-dimmed">
+              <div class="mt-2 flex justify-between text-[10px] text-dimmed">
                 <span
                   v-for="index in [...axisIndexes].sort((a, b) => a - b)"
                   :key="index"
@@ -380,64 +365,49 @@ onBeforeUnmount(() => {
           <div v-if="summary.data.value.by_model.length > 0">
             <SpSectionHeading
               title="By model"
-              description="Repeated context is recognized locally and discounted automatically. Savings shown here are based only on the amount the customer actually avoided paying."
+              description="Usage grouped by stable public model alias."
               :level="3"
             />
 
-            <ul class="mt-3 divide-y divide-default overflow-hidden rounded-lg border border-default">
+            <ul class="sp-r9-usage-list mt-3 overflow-hidden rounded-xl">
               <li
                 v-for="entry in summary.data.value.by_model"
                 :key="entry.public_model"
-                class="flex flex-wrap items-center justify-between gap-3 bg-elevated/20 px-4 py-3"
+                class="sp-r9-usage-row flex flex-wrap items-center justify-between gap-3 px-3.5 py-3"
               >
-                <div class="flex min-w-0 items-center gap-3">
-                  <div
-                    class="flex size-9 shrink-0 items-center justify-center rounded-lg border"
-                    :class="[modelUi(entry.public_model).surfaceClass, modelUi(entry.public_model).ringClass]"
-                  >
-                    <UIcon :name="modelUi(entry.public_model).icon" class="size-4" :class="modelUi(entry.public_model).iconClass" />
-                  </div>
+                <div class="flex min-w-0 items-center gap-2.5">
+                  <SpPublicAliasIcon
+                    :alias="entry.public_model"
+                    :label="modelUi(entry.public_model).label"
+                    size="md"
+                  />
+
                   <div class="min-w-0">
                     <p class="truncate text-sm font-semibold text-highlighted">
                       {{ modelUi(entry.public_model).label }}
                     </p>
-                    <p class="truncate font-mono text-[11px] text-dimmed">
+                    <p class="truncate font-mono text-[10px] text-dimmed">
                       {{ entry.public_model }} · {{ formatCount(entry.requests) }} requests
                     </p>
                   </div>
                 </div>
-                <dl class="flex items-center gap-6 text-xs">
+
+                <dl class="grid grid-cols-4 gap-4 text-[10px] sm:flex sm:items-center sm:gap-5">
                   <div class="text-right">
-                    <dt class="text-dimmed">
-                      Charged
-                    </dt>
-                    <dd class="sp-numeric font-semibold text-info">
-                      {{ formatUnits(entry.billed_tokens) }}
-                    </dd>
+                    <dt class="text-dimmed">Charged</dt>
+                    <dd class="sp-numeric font-semibold text-info">{{ formatUnits(entry.billed_tokens) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">
-                      Saved
-                    </dt>
-                    <dd class="sp-numeric font-semibold text-success">
-                      {{ formatUnits(entry.saved_tokens) }}
-                    </dd>
+                    <dt class="text-dimmed">Saved</dt>
+                    <dd class="sp-numeric font-semibold text-success">{{ formatUnits(entry.saved_tokens) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">
-                      Credits
-                    </dt>
-                    <dd class="sp-numeric font-semibold text-primary">
-                      {{ formatSpCredits(entry.sp_credits_used) }}
-                    </dd>
+                    <dt class="text-dimmed">Credits</dt>
+                    <dd class="sp-numeric font-semibold text-primary">{{ formatSpCredits(entry.sp_credits_used) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">
-                      Wallet
-                    </dt>
-                    <dd class="sp-numeric font-semibold text-warning">
-                      {{ formatMoney(entry.credit_charge) }}
-                    </dd>
+                    <dt class="text-dimmed">Wallet</dt>
+                    <dd class="sp-numeric font-semibold text-warning">{{ formatMoney(entry.credit_charge) }}</dd>
                   </div>
                 </dl>
               </li>
@@ -447,15 +417,15 @@ onBeforeUnmount(() => {
       </SpAsyncSection>
     </section>
 
-    <section class="space-y-4">
+    <section class="space-y-3">
       <SpSectionHeading
         title="Request log"
         :description="selectedKey
-          ? `Individual requests made with ${selectedKey.label}. Account-wide metrics, chart and model totals above do not change with this filter.`
-          : 'Per-request usage, smart-reuse savings and final charge. Settled requests are final; released requests are not charged. Prompt and output content are never shown here.'"
+          ? `Individual requests made with ${selectedKey.label}.`
+          : 'Per-request usage, smart-reuse savings and final charge. Prompt and output content are never shown here.'"
       >
         <template #actions>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex min-w-0 flex-wrap items-center gap-2">
             <USelectMenu
               v-model="keyFilter"
               :items="keyOptions"
@@ -464,22 +434,24 @@ onBeforeUnmount(() => {
               :disabled="keys.initialLoading.value || keys.unavailable.value || keys.failed.value"
               placeholder="All API keys"
               size="sm"
-              class="w-52"
+              class="w-full sm:w-48"
             />
+
             <USelectMenu
               v-model="modelFilter"
               :items="modelOptions"
               value-key="value"
               placeholder="All models"
               size="sm"
-              class="w-48"
+              class="w-full sm:w-44"
             />
+
             <USelectMenu
               v-model="activityLimit"
               :items="limitOptions"
               value-key="value"
               size="sm"
-              class="w-36"
+              class="w-full sm:w-32"
             />
           </div>
         </template>
@@ -516,7 +488,7 @@ onBeforeUnmount(() => {
         :offline="activity.error.value?.code === 'network_unreachable'"
         :error-message="activity.error.value?.message"
         unavailable-title="The request log is not published yet"
-        unavailable-description="SP Cambo reads per-request metadata from the control plane. Until that endpoint is live there is nothing to list."
+        unavailable-description="SP Cambo reads per-request metadata from the control plane."
         empty-title="No requests in this view"
         :empty-description="activityEmptyDescription"
         empty-icon="i-lucide-activity"
@@ -525,95 +497,93 @@ onBeforeUnmount(() => {
       >
         <ul
           v-if="activity.data.value"
-          class="divide-y divide-default overflow-hidden rounded-lg border border-default"
+          class="sp-r9-usage-list overflow-hidden rounded-xl"
         >
           <li
             v-for="item in activity.data.value"
             :key="item.id"
-            class="flex flex-col gap-3 bg-elevated/20 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"
+            class="sp-r9-usage-row flex flex-col gap-3 px-3.5 py-3 lg:flex-row lg:items-center lg:justify-between"
           >
-            <div class="min-w-0 space-y-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <div class="flex items-center gap-2">
-                  <UIcon :name="modelUi(item.public_model).icon" class="size-4" :class="modelUi(item.public_model).iconClass" />
+            <div class="flex min-w-0 items-start gap-2.5">
+              <SpPublicAliasIcon
+                :alias="item.public_model"
+                :label="modelUi(item.public_model).label"
+                size="sm"
+              />
+
+              <div class="min-w-0 space-y-1">
+                <div class="flex min-w-0 flex-wrap items-center gap-2">
                   <p class="truncate text-sm font-semibold text-highlighted">
                     {{ modelUi(item.public_model).label }}
                   </p>
-                  <span class="font-mono text-[10px] text-dimmed">{{ item.public_model }}</span>
+
+                  <span class="font-mono text-[9px] text-dimmed">
+                    {{ item.public_model }}
+                  </span>
+
+                  <SpStatusBadge :status="item.state" />
+
+                  <UBadge
+                    v-if="item.estimated"
+                    color="warning"
+                    variant="subtle"
+                    size="xs"
+                  >
+                    Estimated
+                  </UBadge>
+
+                  <UBadge
+                    v-if="item.error_code"
+                    :color="item.state === 'reconciling' ? 'warning' : 'error'"
+                    variant="subtle"
+                    size="xs"
+                    class="font-mono"
+                  >
+                    {{ item.error_code }}
+                  </UBadge>
                 </div>
-                <SpStatusBadge :status="item.state" />
-                <UBadge
-                  v-if="item.estimated"
-                  color="warning"
-                  variant="subtle"
-                  size="sm"
-                >
-                  Estimated
-                </UBadge>
-                <UBadge
-                  v-if="item.error_code"
-                  :color="item.state === 'reconciling' ? 'warning' : 'error'"
-                  variant="subtle"
-                  size="sm"
-                  class="font-mono"
-                >
-                  {{ item.error_code }}
-                </UBadge>
+
+                <p class="truncate text-[10px] text-muted">
+                  {{ item.endpoint }} · {{ item.api_key_label }}
+                  <span class="font-mono text-dimmed">{{ item.api_key_prefix }}…</span>
+                  · {{ formatDateTime(item.started_at) }}
+                </p>
               </div>
-              <p class="truncate text-xs text-muted">
-                {{ item.endpoint }} · {{ item.api_key_label }}
-                <span class="font-mono text-dimmed">{{ item.api_key_prefix }}…</span>
-                · {{ formatDateTime(item.started_at) }}
-              </p>
             </div>
 
-            <div class="grid shrink-0 gap-x-6 gap-y-3 sm:grid-cols-[minmax(12rem,1fr)_auto]">
-              <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
+            <div class="grid min-w-0 shrink-0 gap-x-5 gap-y-3 sm:grid-cols-[minmax(11rem,1fr)_auto]">
+              <dl class="grid grid-cols-3 gap-x-4 gap-y-2 text-[10px]">
                 <div
                   v-for="row in activityTokenRows(item)"
                   :key="row.label"
                 >
-                  <dt class="font-medium text-dimmed">
-                    {{ row.label }}
-                  </dt>
+                  <dt class="font-medium text-dimmed">{{ row.label }}</dt>
                   <dd class="sp-numeric font-semibold" :class="tokenValueTone(row.label)">
                     {{ formatCompactUnits(row.value) }}
                   </dd>
                 </div>
               </dl>
 
-              <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+              <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
                 <div>
-                  <dt class="text-dimmed">
-                    Charged Tokens
-                  </dt>
+                  <dt class="text-dimmed">Charged</dt>
                   <dd class="sp-numeric font-semibold text-info">
                     {{ item.billed_tokens !== null ? formatUnits(item.billed_tokens) : item.reserved_units !== null ? `${formatUnits(item.reserved_units)} reserved` : '—' }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">
-                    Credits
-                  </dt>
-                  <dd class="sp-numeric font-semibold text-primary">
-                    {{ formatSpCredits(item.sp_credits_used) }}
-                  </dd>
+                  <dt class="text-dimmed">Credits</dt>
+                  <dd class="sp-numeric font-semibold text-primary">{{ formatSpCredits(item.sp_credits_used) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">
-                    Wallet
-                  </dt>
+                  <dt class="text-dimmed">Wallet</dt>
                   <dd class="sp-numeric font-semibold text-warning">
                     {{ item.credit_charge ? formatMoney(item.credit_charge) : '—' }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">
-                    Duration
-                  </dt>
-                  <dd class="sp-numeric font-semibold text-warning">
-                    {{ displayDuration(item) }}
-                  </dd>
+                  <dt class="text-dimmed">Duration</dt>
+                  <dd class="sp-numeric font-semibold text-warning">{{ displayDuration(item) }}</dd>
                 </div>
               </dl>
             </div>
@@ -621,29 +591,26 @@ onBeforeUnmount(() => {
         </ul>
       </SpAsyncSection>
 
-      <p class="text-xs text-muted">
-        Input/output and reuse figures come only from SP Cambo’s local meter. “Saved” means Tokens actually avoided through the published smart-reuse discount; it is not a comparison with a provider invoice. Charged Tokens, Credits and wallet charges are the authoritative customer figures.
+      <p class="text-[10px] leading-5 text-muted">
+        Input/output and reuse figures come from SP Cambo’s local meter. Charged Tokens,
+        Credits and wallet charges are the authoritative customer figures.
       </p>
     </section>
 
     <div class="grid gap-3 sm:grid-cols-2">
-      <div class="rounded-lg border border-default p-4 text-xs text-muted">
-        <p class="font-medium text-default">
-          Why a figure can change
-        </p>
-        <p class="mt-1">
-          A request reserves budget before it runs, then settles on what it actually used. Anything marked
-          <strong>Estimated</strong> is still interim; the settled value replaces it, and only settled values
-          are charged.
+      <div class="sp-r9-usage-panel rounded-xl p-4 text-xs text-muted">
+        <p class="font-medium text-default">Why a figure can change</p>
+        <p class="mt-1 leading-5">
+          A request reserves budget before it runs, then settles on what it actually used.
+          Anything marked Estimated is still interim.
         </p>
       </div>
-      <div class="rounded-lg border border-default p-4 text-xs text-muted">
-        <p class="font-medium text-default">
-          What is recorded
-        </p>
-        <p class="mt-1">
-          Model alias, key, endpoint, timing, local usage estimates, smart-reuse savings, outcome and charge. Never your prompts, your
-          completions, your tool arguments or your file contents.
+
+      <div class="sp-r9-usage-panel rounded-xl p-4 text-xs text-muted">
+        <p class="font-medium text-default">What is recorded</p>
+        <p class="mt-1 leading-5">
+          Model alias, key, endpoint, timing, local usage, smart-reuse savings, outcome and charge.
+          Never your prompts, completions, tool arguments or file contents.
         </p>
         <NuxtLink
           to="/legal/privacy"
@@ -655,3 +622,17 @@ onBeforeUnmount(() => {
     </div>
   </SpDashboardPage>
 </template>
+
+<style scoped>
+.sp-r9-usage-bar {
+  min-height: 3px;
+  background: linear-gradient(to top, rgb(70 117 255 / .42), rgb(74 135 255 / .78));
+  box-shadow: 0 0 12px -5px rgb(72 128 255 / .55);
+  transition: background .18s ease, box-shadow .18s ease;
+}
+
+.group:hover .sp-r9-usage-bar {
+  background: linear-gradient(to top, rgb(70 117 255 / .55), rgb(83 151 255 / .96));
+  box-shadow: 0 0 18px -4px rgb(72 128 255 / .7);
+}
+</style>
