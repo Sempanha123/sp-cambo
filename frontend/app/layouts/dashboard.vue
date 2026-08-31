@@ -81,15 +81,19 @@ const accountItems = computed(() => [
 </script>
 
 <template>
-  <div class="sp-dashboard-shell">
-    <UDashboardGroup storage-key="sp-cambo-dashboard">
+  <div class="sp-r4-layout sp-r4-dashboard-layout sp-dashboard-shell">
+    <div class="sp-r4-dashboard-grid" aria-hidden="true" />
+    <div class="sp-r4-dashboard-orb sp-r4-dashboard-orb--a" aria-hidden="true" />
+    <div class="sp-r4-dashboard-orb sp-r4-dashboard-orb--b" aria-hidden="true" />
+
+    <UDashboardGroup storage-key="sp-cambo-dashboard" class="relative z-[1]">
       <UDashboardSidebar
         collapsible
         resizable
         :min-size="14"
         :default-size="17"
         :max-size="24"
-        class="sp-dashboard-sidebar"
+        class="sp-dashboard-sidebar sp-r4-dashboard-sidebar"
       >
         <template #header="{ collapsed }">
           <NuxtLink

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '~/assets/css/sp-global-r4.css'
 import { spCamboLocale } from '~/utils/uiLocale'
 
 const auth = useAuthStore()
@@ -52,15 +53,10 @@ watch(() => auth.sessionExpiredAt, (expiredAt) => {
     return
   }
 
-  // applySession() clears the signal before publishing a fresh login. Ignore a
-  // watcher callback that was queued for an older value.
   if (auth.sessionExpiredAt !== expiredAt) {
     return
   }
 
-  // An expired pre-existing credential is normal while completing a full-page
-  // OAuth round trip. The callback page owns success/failure presentation and will
-  // install the newly-issued session, so do not race it or show a false warning.
   if (route.path === '/auth/google/callback') {
     return
   }
@@ -82,7 +78,14 @@ watch(() => auth.sessionExpiredAt, (expiredAt) => {
 })
 
 if (import.meta.server) {
-  useHead({ link: [{ rel: 'canonical', href: new URL(route.path, config.public.siteUrl).toString() }] })
+  useHead({
+    link: [
+      {
+        rel: 'canonical',
+        href: new URL(route.path, config.public.siteUrl).toString()
+      }
+    ]
+  })
 }
 
 await auth.initialize()
@@ -92,8 +95,13 @@ await auth.initialize()
   <UApp :locale="spCamboLocale">
     <NuxtLoadingIndicator color="var(--ui-primary)" />
 
-    <NuxtLayout>
-      <NuxtPage :keepalive="{ max: 8 }" />
-    </NuxtLayout>
+    <!-- One animated atmosphere for public, auth, dashboard, admin and reseller pages. -->
+    <SpGlobalMotionBackground />
+
+    <div class="sp-global-stage relative z-[1] min-h-dvh">
+      <NuxtLayout>
+        <NuxtPage :keepalive="{ max: 8 }" />
+      </NuxtLayout>
+    </div>
   </UApp>
 </template>

@@ -5,10 +5,14 @@ const year = new Date().getFullYear()
 </script>
 
 <template>
-  <div class="sp-shell-aurora flex min-h-screen flex-col">
+  <div class="sp-r4-layout sp-r4-public-layout sp-shell-aurora flex min-h-screen flex-col">
+    <div class="sp-r4-layout-mesh" aria-hidden="true" />
+    <div class="sp-r4-corner-orb sp-r4-corner-orb--a" aria-hidden="true" />
+    <div class="sp-r4-corner-orb sp-r4-corner-orb--b" aria-hidden="true" />
+
     <UHeader
       to="/"
-      :ui="{ root: 'sp-site-header' }"
+      :ui="{ root: 'sp-site-header sp-r4-header' }"
     >
       <template #title>
         <span class="inline-flex items-center gap-2.5">
@@ -65,7 +69,7 @@ const year = new Date().getFullYear()
       </template>
 
       <template #body>
-        <div class="space-y-6">
+        <div class="sp-r4-mobile-menu space-y-6">
           <UNavigationMenu
             :items="publicLinks"
             orientation="vertical"
@@ -112,11 +116,11 @@ const year = new Date().getFullYear()
       </template>
     </UHeader>
 
-    <UMain class="flex-1">
+    <UMain class="sp-r4-main relative z-[1] flex-1">
       <slot />
     </UMain>
 
-    <UFooter :ui="{ root: 'border-t border-default/80 mt-16 bg-default/45' }">
+    <UFooter :ui="{ root: 'sp-r4-footer border-t border-default/80 mt-16 bg-default/45' }">
       <template #top>
         <UContainer class="py-10 lg:py-14">
           <div class="grid gap-10 lg:grid-cols-5">

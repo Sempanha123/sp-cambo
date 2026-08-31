@@ -1,55 +1,92 @@
-# SP Cambo Playground Mobile + Website Logo R1
+# SP Cambo Global UI R4
 
-This package fixes the phone-size Playground scrolling problem and updates the
-website brand mark/favicon to the supplied SP Cambo gold logo.
+R4 is the first package that applies the new SP Cambo visual system to the
+shared layouts, not only the homepage.
 
-## What changes
+## What is global now
 
-### Playground mobile
-- Removes the 32rem minimum height that can make the internal chat taller than a phone viewport.
-- Makes the chat section a real `min-height: 0` flex column.
-- Makes the model header non-shrinking.
-- Makes the chat area a dedicated touch-scroll surface.
-- Removes `position: sticky` from the composer so it no longer paints over the latest response.
-- Keeps the composer as a normal `shrink-0` flex item.
-- Limits textarea auto-growth on phones so a long draft cannot consume the whole chat.
-- Scrolls to the latest message when the composer gains focus.
-- Keeps safe-area padding for iPhone-style bottom insets.
+### Every route
+Mounted once from `app.vue`:
+- moving aurora
+- neural/network lines
+- particles
+- technical grid
+- moving light beams
+- reduced-motion support
 
-### Logo
-- Uses the exact supplied SP Cambo gold logo, optimized to 512x512.
-- Replaces the old terminal-glyph `SpBrandMark` everywhere that component is used.
-- Updates the website favicon/apple-touch icon.
-- Adds `viewport-fit=cover` for better mobile safe-area handling.
+### Public pages
+Through `default.vue` and `public.vue`:
+- glass header/footer
+- moving header accent
+- global grid/orbs
+- glass elevated surfaces
+- improved cards/hover depth
+- consistent technical lighting
+
+This covers pages such as Home, Pricing, Models, Docs, Status, Key Checker and
+other routes using those shared layouts.
+
+### Auth
+Through `auth.vue`:
+- global animated background
+- animated auth showcase
+- glass sign-in/register/recovery area
+- moving scan texture
+- floating ambient orbs
+
+### Dashboard / Admin / Reseller
+Through `dashboard.vue`:
+- calmer global motion
+- glass sidebar
+- highlighted active navigation
+- global technical grid
+- subtle cards/tables/focus effects
+- Playground keeps a calmer readable surface
+
+Admin and reseller are included because their navigation is already hosted by
+the shared dashboard layout.
+
+## Files
+
+- `frontend/app/app.vue`
+- `frontend/app/components/SpGlobalMotionBackground.vue`
+- `frontend/app/assets/css/sp-global-r4.css`
+- `frontend/app/layouts/default.vue`
+- `frontend/app/layouts/public.vue`
+- `frontend/app/layouts/auth.vue`
+- `frontend/app/layouts/dashboard.vue`
+- `frontend/app/pages/index.vue`
 
 ## Apply
 
-From the SP Cambo repository root:
+Extract the ZIP over the SP Cambo project root and allow overwrite.
+
+Then:
 
 ```powershell
-# First copy the frontend/ folder from this ZIP into your project root.
-# Allow it to overwrite the matching app.vue and SpBrandMark.vue files.
-
-git apply --check .\playground-mobile-fix.patch
-git apply .\playground-mobile-fix.patch
-
 cd frontend
 npm run typecheck
 npm run build
 ```
 
-If `git apply --check` reports that the Playground file has changed locally since
-the ZIP was made, do not force it. Keep your local file and manually apply only
-the five small class/template changes shown in the patch.
+Recommended test routes:
 
-## Production
-
-After pushing/pulling the frontend changes:
-
-```bash
-cd /var/www/sp-cambo/frontend
-npm ci
-npm run typecheck
-npm run build
-sudo systemctl restart sp-cambo-frontend
+```text
+/
+/pricing
+/models
+/docs
+/status
+/public/key-checker
+/login
+/register
+/dashboard
+/dashboard/buy
+/dashboard/api-keys
+/dashboard/playground
+/admin
+/reseller
 ```
+
+R4 intentionally uses stronger motion on public/auth pages and a calmer visual
+layer on dashboard/admin/reseller so tables, forms and chat remain readable.
