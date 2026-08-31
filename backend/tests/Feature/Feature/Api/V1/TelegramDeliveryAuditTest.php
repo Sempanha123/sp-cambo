@@ -145,7 +145,7 @@ class TelegramDeliveryAuditTest extends TestCase
             app(TelegramCommerceService::class)->reconcile($purchase);
             $this->fail('Expected Telegram HTTP failure.');
         } catch (RuntimeException $exception) {
-            $this->assertSame('Telegram delivery failed.', $exception->getMessage());
+            $this->assertSame('Telegram sendMessage was rejected (HTTP 502)', $exception->getMessage());
         }
 
         $failedPurchase = $purchase->fresh();

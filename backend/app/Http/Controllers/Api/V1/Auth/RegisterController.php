@@ -41,10 +41,12 @@ class RegisterController extends Controller
             $user = User::query()->create([
                 'name' => $name,
                 'email' => $email,
-                'email_verified_at' => now(),
                 'password' => Hash::make($request->string('password')->value()),
                 'tenant_id' => $tenant->id,
             ]);
+            // email_verified_at is intentionally guarded on the User model.
+            // Set it explicitly only after the one-time code was verified/consumed.
+            $user->forceFill(['email_verified_at' => now()])->saveQuietly();
             // Registration must remain available on a fresh migrated database.
             // Seeders still establish the complete authorization baseline, but a
             // missing CUSTOMER row should never turn a public sign-up into a 500.

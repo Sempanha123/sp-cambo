@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Order;
+use App\Models\StoreWalletEntry;
 use App\Models\TelegramAnnouncement;
 use App\Models\TelegramPurchase;
 use App\Models\TelegramPurchaseAlert;
@@ -130,11 +131,19 @@ class TelegramPurchaseAlertService
             return false;
         }
 
+        $paidByWallet = StoreWalletEntry::query()
+            ->where('type', 'PURCHASE')
+            ->where('source_type', 'ORDER')
+            ->where('source_id', (string) $order->id)
+            ->exists();
+
         if ($order->relationLoaded('paymentAttempts')) {
-            return $order->paymentAttempts->contains(fn ($attempt): bool => $attempt->status === 'PAID' && $attempt->paid_at !== null);
+            return $paidByWallet
+                || $order->paymentAttempts->contains(fn ($attempt): bool => $attempt->status === 'PAID' && $attempt->paid_at !== null);
         }
 
-        return $order->paymentAttempts()->where('status', 'PAID')->whereNotNull('paid_at')->exists();
+        return $paidByWallet
+            || $order->paymentAttempts()->where('status', 'PAID')->whereNotNull('paid_at')->exists();
     }
 
     private function bestEffort(callable $callback): void

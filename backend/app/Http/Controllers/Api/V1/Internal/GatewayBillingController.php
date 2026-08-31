@@ -42,7 +42,9 @@ class GatewayBillingController extends Controller
 
         if ($isPlaygroundKey) {
             $lotsQuery->where('source_type', 'PLAYGROUND_DAILY')
-                ->where('access_scope', 'PLAYGROUND');
+                ->where(function ($scope): void {
+                    $scope->whereNull('access_scope')->orWhere('access_scope', 'PLAYGROUND');
+                });
         } else {
             $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
                 ->where(function ($access) use ($key): void {

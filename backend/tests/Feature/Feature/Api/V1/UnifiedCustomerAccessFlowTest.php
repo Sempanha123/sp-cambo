@@ -87,6 +87,11 @@ class UnifiedCustomerAccessFlowTest extends TestCase
 
         $this->actingAs($user)->getJson("/api/v1/me/api-keys/{$keyId}")
             ->assertOk()
+            ->assertJsonPath('data.balance_source', 'loading')
+            ->assertJsonPath('data.funding_status', 'deferred');
+
+        $this->actingAs($user)->getJson("/api/v1/me/api-keys/{$keyId}/funding")
+            ->assertOk()
             ->assertJsonPath('data.balance_source', 'dedicated_and_legacy_entitlements')
             ->assertJsonPath('data.funding.0.dedicated_to_this_key', true)
             ->assertJsonPath('data.funding.0.remaining_units', '20000000');

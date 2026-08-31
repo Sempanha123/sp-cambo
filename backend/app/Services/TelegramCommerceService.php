@@ -20,6 +20,8 @@ use Throwable;
 
 class TelegramCommerceService
 {
+    use TelegramCommerceWalletFeatures;
+
     private const STORE_PAGE_SIZE = 6;
 
     public function __construct(
@@ -29,6 +31,9 @@ class TelegramCommerceService
         private readonly ApiKeySecretService $secrets,
         private readonly TelegramBotClient $bot,
         private readonly TelegramPurchaseAlertService $purchaseAlerts,
+        private readonly StoreWalletService $storeWallet,
+        private readonly StoreWalletTopupService $walletTopups,
+        private readonly \App\Services\Payments\KhqrQrImageClient $qrImages,
     ) {}
 
     /**
@@ -104,11 +109,14 @@ class TelegramCommerceService
     public function sendHome(TelegramAccount $account): void
     {
         $balance = $this->balanceSnapshot($account);
+        $wallet = $this->storeWallet->summary($account->user);
+        $walletText = $this->money($wallet['balance_minor'], $wallet['currency'], $wallet['exponent']);
         $km = $this->isKhmer($account);
         $name = trim((string) ($account->user?->name ?: $account->username ?: 'SP Cambo customer'));
+
         $text = $km
-            ? "🤖 SP CAMBO AI STORE\n\n👋 សួស្តី {$name}\nជ្រើសរើសមុខងារខាងក្រោម 👇\n\n💰 Token: {$balance['tokens']}\n💳 Credit: {$balance['credit']}"
-            : "🤖 SP CAMBO AI STORE\n\n👋 Welcome {$name}\nChoose an option below 👇\n\n💰 Tokens: {$balance['tokens']}\n💳 Credit: {$balance['credit']}";
+            ? "🤖✨ SP CAMBO AI STORE\n\n👋 សួស្តី {$name}\nជ្រើសរើសមុខងារខាងក្រោម 👇\n\n👛 Store Wallet: {$walletText}\n🪙 API Tokens: {$balance['tokens']}\n💳 API Credit: {$balance['credit']}"
+            : "🤖✨ SP CAMBO AI STORE\n\n👋 Welcome {$name}\nChoose an option below 👇\n\n👛 Store Wallet: {$walletText}\n🪙 API Tokens: {$balance['tokens']}\n💳 API Credit: {$balance['credit']}";
 
         $this->bot->sendMessage($account->chat_id, $text, $this->mainKeyboard($account));
     }
@@ -220,24 +228,30 @@ class TelegramCommerceService
 
     public function sendBalance(TelegramAccount $account): void
     {
-        $balance = $this->balanceSnapshot($account);
+        $api = $this->balanceSnapshot($account);
+        $wallet = $this->storeWallet->summary($account->user);
+        $walletText = $this->money($wallet['balance_minor'], $wallet['currency'], $wallet['exponent']);
         $km = $this->isKhmer($account);
         $checker = rtrim((string) config('app.frontend_url'), '/').'/public/key-checker';
+
         $this->bot->sendMessage($account->chat_id, implode("\n", [
-            $km ? '💰 សមតុល្យរបស់ខ្ញុំ' : '💰 MY BALANCE',
+            $km ? '💰✨ សមតុល្យរបស់ខ្ញុំ' : '💰✨ MY BALANCES',
             '',
-            ($km ? 'Token ដែលអាចប្រើបាន: ' : 'Spendable tokens: ').$balance['tokens'],
-            ($km ? 'Credit ដែលអាចប្រើបាន: ' : 'Spendable credit: ').$balance['credit'],
-            ($km ? 'កញ្ចប់សកម្ម: ' : 'Active lots: ').$balance['active_lots'],
+            '👛 Store Wallet: '.$walletText,
+            '🪙 API Tokens: '.$api['tokens'],
+            '💳 API Credit: '.$api['credit'],
+            '📦 '.($km ? 'Active lots' : 'Active lots').': '.$api['active_lots'],
             '',
-            $km ? 'សម្រាប់ usage ជាក់លាក់តាម API key សូមប្រើ Key Checker។' : 'For exact per-key usage, open the public Key Checker.',
+            $km
+                ? 'ℹ️ Store Wallet សម្រាប់ទិញកញ្ចប់។ API Tokens/Credit សម្រាប់ការប្រើ AI។'
+                : 'ℹ️ Store Wallet pays for products. API Tokens/Credit pay for AI usage.',
         ]), [
             'inline_keyboard' => [
-                [['text' => $km ? '📊 ពិនិត្យ Usage' : '📊 Check Usage', 'url' => $checker]],
-                [
-                    ['text' => $km ? '🛍 ទិញបន្ថែម' : '🛍 Buy More', 'callback_data' => 'store:1'],
-                    ['text' => $km ? '🏠 ទំព័រដើម' : '🏠 Main Menu', 'callback_data' => 'home'],
-                ],
+                [['text' => $km ? '👛✨ បើក Store Wallet' : '👛✨ Open Store Wallet', 'callback_data' => 'wallet']],
+                [['text' => $km ? '➕💵 បញ្ចូលប្រាក់' : '➕💵 Add Money', 'callback_data' => 'wallet:topup']],
+                [['text' => '📊 Key Checker', 'url' => $checker]],
+                [['text' => $km ? '🛍 ទិញកញ្ចប់' : '🛍 Shop', 'callback_data' => 'store:1']],
+                [['text' => $km ? '🏠 ទំព័រដើម' : '🏠 Home', 'callback_data' => 'home']],
             ],
         ]);
     }
@@ -905,28 +919,33 @@ class TelegramCommerceService
     private function mainKeyboard(TelegramAccount $account): array
     {
         $km = $this->isKhmer($account);
+
         return [
             'keyboard' => [
                 [
-                    ['text' => $km ? '🛍 ទិញកញ្ចប់' : '🛍 Buy Package'],
+                    ['text' => $km ? '🛍✨ ទិញកញ្ចប់' : '🛍✨ Buy Package'],
+                    ['text' => '👛✨ Store Wallet'],
+                ],
+                [
                     ['text' => $km ? '💰 សមតុល្យរបស់ខ្ញុំ' : '💰 My Balance'],
-                ],
-                [
                     ['text' => $km ? '🔑 API Keys របស់ខ្ញុំ' : '🔑 My API Keys'],
+                ],
+                [
                     ['text' => $km ? '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ' : '🧾 My Orders'],
-                ],
-                [
                     ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models'],
-                    ['text' => $km ? '🔔 ព័ត៌មានថ្មី' : '🔔 Updates'],
                 ],
                 [
+                    ['text' => $km ? '🔔 ព័ត៌មានថ្មី' : '🔔 Updates'],
                     ['text' => $km ? '🌐 ភាសា' : '🌐 Language'],
+                ],
+                [
                     ['text' => $km ? '📞 ជំនួយ' : '📞 Support'],
+                    ['text' => $km ? '➕💵 បញ្ចូលប្រាក់' : '➕💵 Add Money'],
                 ],
             ],
             'resize_keyboard' => true,
             'is_persistent' => true,
-            'input_field_placeholder' => $km ? 'ជ្រើសមុខងារខាងក្រោម…' : 'Choose an action below…',
+            'input_field_placeholder' => $km ? '✨ ជ្រើសមុខងារ…' : '✨ Choose an action…',
         ];
     }
 

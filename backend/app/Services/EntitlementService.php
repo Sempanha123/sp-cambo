@@ -34,6 +34,19 @@ class EntitlementService
             $ledgerReason = $snapshot['reason'] ?? null;
             unset($snapshot['reason']);
 
+            /*
+             * PLAYGROUND_DAILY is a server-owned funding source. It must never
+             * inherit the database default ACCOUNT scope, otherwise the Playground
+             * key can spend the lot during preflight while customer-facing balance
+             * inspection hides the same lot. Force one canonical representation so
+             * preflight, /keys/check and gateway /inspect all report the same balance.
+             */
+            if (($snapshot['source_type'] ?? null) === 'PLAYGROUND_DAILY') {
+                $snapshot['access_scope'] = 'PLAYGROUND';
+                $snapshot['bound_api_key_id'] = null;
+                $snapshot['fulfillment_claim_id'] = null;
+            }
+
             $activatedAt = $snapshot['activated_at'] ?? now();
             $billingSnapshot = $snapshot['billing_snapshot'] ?? [];
             $snapshot['billing_snapshot_hash'] = hash(
@@ -85,9 +98,25 @@ class EntitlementService
             if ($locked->status !== 'ACTIVE' || ! $locked->expires_at?->isPast()) {
                 return $locked;
             }
+
             $forfeited = $locked->remaining_units - $locked->reserved_units;
-            $locked->update(['remaining_units' => $locked->reserved_units, 'status' => 'EXPIRED']);
-            CreditLedger::query()->firstOrCreate(['idempotency_key' => "expiration:{$locked->id}"], ['user_id' => $locked->user_id, 'entitlement_lot_id' => $locked->id, 'type' => 'EXPIRATION', 'amount' => -$forfeited, 'source_type' => 'EXPIRATION', 'source_id' => $locked->id]);
+            $locked->update([
+                'remaining_units' => $locked->reserved_units,
+                'status' => 'EXPIRED',
+            ]);
+
+            CreditLedger::query()->firstOrCreate(
+                ['idempotency_key' => "expiration:{$locked->id}"],
+                [
+                    'user_id' => $locked->user_id,
+                    'entitlement_lot_id' => $locked->id,
+                    'type' => 'EXPIRATION',
+                    'amount' => -$forfeited,
+                    'source_type' => 'EXPIRATION',
+                    'source_id' => $locked->id,
+                ],
+            );
+
             CustomerStateChanged::dispatch((int) $locked->user_id, 'entitlement.expired', [
                 'entitlement_id' => $locked->id,
                 'status' => 'EXPIRED',

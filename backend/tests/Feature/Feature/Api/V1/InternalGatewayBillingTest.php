@@ -504,15 +504,15 @@ class InternalGatewayBillingTest extends TestCase
             ],
         ])->assertOk()
             ->assertJsonPath('data.status', 'SETTLED')
-            ->assertJsonPath('data.settled_units', '30')
+            ->assertJsonPath('data.settled_units', '60')
             ->assertJsonPath('data.recovered_locally', true);
         $this->assertDatabaseHas('usage_records', [
             'reservation_id' => $settled,
             'input_tokens' => 10,
             'output_tokens' => 20,
-            'cache_read_tokens' => 0,
+            'cache_read_tokens' => 999,
             'reasoning_tokens' => 0,
-            'metered_units' => 30,
+            'metered_units' => 60,
         ]);
         $this->assertSame(0, (int) EntitlementLot::query()->where('user_id', $user->id)->sum('reserved_units'));
     }
@@ -555,6 +555,18 @@ class InternalGatewayBillingTest extends TestCase
     private function customer(array $keyAttributes = []): array
     {
         $user = User::factory()->create();
+
+        $existingAlias = ModelAlias::query()->where('public_alias', 'claude-coding')->first();
+        if ($existingAlias) {
+            $created = app(ApiKeySecretService::class)->create(
+                $user,
+                ['label' => 'Gateway', ...$keyAttributes],
+                [$existingAlias->id],
+            );
+
+            return [$user, $existingAlias, $created];
+        }
+
         $provider = Provider::query()->create(['name' => 'Provider', 'slug' => 'provider-'.uniqid(), 'enabled' => true]);
         $revision = ProviderConnectionRevision::query()->create([
             'provider_id' => $provider->id,

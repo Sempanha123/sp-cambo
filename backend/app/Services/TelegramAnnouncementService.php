@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ModelAlias;
 use App\Models\Order;
 use App\Models\Package;
+use App\Models\StoreWalletEntry;
 use App\Models\Promotion;
 use App\Models\TelegramAccount;
 use App\Models\TelegramAnnouncement;
@@ -150,7 +151,15 @@ class TelegramAnnouncementService
         if ($order->status !== 'FULFILLED' || $order->fulfilled_at === null || (int) $order->total_minor <= 0) {
             return null;
         }
-        if (! $order->paymentAttempts->contains(fn ($attempt): bool => $attempt->status === 'PAID' && $attempt->paid_at !== null)) {
+        $paidByBakong = $order->paymentAttempts->contains(
+            fn ($attempt): bool => $attempt->status === 'PAID' && $attempt->paid_at !== null
+        );
+        $paidByWallet = StoreWalletEntry::query()
+            ->where('type', 'PURCHASE')
+            ->where('source_type', 'ORDER')
+            ->where('source_id', (string) $order->id)
+            ->exists();
+        if (! $paidByBakong && ! $paidByWallet) {
             return null;
         }
 
@@ -163,6 +172,11 @@ class TelegramAnnouncementService
         $exponent = max(0, (int) $order->currency_exponent);
         $scale = 10 ** $exponent;
         $customer = $this->maskedCustomerName((string) ($order->user?->name ?: 'Customer'));
+        $advertisedUnits = $snapshot['advertised_units'] ?? null;
+        $quotaUnits = is_numeric($advertisedUnits)
+            ? number_format((int) $advertisedUnits)
+            : trim((string) $advertisedUnits);
+        $quota = trim($quotaUnits.' '.trim((string) ($snapshot['unit_label'] ?? '')));
 
         return $this->enqueue([
             'event_key' => 'r13:public:order:'.$order->id.':subscribers',
@@ -176,7 +190,7 @@ class TelegramAnnouncementService
                 'package_slug' => (string) ($item->package_slug ?: ''),
                 'price' => number_format((int) $order->total_minor / $scale, $exponent, '.', ''),
                 'currency' => strtoupper((string) $order->currency),
-                'quota' => trim(((string) ($snapshot['advertised_units'] ?? '')).' '.((string) ($snapshot['unit_label'] ?? ''))),
+                'quota' => $quota !== '' ? $quota : '—',
                 'validity' => $this->durationLabel((int) ($snapshot['duration_seconds'] ?? 0)),
             ],
             'excluded_telegram_account_id' => $excludedBuyer?->id,

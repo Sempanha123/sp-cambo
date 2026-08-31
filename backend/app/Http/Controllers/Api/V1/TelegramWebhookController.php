@@ -94,10 +94,14 @@ class TelegramWebhookController extends Controller
                 } else {
                     $telegram->sendHome($account);
                 }
-            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង', '🛍 buy package', '🛍 ទិញកញ្ចប់'])) {
+            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង', '🛍 buy package', '🛍 ទិញកញ្ចប់', '🛍✨ buy package', '🛍✨ ទិញកញ្ចប់'])) {
                 $telegram->sendStorefront($account);
             } elseif ($command === '/buy' && $argument !== '') {
-                $telegram->beginPurchase($account, $argument, $updateId);
+                $package = \App\Models\Package::query()->published()->where('slug', trim($argument))->first();
+                if (! $package || ! $package->auto_creates_api_key) {
+                    throw new RuntimeException('That package is not available.');
+                }
+                $telegram->sendCheckout($account, (int) $package->id);
             } elseif ($command === '/check') {
                 $purchase = $telegram->checkLatest($account);
                 if (! $purchase) $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
@@ -112,6 +116,10 @@ class TelegramWebhookController extends Controller
                 $telegram->sendModels($account);
             } elseif ($command === '/language' || $this->matches($normalized, ['🌐 language', '🌐 ភាសា'])) {
                 $telegram->sendLanguage($account);
+            } elseif ($command === '/wallet' || $this->matches($normalized, ['👛 wallet', '👛 store wallet', '👛✨ store wallet'])) {
+                $telegram->sendStoreWallet($account);
+            } elseif ($command === '/topup' || $this->matches($normalized, ['➕💵 add money', '➕ add money', '➕💵 បញ្ចូលប្រាក់'])) {
+                $telegram->sendWalletTopupOptions($account);
             } elseif ($command === '/support' || $this->matches($normalized, ['📞 support', '📞 ជំនួយ'])) {
                 $telegram->sendSupport($account);
             } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
@@ -167,8 +175,40 @@ class TelegramWebhookController extends Controller
         if (str_starts_with($data, 'buy:')) {
             $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
             if ($packageId === false) throw new RuntimeException('That purchase button is invalid.');
-            $telegram->beginPurchaseByPackageId($account, (int) $packageId, $updateId);
-            $ack($bot, $callbackId, 'Order created');
+            $telegram->sendCheckout($account, (int) $packageId);
+            $ack($bot, $callbackId, 'Choose payment');
+            return;
+        }
+        if (str_starts_with($data, 'payw:')) {
+            $telegram->beginCheckout($account, substr($data, 5), 'WALLET', $updateId);
+            $ack($bot, $callbackId, 'Wallet payment');
+            return;
+        }
+        if (str_starts_with($data, 'payq:')) {
+            $telegram->beginCheckout($account, substr($data, 5), 'KHQR', $updateId);
+            $ack($bot, $callbackId, 'KHQR ready');
+            return;
+        }
+        if ($data === 'wallet') {
+            $telegram->sendStoreWallet($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if ($data === 'wallet:topup') {
+            $telegram->sendWalletTopupOptions($account);
+            $ack($bot, $callbackId);
+            return;
+        }
+        if (str_starts_with($data, 'topup:')) {
+            $amount = filter_var(substr($data, 6), FILTER_VALIDATE_INT);
+            if ($amount === false) throw new RuntimeException('That top-up amount is invalid.');
+            $telegram->beginWalletTopup($account, (int) $amount);
+            $ack($bot, $callbackId, 'KHQR ready');
+            return;
+        }
+        if (str_starts_with($data, 'checktopup:')) {
+            $topup = $telegram->checkWalletTopup($account, substr($data, 11));
+            $ack($bot, $callbackId, $topup?->status === 'PAID' ? 'Wallet credited' : 'Checked');
             return;
         }
         if (str_starts_with($data, 'check:')) {

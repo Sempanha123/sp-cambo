@@ -118,10 +118,11 @@ class TelegramPurchaseAlertTest extends TestCase
         $this->assertNotNull($message);
         $this->assertStringContainsString('SP CAMBO AI STORE', $message['text']);
         $this->assertSame([
-            ['🛍 Buy Package', '💰 My Balance'],
-            ['🔑 My API Keys', '🧾 My Orders'],
-            ['🧠 Models', '🔔 Updates'],
-            ['🌐 Language', '📞 Support'],
+            ['🛍✨ Buy Package', '👛✨ Store Wallet'],
+            ['💰 My Balance', '🔑 My API Keys'],
+            ['🧾 My Orders', '🧠 Models'],
+            ['🔔 Updates', '🌐 Language'],
+            ['📞 Support', '➕💵 Add Money'],
         ], collect(data_get($message, 'reply_markup.keyboard', []))
             ->map(fn (array $row): array => collect($row)->pluck('text')->values()->all())
             ->values()

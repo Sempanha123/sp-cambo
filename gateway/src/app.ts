@@ -178,7 +178,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       text = await abortable(upstream.text(), signal);
     } catch {
       const reason = abortReason(signal) ?? "upstream_disconnect";
-      await reconcileBestEffort(reservationId, reason);
+      await releaseBestEffort(reservationId);
       throw operationFailure(reason);
     }
     let parsed: unknown;

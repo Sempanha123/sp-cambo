@@ -45,7 +45,7 @@ class PlaygroundChatHistoryTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $id)
-            ->assertHeader('Cache-Control', 'no-store, private, max-age=0');
+            ->assertHeader('Cache-Control', 'max-age=0, no-store, private');
 
         $this->actingAs($other)->getJson('/api/v1/me/playground/chats')
             ->assertOk()

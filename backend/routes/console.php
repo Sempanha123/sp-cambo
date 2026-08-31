@@ -11,6 +11,7 @@ use App\Services\EntitlementService;
 use App\Services\PaymentService;
 use App\Services\PackageStockService;
 use App\Services\ReservationService;
+use App\Services\StoreWalletTopupService;
 use App\Services\ReferralService;
 use App\Services\TelegramCommerceService;
 use App\Services\TelegramAnnouncementService;
@@ -192,6 +193,13 @@ Artisan::command('catalog:release-expired-stock-reservations {--batch=100}', fun
 
     return 0;
 })->purpose('Release limited package stock held by abandoned unpaid orders');
+
+Artisan::command('wallet:reconcile-topups {--batch=1}', function (): int {
+    $result = app(StoreWalletTopupService::class)->reconcilePending((int) $this->option('batch'));
+    $this->info("Checked {$result['checked']} wallet top-up(s); {$result['settled']} settled; {$result['waiting']} waiting; {$result['failed']} failed.");
+
+    return $result['failed'] === 0 ? 0 : 1;
+})->purpose('Verify pending Bakong Store Wallet top-ups and credit wallet balances idempotently');
 
 Artisan::command('telegram:reconcile-purchases {--batch=4}', function (): int {
     $result = app(TelegramCommerceService::class)->reconcilePending((int) $this->option('batch'));
@@ -469,6 +477,10 @@ Schedule::command('catalog:release-expired-stock-reservations --batch=100')
     ->withoutOverlapping();
 
 Schedule::command('telegram:reconcile-purchases --batch=4')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+Schedule::command('wallet:reconcile-topups --batch=1')
     ->everyMinute()
     ->withoutOverlapping();
 

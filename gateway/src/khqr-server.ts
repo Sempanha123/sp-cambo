@@ -1,8 +1,8 @@
-// Load gateway/.env automatically for local development.
 try { process.loadEnvFile?.(".env"); } catch { /* deployment may inject env without a file */ }
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import QRCode from "qrcode";
 import { generateKhqr, type KhqrGenerateInput } from "./khqr.js";
 
 const host = process.env.KHQR_HOST ?? "127.0.0.1";
@@ -17,12 +17,36 @@ if (secret.length < 32) {
 const server = createServer(async (request, response) => {
   try {
     setSafeHeaders(response);
+
     if (request.method === "GET" && request.url === "/health") {
       return json(response, 200, { data: { status: "ok" } });
     }
+
+    if (request.method === "POST" && request.url === "/v1/khqr/render") {
+      if (!authorized(request.headers.authorization, secret)) {
+        return json(response, 401, { message: "Authentication failed.", code: "unauthenticated" });
+      }
+
+      const value = JSON.parse(await readBody(request, maxBodyBytes)) as unknown;
+      const payload = validateRender(value);
+      const png = await QRCode.toBuffer(payload, {
+        type: "png",
+        errorCorrectionLevel: "M",
+        margin: 2,
+        width: 640,
+      });
+
+      response.statusCode = 200;
+      response.setHeader("content-type", "image/png");
+      response.setHeader("content-length", String(png.length));
+      response.end(png);
+      return;
+    }
+
     if (request.method !== "POST" || request.url !== "/v1/khqr/generate") {
       return json(response, 404, { message: "Not found.", code: "not_found" });
     }
+
     if (!authorized(request.headers.authorization, secret)) {
       return json(response, 401, { message: "Authentication failed.", code: "unauthenticated" });
     }
@@ -69,6 +93,16 @@ export function validate(value: unknown): KhqrGenerateInput {
     throw new RequestError(422, "validation_failed", "expires_at_unix_ms is invalid.");
   }
   return { account_id: accountId, merchant_name: merchantName, merchant_city: merchantCity, currency: value.currency, amount: value.amount, reference, expires_at_unix_ms: expiresAt };
+}
+
+function validateRender(value: unknown): string {
+  if (!isRecord(value) || Object.keys(value).some((key) => key !== "qr_payload")) {
+    throw new RequestError(422, "validation_failed", "The render request must contain only qr_payload.");
+  }
+  if (typeof value.qr_payload !== "string" || value.qr_payload.length < 20 || value.qr_payload.length > 4096) {
+    throw new RequestError(422, "validation_failed", "qr_payload is invalid.");
+  }
+  return value.qr_payload;
 }
 
 export function authorized(header: string | undefined, expected: string): boolean {

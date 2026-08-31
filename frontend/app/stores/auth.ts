@@ -18,12 +18,7 @@ export const useAuthStore = defineStore('auth', () => {
   const pending = ref(false)
   const verificationPending = ref(false)
   const errorMessage = ref<string | null>(null)
-  /**
-   * Machine code behind `errorMessage`, kept so a surface can react to *which*
-   * failure it was rather than matching on copy. `account_suspended` is the reason
-   * this exists: it is the one sign-in failure the customer cannot fix themselves,
-   * and the form offers the support channel for it — see `AuthCard`.
-   */
+
   const errorCode = ref<SpErrorCode | null>(null)
   const fieldErrors = ref<Record<string, string[]>>({})
 
@@ -54,12 +49,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Install a freshly-issued authoritative session.
+   *
+   * Important for OAuth: app initialization can discover an expired *old*
+   * credential while Google is returning to the callback page. That failure
+   * raises sessionExpiredAt. A successful Google callback is newer authority
+   * than that stale signal, so clear the signal before publishing the new user.
+   */
   const applySession = (session: { user: AuthenticatedUser, token?: string | null }) => {
+    sessionExpiredAt.value = 0
     user.value = session.user
 
     if (!cookieMode.value && session.token) {
       token.value = session.token
     }
+
+    initialized.value = true
   }
 
   /** Loads the authenticated user once per app lifecycle. */
@@ -82,7 +88,6 @@ export const useAuthStore = defineStore('auth', () => {
 
       if (error.isSessionExpired) {
         clearSession()
-
         return
       }
 
@@ -110,15 +115,9 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * Accepts an authoritative user record the control plane just returned, so a
-   * successful profile update is reflected without a second round-trip. Only
-   * ever called with a server response — never with locally composed values.
-   */
   const setUser = (next: AuthenticatedUser) => {
     user.value = next
   }
-
 
   const sendRegistrationCode = async (email: string) => {
     verificationPending.value = true
@@ -140,12 +139,14 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       applySession(await api.auth.register(input))
-      initialized.value = true
+
+      // A referral captured before registration should be attached immediately
+      // after the authoritative login session exists.
+      await useReferralAttribution().claimIfPossible()
 
       return true
     } catch (cause) {
       captureError(cause)
-
       return false
     } finally {
       pending.value = false
@@ -158,13 +159,11 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       applySession(await api.auth.login(input))
-      initialized.value = true
       await useReferralAttribution().claimIfPossible()
 
       return true
     } catch (cause) {
       captureError(cause)
-
       return false
     } finally {
       pending.value = false
@@ -183,23 +182,16 @@ export const useAuthStore = defineStore('auth', () => {
       // been revoked or expired server-side.
     } finally {
       clearSession()
+      sessionExpiredAt.value = 0
       initialized.value = true
       resetErrors()
     }
   }
 
-  /**
-   * Initiate Google OAuth login flow
-   */
   const loginWithGoogle = async () => {
-    // The actual redirect is handled by the GoogleLoginButton component
-    // This method is for programmatic use if needed
     return false
   }
 
-  /**
-   * Handle Google OAuth callback
-   */
   const handleGoogleCallback = async (input: GoogleCallbackInput) => {
     pending.value = true
     resetErrors()
@@ -207,22 +199,17 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const response = await api.google.callback(input)
       applySession(response)
-      initialized.value = true
       await useReferralAttribution().claimIfPossible()
 
       return true
     } catch (cause) {
       captureError(cause)
-
       return false
     } finally {
       pending.value = false
     }
   }
 
-  /**
-   * Link Google account to existing user
-   */
   const linkGoogleAccount = async (input: GoogleLinkCallbackInput) => {
     pending.value = true
     resetErrors()
@@ -232,7 +219,6 @@ export const useAuthStore = defineStore('auth', () => {
       return true
     } catch (cause) {
       captureError(cause)
-
       return false
     } finally {
       pending.value = false

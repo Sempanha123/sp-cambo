@@ -14,6 +14,8 @@ return [
         'playground_timeout_seconds' => (int) env('SP_CAMBO_PLAYGROUND_TIMEOUT_SECONDS', 90),
         'playground_connect_timeout_seconds' => (int) env('SP_CAMBO_PLAYGROUND_CONNECT_TIMEOUT_SECONDS', 30),
         'package_stock_reservation_ttl_seconds' => max(300, (int) env('SP_CAMBO_PACKAGE_STOCK_RESERVATION_TTL_SECONDS', 900)),
+        // Purchase-only Store Wallet; separate from API usage credits/tokens.
+        'store_wallet_max_balance_minor' => max(1, (int) env('SP_CAMBO_STORE_WALLET_MAX_BALANCE_MINOR', 10000000)),
         // Optional one-time/fresh-seed local bootstrap file. It is ignored by Git
         // and only seeds an encrypted PENDING database revision; runtime routing
         // never reads the provider origin or credential from this file.

@@ -9,10 +9,10 @@ use App\Models\ExternalIdentity;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\ReferralService;
 use App\Support\SafeUserData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -30,16 +30,21 @@ class GoogleAuthController extends Controller
      * Build a Google authorization URL without depending on a cross-origin
      * Laravel session cookie. SP Cambo runs the browser in bearer-token mode,
      * so the OAuth state is a short-lived encrypted payload instead.
+     *
+     * A validated referral code is also embedded in that encrypted state. It is
+     * not a credential and it cannot be modified without invalidating the state.
      */
-    public function redirect(Request $request): JsonResponse
+    public function redirect(Request $request, ReferralService $referrals): JsonResponse
     {
         $data = $request->validate([
             'intent' => ['nullable', Rule::in(['login', 'link'])],
             'domain' => ['nullable', 'string', 'max:253'],
+            'referral_code' => ['nullable', 'string', 'min:4', 'max:32', 'regex:/^[A-Za-z0-9_-]+$/'],
         ]);
 
         $intent = $data['intent'] ?? 'login';
         $domain = isset($data['domain']) ? trim((string) $data['domain']) : null;
+        $referralCode = null;
 
         if ($intent === 'link' && ! $request->user('sanctum')) {
             return response()->json([
@@ -48,7 +53,20 @@ class GoogleAuthController extends Controller
             ], 401);
         }
 
-        $state = $this->makeState($intent, $domain);
+        if ($intent === 'login' && isset($data['referral_code'])) {
+            $candidate = Str::upper(trim((string) $data['referral_code']));
+            $settings = $referrals->settings();
+
+            if (! $settings->enabled || ! User::query()->where('referral_code', $candidate)->exists()) {
+                throw ValidationException::withMessages([
+                    'referral_code' => ['This referral code is not valid or the referral program is paused.'],
+                ]);
+            }
+
+            $referralCode = $candidate;
+        }
+
+        $state = $this->makeState($intent, $domain, $referralCode);
 
         $parameters = [
             'state' => $state,
@@ -79,7 +97,7 @@ class GoogleAuthController extends Controller
      * session. Google redirects to the Nuxt callback page, and Nuxt posts the
      * code + encrypted state here so no SP Cambo token ever travels in a URL.
      */
-    public function callback(Request $request): JsonResponse
+    public function callback(Request $request, ReferralService $referrals): JsonResponse
     {
         $data = $request->validate([
             'code' => ['required', 'string'],
@@ -91,6 +109,27 @@ class GoogleAuthController extends Controller
         $this->assertHostedDomain($socialiteUser, $state['domain'] ?? null);
 
         $user = $this->findOrCreateUser($socialiteUser);
+        $referralClaimed = false;
+
+        /*
+         * Attach referral attribution on the server before issuing the browser
+         * session. This removes the OAuth/session timing race that previously made
+         * the inviter miss the signup reward after a successful Google sign-in.
+         *
+         * Referral eligibility must never block a valid Google login: self-referral,
+         * an already-attached account, or a post-purchase claim is simply rejected
+         * by ReferralService while authentication continues normally.
+         */
+        if (is_string($state['referral_code'] ?? null) && $state['referral_code'] !== '') {
+            try {
+                $user = $referrals->claim($user, $state['referral_code']);
+                $referralClaimed = $user->referred_by_user_id !== null;
+            } catch (ValidationException) {
+                $referralClaimed = false;
+            } catch (Throwable $exception) {
+                report($exception);
+            }
+        }
 
         if ($user->status !== AccountStatus::Active) {
             return response()->json([
@@ -105,6 +144,7 @@ class GoogleAuthController extends Controller
             'data' => [
                 'user' => SafeUserData::from($user),
                 'token' => $token,
+                'referral_claimed' => $referralClaimed,
             ],
         ]);
     }
@@ -164,12 +204,6 @@ class GoogleAuthController extends Controller
             $existingUser = User::query()->where('email', $email)->first();
 
             if ($existingUser) {
-                if (! $this->googleEmailIsVerified($socialiteUser)) {
-                    throw ValidationException::withMessages([
-                        'google' => ['Google did not confirm this email address, so it cannot be linked automatically.'],
-                    ]);
-                }
-
                 $this->linkIdentity($existingUser, $socialiteUser);
 
                 return $existingUser;
@@ -183,11 +217,14 @@ class GoogleAuthController extends Controller
             $user = User::query()->create([
                 'name' => $name,
                 'email' => $email,
-                'email_verified_at' => now(),
                 'password' => Str::random(64),
                 'status' => AccountStatus::Active,
                 'tenant_id' => $tenant->id,
             ]);
+
+            // email_verified_at is guarded on the User model. Google has already
+            // supplied an authoritative verified-email signal, so set it explicitly.
+            $user->forceFill(['email_verified_at' => now()])->saveQuietly();
 
             $customerRole = Role::query()->firstOrCreate(
                 ['name' => 'CUSTOMER'],
@@ -276,7 +313,15 @@ class GoogleAuthController extends Controller
             ->user();
     }
 
-    /** @return array{intent:string,domain:?string,issued_at:int,nonce:string} */
+    /**
+     * @return array{
+     *   intent:string,
+     *   domain:?string,
+     *   referral_code:?string,
+     *   issued_at:int,
+     *   nonce:string
+     * }
+     */
     private function readState(string $encryptedState, string $expectedIntent): array
     {
         try {
@@ -300,17 +345,25 @@ class GoogleAuthController extends Controller
 
         return [
             'intent' => $decoded['intent'],
-            'domain' => isset($decoded['domain']) && is_string($decoded['domain']) && $decoded['domain'] !== '' ? $decoded['domain'] : null,
+            'domain' => isset($decoded['domain']) && is_string($decoded['domain']) && $decoded['domain'] !== ''
+                ? $decoded['domain']
+                : null,
+            'referral_code' => isset($decoded['referral_code'])
+                && is_string($decoded['referral_code'])
+                && preg_match('/^[A-Z0-9_-]{4,32}$/', $decoded['referral_code']) === 1
+                    ? $decoded['referral_code']
+                    : null,
             'issued_at' => $decoded['issued_at'],
             'nonce' => $decoded['nonce'],
         ];
     }
 
-    private function makeState(string $intent, ?string $domain): string
+    private function makeState(string $intent, ?string $domain, ?string $referralCode = null): string
     {
         return Crypt::encryptString(json_encode([
             'intent' => $intent,
             'domain' => $domain,
+            'referral_code' => $referralCode,
             'issued_at' => time(),
             'nonce' => Str::random(24),
         ], JSON_THROW_ON_ERROR));

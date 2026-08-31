@@ -13,12 +13,19 @@ const emit = defineEmits<{
 }>()
 
 const api = useSpApi()
+const referral = useReferralAttribution()
 const loading = ref(false)
 const error = ref<string | null>(null)
 
 const resolvedIntent = computed<'login' | 'link'>(() =>
   props.intent ?? (props.mode === 'link' ? 'link' : 'login')
 )
+
+type GoogleRedirectParams = {
+  intent?: 'login' | 'link'
+  domain?: string
+  referral_code?: string
+}
 
 const handleGoogleLogin = async () => {
   loading.value = true
@@ -35,10 +42,21 @@ const handleGoogleLogin = async () => {
       sessionStorage.removeItem('google_redirect_to')
     }
 
-    const response = await api.google.redirect({
+    // The browser cookie remains useful as a fallback, but also bind the validated
+    // referral code into Laravel's encrypted OAuth state. That makes referral
+    // attribution survive the full Google round trip independently of browser
+    // timing/session races.
+    const params: GoogleRedirectParams = {
       intent: resolvedIntent.value,
-      domain: props.domain
-    })
+      domain: props.domain,
+      referral_code: resolvedIntent.value === 'login'
+        ? (referral.code.value ?? undefined)
+        : undefined
+    }
+
+    const response = await api.google.redirect(
+      params as Parameters<typeof api.google.redirect>[0]
+    )
 
     window.location.assign(response.url)
   } catch (err) {

@@ -172,7 +172,7 @@ class ApiKeyController extends Controller
         $usageTotals = UsageRecord::query()
             ->where('user_id', $key->user_id)
             ->where('api_key_id', $key->id)
-            ->selectRaw('COALESCE(SUM(input_tokens + cache_read_tokens + cache_write_tokens), 0) as input_tokens')
+            ->selectRaw('COALESCE(SUM(input_tokens), 0) as input_tokens')
             ->selectRaw('COALESCE(SUM(cache_read_tokens), 0) as cached_input_tokens')
             ->selectRaw('COALESCE(SUM(output_tokens), 0) as output_tokens')
             ->selectRaw('COALESCE(SUM(total_tokens), 0) as total_tokens')
@@ -264,7 +264,7 @@ class ApiKeyController extends Controller
                         default => 'pending',
                     },
                     'duration_ms' => $durationMs,
-                    'input_tokens' => $usage === null ? null : (string) ((int) $usage->input_tokens + (int) $usage->cache_read_tokens + (int) $usage->cache_write_tokens),
+                    'input_tokens' => $usage === null ? null : (string) $usage->input_tokens,
                     'cached_input_tokens' => $usage === null ? null : (string) $usage->cache_read_tokens,
                     'saved_tokens' => $savedTokens === null ? null : (string) $savedTokens,
                     'billed_tokens' => $billedTokens === null ? null : (string) $billedTokens,
@@ -349,7 +349,10 @@ class ApiKeyController extends Controller
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()));
 
         if ($isPlaygroundKey) {
-            $rowsQuery->where('source_type', 'PLAYGROUND_DAILY')->where('access_scope', 'PLAYGROUND');
+            $rowsQuery->where('source_type', 'PLAYGROUND_DAILY')
+                ->where(function ($scope): void {
+                    $scope->whereNull('access_scope')->orWhere('access_scope', 'PLAYGROUND');
+                });
         } else {
             $rowsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
                 ->where(function ($scope) use ($key): void {

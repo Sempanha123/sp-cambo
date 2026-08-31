@@ -29,10 +29,26 @@ useSeoMeta({
   twitterCard: 'summary_large_image'
 })
 
-// The credential may be revoked or expire while the tab is open. The API layer
-// records that, and the app reacts once, here, instead of in every page.
+/**
+ * React to a rejected credential only while that exact expiry signal is still
+ * current. A Google callback can replace an expired pre-OAuth session with a new
+ * bearer token; a queued watcher from the old token must never clear the fresh one.
+ */
 watch(() => auth.sessionExpiredAt, (expiredAt) => {
   if (!expiredAt || !auth.initialized) {
+    return
+  }
+
+  // applySession() clears the signal before publishing a fresh login. Ignore a
+  // watcher callback that was queued for an older value.
+  if (auth.sessionExpiredAt !== expiredAt) {
+    return
+  }
+
+  // An expired pre-existing credential is normal while completing a full-page
+  // OAuth round trip. The callback page owns success/failure presentation and will
+  // install the newly-issued session, so do not race it or show a false warning.
+  if (route.path === '/auth/google/callback') {
     return
   }
 
@@ -64,10 +80,6 @@ await auth.initialize()
     <NuxtLoadingIndicator color="var(--ui-primary)" />
 
     <NuxtLayout>
-      <!--
-        Keep a small route cache so a browser-owned Playground stream is not torn
-        down by an in-app page change. The cache is intentionally bounded.
-      -->
       <NuxtPage :keepalive="{ max: 8 }" />
     </NuxtLayout>
   </UApp>
