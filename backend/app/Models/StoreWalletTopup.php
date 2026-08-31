@@ -21,6 +21,8 @@ class StoreWalletTopup extends Model
             'expires_at' => 'immutable_datetime',
             'paid_at' => 'immutable_datetime',
             'last_checked_at' => 'immutable_datetime',
+            'telegram_qr_expires_at' => 'immutable_datetime',
+            'telegram_qr_deleted_at' => 'immutable_datetime',
         ];
     }
 

@@ -15,8 +15,11 @@ class TelegramBotClient
             ->timeout((int) config('services.telegram.timeout_seconds', 15));
     }
 
-    /** @param array<string,mixed>|null $replyMarkup */
-    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): void
+    /**
+     * @param array<string,mixed>|null $replyMarkup
+     * @return array<string,mixed>
+     */
+    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): array
     {
         $payload = [
             'chat_id' => $chatId,
@@ -28,16 +31,21 @@ class TelegramBotClient
             $payload['reply_markup'] = $replyMarkup;
         }
 
-        $this->call('sendMessage', $payload);
+        $result = $this->call('sendMessage', $payload);
+
+        return is_array($result) ? $result : [];
     }
 
-    /** @param array<string,mixed>|null $replyMarkup */
+    /**
+     * @param array<string,mixed>|null $replyMarkup
+     * @return array<string,mixed>
+     */
     public function sendPhotoBytes(
         string $chatId,
         string $pngBytes,
         string $caption = '',
         ?array $replyMarkup = null,
-    ): void {
+    ): array {
         if (strlen($pngBytes) < 16 || ! str_starts_with($pngBytes, "\x89PNG\r\n\x1a\n")) {
             throw new RuntimeException('Telegram photo payload is not a valid PNG.');
         }
@@ -55,7 +63,24 @@ class TelegramBotClient
             ->attach('photo', $pngBytes, 'sp-cambo-khqr.png')
             ->post($this->endpoint('sendPhoto'), $payload);
 
-        $this->assertSuccessful('sendPhoto', $response->status(), $response->json());
+        $json = $response->json();
+        $this->assertSuccessful('sendPhoto', $response->status(), $json);
+
+        return is_array($json) && is_array($json['result'] ?? null)
+            ? $json['result']
+            : [];
+    }
+
+    public function deleteMessage(string $chatId, int $messageId): void
+    {
+        if ($messageId <= 0) {
+            return;
+        }
+
+        $this->call('deleteMessage', [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+        ]);
     }
 
     public function answerCallbackQuery(string $callbackQueryId, ?string $text = null): void

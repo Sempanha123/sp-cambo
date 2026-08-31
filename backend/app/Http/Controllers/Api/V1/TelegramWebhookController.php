@@ -43,7 +43,6 @@ class TelegramWebhookController extends Controller
         }
 
         try {
-            // Legacy website linking remains accepted, but normal shopping never requires it.
             if (! is_array($callback)) {
                 $legacyText = trim((string) data_get($message, 'text', ''));
                 [$legacyCommand, $legacyArgument] = $this->command($legacyText);
@@ -75,6 +74,10 @@ class TelegramWebhookController extends Controller
             [$command, $argument] = $this->command($text);
             $normalized = mb_strtolower($text);
 
+            if (($command === '/cancel' || ! str_starts_with($text, '/')) && $telegram->handlePromotionInput($account, $text)) {
+                return response()->json(['ok' => true]);
+            }
+
             if ($command === '/start') {
                 $startArg = mb_strtolower($argument);
                 if ($startArg === 'store') {
@@ -92,9 +95,11 @@ class TelegramWebhookController extends Controller
                         $telegram->sendStorefront($account);
                     }
                 } else {
-                    $telegram->sendHome($account);
+                    $telegram->sendCompactHome($account);
                 }
-            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, ['🛍 store', '🛍 ហាង', '🛍 buy package', '🛍 ទិញកញ្ចប់', '🛍✨ buy package', '🛍✨ ទិញកញ្ចប់'])) {
+            } elseif (in_array($command, ['/shop', '/plans', '/store'], true) || $this->matches($normalized, [
+                '🛍 store', '🛍 ហាង', '🛍 buy', '🛍 ទិញ', '🛍 buy package', '🛍 ទិញកញ្ចប់', '🛍✨ buy package', '🛍✨ ទិញកញ្ចប់',
+            ])) {
                 $telegram->sendStorefront($account);
             } elseif ($command === '/buy' && $argument !== '') {
                 $package = \App\Models\Package::query()->published()->where('slug', trim($argument))->first();
@@ -104,11 +109,17 @@ class TelegramWebhookController extends Controller
                 $telegram->sendCheckout($account, (int) $package->id);
             } elseif ($command === '/check') {
                 $purchase = $telegram->checkLatest($account);
-                if (! $purchase) $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
-                elseif ($purchase->delivered_at === null) $bot->sendMessage($chatId, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+                if (! $purchase) {
+                    $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
+                } else {
+                    $telegram->deletePurchaseQrIfFinished($purchase);
+                    if ($purchase->delivered_at === null) {
+                        $bot->sendMessage($chatId, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+                    }
+                }
             } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 my balance', '💰 សមតុល្យ', '💰 សមតុល្យរបស់ខ្ញុំ'])) {
                 $telegram->sendBalance($account);
-            } elseif ($command === '/keys' || $command === '/apikeys' || $this->matches($normalized, ['🔑 my api keys', '🔑 api keys របស់ខ្ញុំ'])) {
+            } elseif ($command === '/keys' || $command === '/apikeys' || $this->matches($normalized, ['🔑 api keys', '🔑 my api keys', '🔑 api keys របស់ខ្ញុំ'])) {
                 $telegram->sendApiKeys($account);
             } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 my orders', '🧾 ការបញ្ជាទិញ', '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
                 $telegram->sendOrders($account);
@@ -122,10 +133,10 @@ class TelegramWebhookController extends Controller
                 $telegram->sendWalletTopupOptions($account);
             } elseif ($command === '/support' || $this->matches($normalized, ['📞 support', '📞 ជំនួយ'])) {
                 $telegram->sendSupport($account);
-            } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
+            } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មាន', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
                 $telegram->sendUpdatesStatus($account);
             } else {
-                $telegram->sendHome($account);
+                $telegram->sendCompactHome($account);
             }
         } catch (Throwable $e) {
             report($e);
@@ -155,7 +166,7 @@ class TelegramWebhookController extends Controller
             return;
         }
         if ($data === 'home') {
-            $telegram->sendHome($account);
+            $telegram->sendCompactHome($account);
             $ack($bot, $callbackId, 'Home');
             return;
         }
@@ -177,6 +188,21 @@ class TelegramWebhookController extends Controller
             if ($packageId === false) throw new RuntimeException('That purchase button is invalid.');
             $telegram->sendCheckout($account, (int) $packageId);
             $ack($bot, $callbackId, 'Choose payment');
+            return;
+        }
+        if (str_starts_with($data, 'promo:')) {
+            $telegram->requestPromotionCode($account, substr($data, 6));
+            $ack($bot, $callbackId, 'Send promotion code');
+            return;
+        }
+        if (str_starts_with($data, 'promoclear:')) {
+            $telegram->clearPromotionCode($account, substr($data, 11));
+            $ack($bot, $callbackId, 'Promotion removed');
+            return;
+        }
+        if (str_starts_with($data, 'promocancel:')) {
+            $telegram->cancelPromotionInput($account, substr($data, 12));
+            $ack($bot, $callbackId);
             return;
         }
         if (str_starts_with($data, 'payw:')) {
@@ -215,8 +241,11 @@ class TelegramWebhookController extends Controller
             $purchase = $telegram->checkPurchase($account, substr($data, 6));
             if (! $purchase) {
                 $bot->sendMessage($account->chat_id, 'That purchase was not found. Open Store and try again.');
-            } elseif ($purchase->delivered_at === null) {
-                $bot->sendMessage($account->chat_id, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+            } else {
+                $telegram->deletePurchaseQrIfFinished($purchase);
+                if ($purchase->delivered_at === null) {
+                    $bot->sendMessage($account->chat_id, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
+                }
             }
             $ack($bot, $callbackId, $purchase?->delivered_at ? 'Delivered' : 'Checked');
             return;
@@ -250,7 +279,7 @@ class TelegramWebhookController extends Controller
             $locale = substr($data, 5);
             $account = $telegram->setLocale($account, $locale);
             $ack($bot, $callbackId, $locale === 'km' ? 'បានប្ដូរភាសា' : 'Language updated');
-            $telegram->sendHome($account);
+            $telegram->sendCompactHome($account);
             return;
         }
         if ($data === 'support') {
