@@ -58,15 +58,6 @@ const surfaceLabels = [
   { key: 'chat_completions_api', label: 'Chat Completions API', icon: 'i-lucide-messages-square' }
 ] as const
 
-/**
- * Only surfaces the catalogue actually states. An absent field means "not said",
- * which must not be rendered as "unsupported".
- *
- * Silence is not harmless, though: the control plane gates each protocol on the
- * matching flag and treats a missing one as refused, so an alias that states none
- * of them cannot be called on any protocol. The card says that in place of the
- * badges rather than rendering nothing at all.
- */
 const statedSurfaces = (model: PublicModel) =>
   surfaceLabels
     .filter(surface => typeof model.capabilities[surface.key] === 'boolean')
@@ -75,19 +66,9 @@ const statedSurfaces = (model: PublicModel) =>
 interface PriceRow {
   label: string
   amount: MoneyAmount | null
-  /** Shown in place of a rate when the category is billed without one of its own. */
   note: string | null
 }
 
-/**
- * The categories a credit-priced request is billed for.
- *
- * Cache rows appear only when the catalogue states a rate for them. Reasoning is the
- * one category that must be listed even when no rate is published: reasoning tokens
- * are charged at the output rate in that case, so leaving the row out would read as
- * "free" for exactly the models where thinking is the largest part of the bill. It is
- * listed only for models that can produce reasoning tokens at all.
- */
 const pricingRows = (model: PublicModel): PriceRow[] => {
   const pricing = model.credit_pricing
 
@@ -141,8 +122,9 @@ const multiplierRows = (model: PublicModel) => {
           Model catalogue
         </h1>
         <p class="text-lg text-muted text-pretty">
-          Pick the model you want, copy its model ID, then use the same ID in Playground, Claude Code,
-          Codex-compatible clients or your API integration. SP Cambo keeps these public IDs stable.
+          Pick the model you want, copy its public alias, then use the same alias in Playground,
+          Claude Code, Codex-compatible clients or your API integration. SP Cambo keeps these
+          public aliases stable while private routing can change behind the gateway.
         </p>
       </div>
 
@@ -153,7 +135,7 @@ const multiplierRows = (model: PublicModel) => {
         <UInput
           v-model="search"
           icon="i-lucide-search"
-          placeholder="Search models"
+          placeholder="Search models or public aliases"
           class="sm:max-w-xs"
           aria-label="Search models"
         />
@@ -201,11 +183,16 @@ const multiplierRows = (model: PublicModel) => {
             <article
               v-for="model in filtered"
               :key="model.public_alias"
-              class="flex flex-col gap-4 rounded-xl border border-default bg-elevated/30 p-6"
+              class="sp-model-catalog-card flex min-w-0 flex-col gap-4 rounded-2xl p-5 sm:p-6"
             >
-              <div class="flex items-start justify-between gap-3">
+              <div class="flex min-w-0 items-start justify-between gap-3">
                 <div class="flex min-w-0 items-start gap-3">
-                  <SpModelLogo :model="model.public_alias" :label="model.display_name" size="lg" />
+                  <!-- Keep the larger R5 artwork for the model identity. -->
+                  <SpModelLogo
+                    :model="model.public_alias"
+                    :label="model.display_name"
+                    size="lg"
+                  />
                   <div class="min-w-0 space-y-1.5">
                     <h2 class="truncate text-lg font-semibold text-highlighted">
                       {{ model.display_name }}
@@ -220,11 +207,28 @@ const multiplierRows = (model: PublicModel) => {
                 </div>
               </div>
 
-              <div class="rounded-xl border border-default bg-default/55 p-3">
-                <p class="mb-1 text-[10px] font-semibold tracking-wide text-muted uppercase">Model ID</p>
-                <div class="flex items-center gap-2">
-                  <code class="min-w-0 flex-1 truncate font-mono text-xs text-toned">{{ model.public_alias }}</code>
-                  <SpCopyButton :value="model.public_alias" size="sm" />
+              <!-- R7: user-provided small GIF appears specifically with Public alias. -->
+              <div class="sp-public-alias-panel">
+                <div class="flex min-w-0 items-center gap-2.5">
+                  <SpPublicAliasIcon
+                    :alias="model.public_alias"
+                    :label="model.display_name"
+                    size="md"
+                  />
+
+                  <div class="min-w-0 flex-1">
+                    <p class="text-[10px] font-semibold tracking-[0.12em] text-muted uppercase">
+                      Public alias
+                    </p>
+                    <code class="mt-0.5 block truncate font-mono text-xs font-medium text-toned">
+                      {{ model.public_alias }}
+                    </code>
+                  </div>
+
+                  <SpCopyButton
+                    :value="model.public_alias"
+                    size="sm"
+                  />
                 </div>
               </div>
 
@@ -271,6 +275,7 @@ const multiplierRows = (model: PublicModel) => {
                   </UBadge>
                 </li>
               </ul>
+
               <p
                 v-else
                 class="text-xs text-muted text-pretty"
@@ -280,35 +285,27 @@ const multiplierRows = (model: PublicModel) => {
                 before you build against it.
               </p>
 
-              <dl class="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-default pt-4 text-sm">
+              <dl class="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-default/70 pt-4 text-sm">
                 <div>
-                  <dt class="text-xs text-dimmed">
-                    Context window
-                  </dt>
+                  <dt class="text-xs text-dimmed">Context window</dt>
                   <dd class="sp-numeric text-default">
                     {{ formatCount(model.capabilities.context_tokens) }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-xs text-dimmed">
-                    Max output
-                  </dt>
+                  <dt class="text-xs text-dimmed">Max output</dt>
                   <dd class="sp-numeric text-default">
                     {{ formatCount(model.capabilities.max_output_tokens) }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-xs text-dimmed">
-                    Requests / minute
-                  </dt>
+                  <dt class="text-xs text-dimmed">Requests / minute</dt>
                   <dd class="sp-numeric text-default">
                     {{ model.limits.requests_per_minute === null ? 'Per package' : formatCount(model.limits.requests_per_minute) }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-xs text-dimmed">
-                    Concurrency
-                  </dt>
+                  <dt class="text-xs text-dimmed">Concurrency</dt>
                   <dd class="sp-numeric text-default">
                     {{ model.limits.concurrency === null ? 'Per package' : formatCount(model.limits.concurrency) }}
                   </dd>
@@ -317,7 +314,7 @@ const multiplierRows = (model: PublicModel) => {
 
               <div
                 v-if="model.credit_pricing"
-                class="space-y-2 rounded-lg bg-default/60 p-4"
+                class="space-y-2 rounded-xl bg-default/40 p-4"
               >
                 <p class="text-xs font-medium tracking-wide text-muted uppercase">
                   Credit pricing per 1M Tokens
@@ -328,9 +325,7 @@ const multiplierRows = (model: PublicModel) => {
                     :key="row.label"
                     class="flex items-baseline justify-between gap-2"
                   >
-                    <dt class="text-muted">
-                      {{ row.label }}
-                    </dt>
+                    <dt class="text-muted">{{ row.label }}</dt>
                     <dd
                       class="font-medium text-highlighted"
                       :class="row.amount ? 'sp-numeric' : undefined"
@@ -339,6 +334,7 @@ const multiplierRows = (model: PublicModel) => {
                     </dd>
                   </div>
                 </dl>
+
                 <p
                   v-if="pricingRows(model).some(row => row.note !== null)"
                   class="text-xs text-muted text-pretty"
@@ -348,7 +344,10 @@ const multiplierRows = (model: PublicModel) => {
                   than visible output.
                 </p>
 
-                <div v-if="multiplierRows(model).length > 0" class="border-t border-default pt-3">
+                <div
+                  v-if="multiplierRows(model).length > 0"
+                  class="border-t border-default/70 pt-3"
+                >
                   <p class="text-xs font-medium tracking-wide text-muted uppercase">
                     Token usage multiplier
                   </p>
@@ -359,7 +358,9 @@ const multiplierRows = (model: PublicModel) => {
                       class="flex items-baseline justify-between gap-2"
                     >
                       <dt class="text-muted">{{ row.label }}</dt>
-                      <dd class="sp-numeric font-medium text-highlighted">{{ row.value }}</dd>
+                      <dd class="sp-numeric font-medium text-highlighted">
+                        {{ row.value }}
+                      </dd>
                     </div>
                   </dl>
                   <p class="mt-2 text-xs text-muted text-pretty">
@@ -367,11 +368,12 @@ const multiplierRows = (model: PublicModel) => {
                   </p>
                 </div>
               </div>
+
               <p v-else class="text-xs text-muted">
                 Sold through token packages rather than credit pricing.
               </p>
 
-              <div class="mt-auto flex flex-wrap gap-2 border-t border-default pt-4">
+              <div class="mt-auto flex flex-wrap gap-2 border-t border-default/70 pt-4">
                 <UButton
                   to="/pricing"
                   size="sm"
@@ -396,14 +398,14 @@ const multiplierRows = (model: PublicModel) => {
       </div>
     </UContainer>
 
-    <div class="border-t border-default bg-elevated/25">
+    <div class="border-t border-default/70 bg-elevated/20">
       <UContainer class="flex flex-col items-start justify-between gap-4 py-10 sm:flex-row sm:items-center">
         <div class="space-y-1">
           <p class="font-medium text-highlighted">
             Ready to call one of these models?
           </p>
           <p class="text-sm text-muted">
-            Set up Claude Code or Codex CLI in about a minute.
+            Copy the Public alias above and use it in Playground, Claude Code, Codex CLI or your API request.
           </p>
         </div>
         <div class="flex flex-wrap gap-3">
@@ -425,3 +427,49 @@ const multiplierRows = (model: PublicModel) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.sp-model-catalog-card {
+  border: 1px solid rgb(255 255 255 / .055);
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / .018), transparent 48%),
+    color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .025),
+    0 22px 55px -42px color-mix(in oklab, var(--ui-primary) 24%, transparent);
+  backdrop-filter: blur(14px);
+  transition:
+    transform .26s ease,
+    border-color .26s ease,
+    box-shadow .26s ease;
+}
+
+.sp-model-catalog-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in oklab, var(--ui-primary) 22%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .04),
+    0 26px 60px -38px color-mix(in oklab, var(--ui-primary) 30%, transparent);
+}
+
+.sp-public-alias-panel {
+  min-width: 0;
+  border: 1px solid rgb(255 255 255 / .04);
+  border-radius: .85rem;
+  padding: .7rem .75rem;
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--ui-primary) 4%, transparent), transparent 58%),
+    color-mix(in oklab, var(--ui-bg) 36%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .02);
+}
+
+@media (max-width: 639px) {
+  .sp-model-catalog-card {
+    padding: 1rem;
+  }
+
+  .sp-public-alias-panel {
+    padding: .65rem;
+  }
+}
+</style>
