@@ -368,25 +368,54 @@ class TelegramCommerceService
     public function sendModels(TelegramAccount $account): void
     {
         $km = $this->isKhmer($account);
-        $models = ModelAlias::query()->published()->with('model.provider')->orderBy('display_name')->limit(30)->get();
+
+        $models = ModelAlias::query()
+            ->published()
+            ->orderBy('display_name')
+            ->limit(30)
+            ->get();
+
         if ($models->isEmpty()) {
-            $this->bot->sendMessage($account->chat_id, $km ? '🧠 មិនទាន់មានម៉ូដែលដែលអាចប្រើបានទេ។' : '🧠 No customer models are available yet.');
+            $this->bot->sendMessage(
+                $account->chat_id,
+                $km
+                    ? '🧠 មិនទាន់មានម៉ូដែលដែលអាចប្រើបានទេ។'
+                    : '🧠 No customer models are available yet.'
+            );
+
             return;
         }
 
-        $lines = [$km ? '🧠 ម៉ូដែលដែលអាចប្រើបាន' : '🧠 AVAILABLE MODELS', ''];
+        $lines = [
+            $km ? '🧠 ម៉ូដែលដែលអាចប្រើបាន' : '🧠 AVAILABLE MODELS',
+            '',
+        ];
+
         foreach ($models as $model) {
-            $provider = $model->model?->provider?->name;
-            $lines[] = '• '.$model->display_name.' ('.$model->public_alias.')'.($provider ? ' · '.$provider : '');
+            $lines[] = '• '.$model->display_name.' ('.$model->public_alias.')';
         }
+
         $lines[] = '';
-        $lines[] = $km ? 'កញ្ចប់នៅក្នុង Store កំណត់ម៉ូដែលណាដែល API key អាចប្រើបាន។' : 'Each Store package defines which of these models its API key may use.';
-        $this->bot->sendMessage($account->chat_id, implode("\n", $lines), [
-            'inline_keyboard' => [
-                [['text' => $km ? '🛍 មើលកញ្ចប់' : '🛍 Buy Package', 'callback_data' => 'store:1']],
-                [['text' => $km ? '🏠 ទំព័រដើម' : '🏠 Main Menu', 'callback_data' => 'home']],
-            ],
-        ]);
+        $lines[] = $km
+            ? 'កញ្ចប់នីមួយៗកំណត់ម៉ូដែលដែល API key របស់អ្នកអាចប្រើបាន។'
+            : 'Each Store package defines which of these models its API key may use.';
+
+        $this->bot->sendMessage(
+            $account->chat_id,
+            implode("\n", $lines),
+            [
+                'inline_keyboard' => [
+                    [[
+                        'text' => $km ? '🛍 មើលកញ្ចប់' : '🛍 Buy Package',
+                        'callback_data' => 'store:1',
+                    ]],
+                    [[
+                        'text' => $km ? '🏠 ទំព័រដើម' : '🏠 Main Menu',
+                        'callback_data' => 'home',
+                    ]],
+                ],
+            ]
+        );
     }
 
     public function sendLanguage(TelegramAccount $account): void
