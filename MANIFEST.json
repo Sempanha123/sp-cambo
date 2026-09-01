@@ -1,8 +1,8 @@
 {
-  "release": "vue-direct-deps-r8.3",
+  "release": "frontend-contract-r9.1",
   "files": [
-    "APPLY_VUE_DIRECT_DEPS_R8_3.ps1",
-    "README_VUE_DIRECT_DEPS_R8_3.md",
-    "VERIFY_VUE_DIRECT_DEPS_R8_3.ps1"
+    "FIX_FRONTEND_R9_1.mjs",
+    "VERIFY_FRONTEND_R9_1.mjs",
+    "README_FRONTEND_R9_1.md"
   ]
 }

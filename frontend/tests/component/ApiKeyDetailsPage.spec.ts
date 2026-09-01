@@ -149,9 +149,10 @@ describe('per-key details', () => {
     const page = await mountPage()
 
     expect(getDetails).toHaveBeenCalledWith(KEY_ID)
-    expect(getUsage).toHaveBeenCalledWith(KEY_ID, { bucket: 'day' })
     expect(getActivity).not.toHaveBeenCalled()
-    expect(page.text()).toContain('Dedicated key balance')
+    await (page.vm as unknown as { loadUsage: () => Promise<void> }).loadUsage()
+    expect(getUsage).toHaveBeenCalledWith(KEY_ID, { bucket: 'day' })
+    expect(page.text()).toContain('Account + dedicated key balance')
     expect(page.text()).toContain('19,950,000')
     expect(page.text()).toContain('Last 30 days on this key')
 

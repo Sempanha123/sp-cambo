@@ -52,7 +52,7 @@ const capabilityLabels = [
 const surfaceLabels = [
   { key: 'messages_api', label: 'Messages API', icon: 'i-lucide-message-square' },
   { key: 'responses_api', label: 'Responses API', icon: 'i-lucide-repeat-2' },
-  { key: 'chat_completions_api', label: 'Chat Completions', icon: 'i-lucide-messages-square' }
+  { key: 'chat_completions_api', label: 'Chat Completions API', icon: 'i-lucide-messages-square' }
 ] as const
 
 const statedSurfaces = (model: PublicModel) =>
@@ -75,7 +75,7 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
     { label: 'Output', amount: pricing.output_per_million, note: null }
   ]
 
-  if (pricing.cache_read_per_million) rows.push({ label: 'Cache', amount: pricing.cache_read_per_million, note: null })
+  if (pricing.cache_read_per_million) rows.push({ label: 'Cache read', amount: pricing.cache_read_per_million, note: null })
   if (pricing.cache_write_per_million) rows.push({ label: 'Cache write', amount: pricing.cache_write_per_million, note: null })
 
   if (model.capabilities.reasoning === true) {
@@ -87,7 +87,6 @@ const pricingRows = (model: PublicModel): PriceRow[] => {
   return rows
 }
 
-const primaryPriceRows = (model: PublicModel) => pricingRows(model).slice(0, 3)
 
 const statCards = computed(() => [
   { label: 'Published models', value: models.data.value?.length ?? 0, icon: 'i-lucide-boxes' },
@@ -304,18 +303,30 @@ const statCards = computed(() => [
               </dl>
 
               <div class="sp-r8-price-strip">
-                <template v-if="model.credit_pricing">
-                  <div
-                    v-for="row in primaryPriceRows(model)"
-                    :key="row.label"
+                <div v-if="model.credit_pricing" class="w-full">
+                  <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-dimmed">
+                    Credit pricing per million tokens
+                  </p>
+                  <dl class="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                    <div
+                      v-for="row in pricingRows(model)"
+                      :key="row.label"
+                      class="flex items-center justify-between gap-3"
+                    >
+                      <dt class="text-xs text-muted">{{ row.label }}</dt>
+                      <dd class="sp-numeric text-xs font-semibold text-highlighted">{{ row.amount ? formatMoney(row.amount) : row.note }}</dd>
+                    </div>
+                  </dl>
+                  <p
+                    v-if="model.capabilities.reasoning === true && !model.credit_pricing.reasoning_per_million"
+                    class="mt-2 text-[11px] leading-4 text-warning"
                   >
-                    <span>{{ row.label }}</span>
-                    <strong>{{ row.amount ? formatMoney(row.amount) : row.note }}</strong>
-                  </div>
-                </template>
+                    Reasoning tokens are charged at the output rate when no separate reasoning rate is published. They are not free.
+                  </p>
+                </div>
 
                 <span v-else class="text-xs text-muted">
-                  Sold through token packages
+                  Sold through token packages rather than credit pricing
                 </span>
               </div>
             </div>
@@ -325,16 +336,23 @@ const statCards = computed(() => [
               class="flex flex-wrap gap-1.5"
             >
               <UBadge
-                v-for="surface in statedSurfaces(model).filter(item => item.supported)"
+                v-for="surface in statedSurfaces(model)"
                 :key="surface.key"
-                color="success"
-                variant="subtle"
+                :color="surface.supported ? 'success' : 'neutral'"
+                :variant="surface.supported ? 'subtle' : 'outline'"
                 size="xs"
                 :icon="surface.icon"
+                :class="surface.supported ? undefined : 'opacity-50'"
               >
                 {{ surface.label }}
               </UBadge>
             </div>
+            <p
+              v-else
+              class="rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-xs leading-5 text-warning"
+            >
+              This model states no inference protocol. Requests can return <code class="font-mono">model_unavailable</code> until at least one customer API surface is published.
+            </p>
 
             <div class="sp-r8-model-card__actions">
               <UButton

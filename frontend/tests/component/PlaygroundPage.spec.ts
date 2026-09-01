@@ -97,7 +97,7 @@ describe('customer chat Playground', () => {
     getPlaygroundQuota.mockResolvedValue(quota({ free_model_aliases: ['sp-codex'], available_model_aliases: ['sp-codex'], model_balances: [{ alias: 'sp-codex', free_eligible: true, balance_available: false, token_remaining: 0, credit_remaining: 0, next_expires_at: null }], default_model_alias: 'sp-codex' }))
 
     const page = await mountPlayground()
-    expect(page.text()).toContain('Start a conversation')
+    expect(page.text()).toContain('What can I help you build?')
     expect(page.text()).toContain('Responses API')
     expect(page.text()).not.toContain('What you will send with your own key')
   })
@@ -115,7 +115,7 @@ describe('customer chat Playground', () => {
       protocol: 'messages',
       messages: [{ role: 'user', content: 'Hello' }],
       funding_source: 'daily'
-    }), expect.any(Object))
+    }), expect.any(Object), expect.anything())
     expect(page.text()).toContain('Hello from the model')
   })
 
@@ -130,7 +130,7 @@ describe('customer chat Playground', () => {
     expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
       max_output_tokens: 65536,
       funding_source: 'daily'
-    }), expect.any(Object))
+    }), expect.any(Object), expect.anything())
     expect(page.text()).toContain('Auto')
   })
 
@@ -154,7 +154,7 @@ describe('customer chat Playground', () => {
     expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
       max_output_tokens: 65536,
       funding_source: 'balance'
-    }), expect.any(Object))
+    }), expect.any(Object), expect.anything())
   })
 
   it('requires explicit opt-in before spending redeemed or purchased balance after daily quota is exhausted', async () => {
@@ -186,7 +186,7 @@ describe('customer chat Playground', () => {
     expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
       model: 'sp-sonnet',
       funding_source: 'balance'
-    }), expect.any(Object))
+    }), expect.any(Object), expect.anything())
     expect(page.text()).toContain('Customer balance enabled')
   })
 
@@ -218,7 +218,7 @@ describe('customer chat Playground', () => {
     expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({
       model: 'sp-premium',
       funding_source: 'balance'
-    }), expect.any(Object))
+    }), expect.any(Object), expect.anything())
   })
 
   it('does not offer a free alias that has no customer chat protocol', async () => {

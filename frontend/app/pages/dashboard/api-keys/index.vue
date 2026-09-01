@@ -457,7 +457,7 @@ const ceilingRows = (key: { limits: ApiKeySummary['limits'] }): CeilingRow[] => 
                   {{ maskApiKey(key.prefix, key.last_four) }}
                 </code>
                 <p class="text-xs text-dimmed">
-                  {{ key.secret_recopy_available ? 'Secure re-copy available' : 'Legacy secret: rotate once to enable secure re-copy' }}
+                  {{ key.secret_recopy_available ? 'Secure re-copy available — securely re-fetch your own encrypted secret when you need to copy it' : 'Legacy secret: rotate once to enable secure re-copy' }}
                 </p>
 
                 <dl class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">

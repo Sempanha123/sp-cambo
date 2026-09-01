@@ -271,7 +271,7 @@ const submit = async () => {
           color="warning"
           variant="subtle"
           icon="i-lucide-circle-help"
-          :title="`${formatCount(needingVerification.length)} model${needingVerification.length === 1 ? '' : 's'} on sale with no verified SP reference cost`"
+          :title="`${formatCount(needingVerification.length)} model${needingVerification.length === 1 ? '' : 's'} on sale with no verified upstream cost (SP reference cost)`"
           :description="`Package margin cannot be calculated for any package that allows ${needingVerification.length === 1 ? 'it' : 'them'}: ${needingVerification.map(alias => alias.public_alias).join(', ')}. Record the upstream rates and the date they were checked, and publication no longer needs a written override.`"
         />
 

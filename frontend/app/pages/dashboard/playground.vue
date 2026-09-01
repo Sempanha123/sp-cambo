@@ -123,6 +123,12 @@ const preferredProtocol = (model: PlaygroundModel | null): PlaygroundProtocol | 
   return null
 }
 const protocol = computed(() => preferredProtocol(selectedModel.value))
+const protocolLabel = computed(() => {
+  if (protocol.value === 'messages') return 'Anthropic Messages'
+  if (protocol.value === 'responses') return 'Responses API'
+  if (protocol.value === 'chat_completions') return 'Chat Completions API'
+  return 'No published chat protocol'
+})
 watch([allModels, () => quota.data.value], () => {
   const q = quota.data.value
   const candidate = q?.default_model_alias || q?.available_model_aliases?.[0] || allModels.value[0]?.public_alias
@@ -223,10 +229,20 @@ const requestUnits = (row: RequestActivity) => row.metered_units !== null ? `${f
 const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => nextTick(() => chatScroll.value?.scrollTo({ top: chatScroll.value.scrollHeight, behavior }))
 
 const activeChatStorageKey = computed(() => `spc.playground.active-chat:${auth.user?.id ?? 'session'}`)
+const browserStorage = (): Storage | null => {
+  if (!import.meta.client || typeof window === 'undefined') return null
+  try {
+    const storage = window.localStorage
+    return storage && typeof storage.getItem === 'function' ? storage : null
+  } catch {
+    return null
+  }
+}
 const rememberActiveChat = (id: number | null) => {
-  if (!import.meta.client) return
-  if (id === null) window.localStorage.removeItem(activeChatStorageKey.value)
-  else window.localStorage.setItem(activeChatStorageKey.value, String(id))
+  const storage = browserStorage()
+  if (!storage) return
+  if (id === null) storage.removeItem(activeChatStorageKey.value)
+  else storage.setItem(activeChatStorageKey.value, String(id))
 }
 
 const newClientChatKey = () => {
@@ -418,7 +434,9 @@ const clearHistory = async () => {
 
 const restoreActiveChat = async () => {
   if (!import.meta.client || currentChatId.value !== null || messages.value.length > 0) return
-  const raw = window.localStorage.getItem(activeChatStorageKey.value)
+  const storage = browserStorage()
+  if (!storage) return
+  const raw = storage.getItem(activeChatStorageKey.value)
   const id = raw ? Number(raw) : NaN
   if (!Number.isInteger(id) || id <= 0) {
     rememberActiveChat(null)
@@ -1025,6 +1043,7 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                   <div class="mt-3 flex items-center justify-between gap-3 border-t border-default pt-2.5"><span class="text-muted">Funding</span><UBadge :color="fundingForSelectedModel ? 'success' : 'warning'" variant="subtle" size="sm">{{ activeFundingLabel }}</UBadge></div>
+                  <div class="mt-2 flex items-center justify-between gap-3 text-xs"><span class="text-muted">Protocol</span><span class="font-medium text-toned">{{ protocolLabel }}</span></div>
                 </div>
 
                 <UFormField

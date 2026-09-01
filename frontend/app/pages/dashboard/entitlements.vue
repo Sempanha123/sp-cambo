@@ -432,7 +432,7 @@ const refreshAll = () => {
             </p>
           </div>
           <div class="flex items-center gap-2">
-            <UBadge color="warning" variant="subtle">Choose access</UBadge>
+            <UBadge color="warning" variant="subtle">Not active yet · Choose access</UBadge>
             <UButton
               v-if="lot.fulfillment_claim_id"
               :to="`/dashboard/claim-key?claim=${lot.fulfillment_claim_id}`"
