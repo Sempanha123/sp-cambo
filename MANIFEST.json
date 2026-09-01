@@ -1,8 +1,8 @@
 {
-  "release": "ci-fix-r6.2",
+  "release": "vue-runtime-cleanup-r8",
   "files": [
-    "APPLY_CI_FIX_R6_2.ps1",
-    "README_CI_FIX_R6_2.md",
-    "VERIFY_CI_FIX_R6_2.ps1"
+    "APPLY_VUE_RUNTIME_CLEANUP_R8.ps1",
+    "README_VUE_RUNTIME_CLEANUP_R8.md",
+    "VERIFY_VUE_RUNTIME_CLEANUP_R8.ps1"
   ]
 }
