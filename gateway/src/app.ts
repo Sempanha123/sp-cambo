@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+﻿import { createHash } from "node:crypto";
 import { once } from "node:events";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { customerKey } from "./auth.js";
@@ -104,68 +104,159 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       });
       reservationId = preflight.reservation_id;
       void markStateBestEffort(reservationId, "CONNECTING");
-      const controller = new AbortController();
-      const onRequestAborted = (): void => controller.abort("client_disconnect");
+      const clientController = new AbortController();
+      const onRequestAborted = (): void => clientController.abort("client_disconnect");
       const onResponseClose = (): void => {
-        if (!reply.raw.writableEnded) controller.abort("client_disconnect");
+        if (!reply.raw.writableEnded) clientController.abort("client_disconnect");
       };
       request.raw.once("aborted", onRequestAborted);
       reply.raw.once("close", onResponseClose);
-      const routeTimeoutMs = preflight.upstream_timeout_ms || config.upstreamTimeoutMs;
-      // The route may request a shorter timeout, while the gateway setting is the
-      // operator-controlled safety ceiling. Never let a route silently extend past it.
-      const upstreamTimeoutMs = Math.min(
-        Math.max(routeTimeoutMs, 1000),
-        Math.max(config.upstreamTimeoutMs, 1000),
-        600_000,
-      );
-      const timeout = setTimeout(() => controller.abort("upstream_timeout"), upstreamTimeoutMs);
+
+      let route = {
+        internal_model: preflight.internal_model,
+        route_revision_id: preflight.route_revision_id,
+        route_version: preflight.route_version,
+        upstream_origin: preflight.upstream_origin,
+        upstream_credential: preflight.upstream_credential,
+        upstream_timeout_ms: preflight.upstream_timeout_ms,
+      };
+
       try {
-        let upstream: Response;
-        try {
-          const internalModel = preflight.internal_model;
-          const routeVersion = preflight.route_version;
-          const upstreamOrigin = preflight.upstream_origin.replace(/\/+$/, "");
-          const fetchPromise = fetchImpl(`${upstreamOrigin}${path}`, {
-            method: "POST",
-            headers: {
-              ...upstreamHeaders(request, preflight.upstream_credential, preflight.correlation_id),
-              "x-route-revision": preflight.route_revision_id ?? "",
-              "x-route-version": routeVersion?.toString() ?? "",
-            },
-            body: upstreamBody(path, prepared, internalModel, preflight.max_output_tokens),
-            signal: controller.signal,
-          });
-          upstream = await abortable(fetchPromise, controller.signal);
-          // For streaming responses the route timeout is a connection/headers
-          // timeout, not a generation-duration ceiling. Once headers arrive,
-          // the stream stays alive until the model finishes, the client presses
-          // Stop/disconnects, or the upstream itself closes the stream.
-          if (prepared.streaming && upstream.body) clearTimeout(timeout);
-        } catch {
-          const reason = abortReason(controller.signal) ?? "upstream_timeout";
-          // No public response bytes exist yet, so the customer is not charged.
-          // R42 never waits for provider usage to decide a failed request.
-          await releaseBestEffort(reservationId);
-          throw operationFailure(reason);
+        while (true) {
+          const controller = new AbortController();
+          const forwardClientAbort = (): void => controller.abort("client_disconnect");
+
+          if (clientController.signal.aborted) {
+            controller.abort("client_disconnect");
+          } else {
+            clientController.signal.addEventListener("abort", forwardClientAbort, { once: true });
+          }
+
+          const routeTimeoutMs = route.upstream_timeout_ms || config.upstreamTimeoutMs;
+          const upstreamTimeoutMs = Math.min(
+            Math.max(routeTimeoutMs, 1000),
+            Math.max(config.upstreamTimeoutMs, 1000),
+            600_000,
+          );
+          const timeout = setTimeout(() => controller.abort("upstream_timeout"), upstreamTimeoutMs);
+
+          let upstream: Response;
+          try {
+            const upstreamOrigin = route.upstream_origin.replace(/\/+$/, "");
+            const fetchPromise = fetchImpl(`${upstreamOrigin}${path}`, {
+              method: "POST",
+              headers: {
+                ...upstreamHeaders(request, route.upstream_credential, preflight.correlation_id),
+                "x-route-revision": route.route_revision_id ?? "",
+                "x-route-version": route.route_version?.toString() ?? "",
+              },
+              body: upstreamBody(path, prepared, route.internal_model, preflight.max_output_tokens),
+              signal: controller.signal,
+            });
+
+            upstream = await abortable(fetchPromise, controller.signal);
+          } catch {
+            clearTimeout(timeout);
+            clientController.signal.removeEventListener("abort", forwardClientAbort);
+
+            const reason = abortReason(controller.signal);
+            if (reason === "client_disconnect") {
+              await releaseBestEffort(reservationId);
+              throw operationFailure(reason);
+            }
+
+            const next = await rerouteBestEffort(
+              reservationId,
+              reason === "upstream_timeout" ? "upstream_timeout" : "upstream_connect_error",
+            );
+
+            if (next) {
+              route = next;
+              continue;
+            }
+
+            await releaseBestEffort(reservationId);
+            throw operationFailure(reason ?? "upstream_connect_error");
+          }
+
+          if (!upstream.ok && failoverStatus(upstream.status)) {
+            clearTimeout(timeout);
+            clientController.signal.removeEventListener("abort", forwardClientAbort);
+            try { await upstream.body?.cancel(); } catch { /* current route is finished */ }
+
+            const next = await rerouteBestEffort(
+              reservationId,
+              `upstream_http_${upstream.status}`,
+              upstream.status,
+            );
+
+            if (next) {
+              route = next;
+              continue;
+            }
+
+            await releaseBestEffort(reservationId);
+            return proxyError(reply, upstream, path);
+          }
+
+          if (!upstream.ok) {
+            clearTimeout(timeout);
+            clientController.signal.removeEventListener("abort", forwardClientAbort);
+            await releaseBestEffort(reservationId);
+            return proxyError(reply, upstream, path);
+          }
+
+          // A successful response header is enough to mark the selected route
+          // healthy again. This best-effort telemetry never blocks the customer.
+          void routeSuccessBestEffort(reservationId);
+
+          // Once a streaming response has usable headers, the route timeout has
+          // served its purpose. Never switch providers after public output starts.
+          if (prepared.streaming && upstream.body) {
+            clearTimeout(timeout);
+          }
+
+          promptCache.remember(
+            inspection.key_id,
+            path,
+            prepared.publicModel,
+            prepared.promptSegments,
+          );
+          void markStateBestEffort(reservationId, "STREAMING");
+
+          try {
+            if (prepared.streaming && upstream.body) {
+              return await stream(
+                reply,
+                upstream,
+                reservationId,
+                path,
+                preflight.correlation_id,
+                requestStartedAt,
+                controller.signal,
+                toolNames,
+                localInput.input_tokens,
+                localInput.cache_read_tokens,
+              );
+            }
+
+            return await json(
+              reply,
+              upstream,
+              reservationId,
+              path,
+              requestStartedAt,
+              controller.signal,
+              toolNames,
+              localInput.input_tokens,
+              localInput.cache_read_tokens,
+            );
+          } finally {
+            clearTimeout(timeout);
+            clientController.signal.removeEventListener("abort", forwardClientAbort);
+          }
         }
-        if (!upstream.ok) {
-          // Failed/rejected upstream requests are non-billable because no usable
-          // public completion was delivered.
-          await releaseBestEffort(reservationId);
-          return proxyError(reply, upstream, path);
-        }
-        // Only successful inference attempts seed SP Cambo's private local
-        // prompt-prefix cache. Prompt text is never stored, only SHA-256 segment
-        // digests and local token estimates.
-        promptCache.remember(inspection.key_id, path, prepared.publicModel, prepared.promptSegments);
-        void markStateBestEffort(reservationId, "STREAMING");
-        if (prepared.streaming && upstream.body) {
-          return await stream(reply, upstream, reservationId, path, preflight.correlation_id, requestStartedAt, controller.signal, toolNames, localInput.input_tokens, localInput.cache_read_tokens);
-        }
-        return await json(reply, upstream, reservationId, path, requestStartedAt, controller.signal, toolNames, localInput.input_tokens, localInput.cache_read_tokens);
       } finally {
-        clearTimeout(timeout);
         request.raw.off("aborted", onRequestAborted);
         reply.raw.off("close", onResponseClose);
       }
@@ -275,6 +366,33 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     }
   }
 
+  async function rerouteBestEffort(
+    reservationId: string,
+    failureCode: string,
+    upstreamStatus?: number,
+  ) {
+    if (!dependencies.controlPlane.reroute) return null;
+
+    try {
+      return await dependencies.controlPlane.reroute(reservationId, {
+        failure_code: failureCode,
+        ...(upstreamStatus !== undefined ? { upstream_status: upstreamStatus } : {}),
+      });
+    } catch {
+      // Keep the original upstream failure when no alternate route is available.
+      return null;
+    }
+  }
+
+  async function routeSuccessBestEffort(reservationId: string): Promise<void> {
+    if (!dependencies.controlPlane.routeSuccess) return;
+    try {
+      await dependencies.controlPlane.routeSuccess(reservationId);
+    } catch {
+      // Route-health telemetry must never block successful inference.
+    }
+  }
+
   async function releaseBestEffort(reservationId: string): Promise<void> {
     try { await dependencies.controlPlane.release(reservationId); } catch {
       try { await dependencies.controlPlane.reconcile(reservationId, "usage_unavailable"); } catch { /* local recovery will handle stale hold */ }
@@ -319,6 +437,15 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+function failoverStatus(status: number): boolean {
+  return status === 408
+    || status === 429
+    || status === 500
+    || status === 502
+    || status === 503
+    || status === 504;
 }
 
 function operationFailure(reason: string): GatewayError {

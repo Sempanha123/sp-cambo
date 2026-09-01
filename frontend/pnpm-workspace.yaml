@@ -1,8 +1,8 @@
 allowBuilds:
-  '@parcel/watcher': set this to true or false
+  '@parcel/watcher': true
   esbuild: false
-  unrs-resolver: set this to true or false
-  vue-demi: set this to true or false
+  unrs-resolver: true
+  vue-demi: true
 overrides:
   '@babel/core': 7.29.7
   brace-expansion@2: 2.1.4

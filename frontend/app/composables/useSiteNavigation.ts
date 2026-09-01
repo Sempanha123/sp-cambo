@@ -1,4 +1,4 @@
-import type { NavigationMenuItem } from '@nuxt/ui'
+﻿import type { NavigationMenuItem } from '@nuxt/ui'
 
 /**
  * Single source of truth for public and authenticated navigation, shared by the
@@ -183,6 +183,11 @@ export function useSiteNavigation() {
         icon: 'i-lucide-server',
         to: '/admin/providers',
         active: route.path.startsWith('/admin/providers')
+      }, {
+        label: 'Model routing',
+        icon: 'i-lucide-network',
+        to: '/admin/route-pools',
+        active: route.path.startsWith('/admin/route-pools')
       }, {
         label: 'Promotions',
         icon: 'i-lucide-ticket-percent',

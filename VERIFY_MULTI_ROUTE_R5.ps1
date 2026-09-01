@@ -5,9 +5,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path -LiteralPath $ProjectRoot).Path
 
+$frontendModules = Join-Path $project 'frontend\node_modules'
+$gatewayModules = Join-Path $project 'gateway\node_modules'
+
+if (-not (Test-Path -LiteralPath $frontendModules)) {
+    throw 'frontend\node_modules is missing. Run PREPARE_NODE_DEPS_R5.ps1 first.'
+}
+
+if (-not (Test-Path -LiteralPath $gatewayModules)) {
+    throw 'gateway\node_modules is missing. Run PREPARE_NODE_DEPS_R5.ps1 first.'
+}
+
 Write-Host '=== Backend ==='
 Push-Location (Join-Path $project 'backend')
 try {
+    php artisan optimize:clear
     php artisan migrate --pretend
     php artisan route:list --path=model-route-pools
     php artisan route:list --path=internal/gateway
@@ -21,7 +33,6 @@ Write-Host ''
 Write-Host '=== Gateway ==='
 Push-Location (Join-Path $project 'gateway')
 try {
-    pnpm install --frozen-lockfile
     pnpm run typecheck
     pnpm run test
     pnpm run build
@@ -33,7 +44,6 @@ Write-Host ''
 Write-Host '=== Frontend ==='
 Push-Location (Join-Path $project 'frontend')
 try {
-    pnpm install --frozen-lockfile
     pnpm run lint
     pnpm run typecheck
     pnpm run test
@@ -43,5 +53,5 @@ try {
 }
 
 Write-Host ''
-Write-Host '[PASS] R4 verification finished successfully.'
-Write-Host 'You can commit this tested state, then deploy.'
+Write-Host '[PASS] SP Cambo Multi-Route R5 verification completed.'
+Write-Host 'Now inspect git status, commit the tested changes, and push normally.'
