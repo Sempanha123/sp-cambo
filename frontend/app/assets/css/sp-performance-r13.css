@@ -1,0 +1,82 @@
+/*
+ * SP Cambo R13 — private-surface performance/stability overrides
+ *
+ * Public marketing pages can keep the richer motion language. Authenticated
+ * dashboard/admin/reseller screens prioritize fast navigation, low GPU cost,
+ * and predictable rendering.
+ */
+
+/* The global background already has a calm private variant. Remove the expensive
+   continuously animated layers entirely on private routes instead of merely
+   lowering their opacity. Hidden layers do not consume animation/GPU time. */
+.sp-r8-bg--private :is(
+  .sp-r12-bg__beam,
+  .sp-r8-bg__aurora,
+  .sp-r8-bg__wave,
+  .sp-r8-bg__network,
+  .sp-r8-bg__star,
+  .sp-r8-bg__particle,
+  .sp-r8-bg__scan
+) {
+  display: none !important;
+  animation: none !important;
+}
+
+/* Dashboard.vue also renders its own atmosphere on top of the global one.
+   Keep one background system, not two. */
+.sp-r12-dashboard-shell .sp-r9-dashboard-atmosphere {
+  display: none !important;
+}
+
+/* Large stacks of backdrop-filter surfaces are expensive while scrolling and
+   switching routes. Keep the translucent colors/shadows, but skip real-time
+   background blur on authenticated application screens. */
+.sp-r12-dashboard-shell :is(
+  .sp-app-card,
+  .sp-premium-card,
+  .sp-dashboard-section,
+  .sp-admin-mini-card,
+  .sp-admin-record,
+  .sp-buy-package-card,
+  .sp-checkout-card,
+  .sp-catalog-option,
+  .sp-key-checker-card,
+  .sp-checker-side-card,
+  .sp-checker-result,
+  .sp-r8-package-card,
+  .sp-r8-model-card,
+  .sp-r8-billing-panel,
+  .sp-r9-activity-panel
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Avoid turning every dashboard button/link into a composited transform layer. */
+.sp-r12-dashboard-shell :where(button, a)[data-slot="base"] {
+  transition:
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease !important;
+}
+
+.sp-r12-dashboard-shell :where(button, a)[data-slot="base"]:not(:disabled):hover,
+.sp-r12-dashboard-shell :where(button, a)[data-slot="base"]:not(:disabled):active {
+  transform: none !important;
+}
+
+/* Respect the user's OS motion preference everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  .sp-global-stage *,
+  .sp-global-stage *::before,
+  .sp-global-stage *::after,
+  .sp-r8-bg *,
+  .sp-r8-bg *::before,
+  .sp-r8-bg *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

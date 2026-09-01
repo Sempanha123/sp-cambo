@@ -4,6 +4,7 @@ import '@fontsource-variable/jetbrains-mono/wght.css'
 import '@fontsource-variable/noto-sans-khmer/wght.css'
 import '~/assets/css/sp-global-r4.css'
 import '~/assets/css/sp-technology-r12.css'
+import '~/assets/css/sp-performance-r13.css'
 import { spCamboLocale } from '~/utils/uiLocale'
 
 const auth = useAuthStore()
@@ -108,8 +109,7 @@ await auth.initialize()
     <div class="sp-global-stage relative z-[1] min-h-dvh">
       <NuxtLayout>
         <NuxtPage
-          :keepalive="{ max: 8 }"
-          :transition="{ name: 'sp-r12-page', mode: 'out-in' }"
+          :page-key="pageRoute => pageRoute.fullPath"
         />
       </NuxtLayout>
     </div>

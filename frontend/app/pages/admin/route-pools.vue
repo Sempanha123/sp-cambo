@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 definePageMeta({ layout: 'dashboard', middleware: ['auth'] })
 useSeoMeta({ title: 'Model routing', robots: 'noindex' })
 
@@ -102,7 +102,7 @@ const form = reactive({
 
 const aliasOptions = computed(() =>
   (aliases.data.value ?? []).map(alias => ({
-    label: `${alias.display_name} Â· ${alias.public_alias}${alias.route_pool.enabled ? ' Â· pooled' : ''}`,
+    label: `${alias.display_name} · ${alias.public_alias}${alias.route_pool.enabled ? ' · pooled' : ''}`,
     value: alias.id
   }))
 )
@@ -113,7 +113,7 @@ const candidateOptions = computed(() => {
   return (detail.value?.candidates ?? [])
     .filter(candidate => !used.has(candidate.candidate_key))
     .map(candidate => ({
-      label: `${candidate.provider_name ?? 'Provider'} Â· ${candidate.private_model} Â· R${candidate.route_version} Â· ${candidate.active_connections} active`,
+      label: `${candidate.provider_name ?? 'Provider'} · ${candidate.private_model} · R${candidate.route_version} · ${candidate.active_connections} active`,
       value: candidate.candidate_key
     }))
 })
@@ -316,7 +316,7 @@ const totalRouteCapacity = computed(() =>
           variant="subtle"
           icon="i-lucide-shuffle"
           title="Customers never change model names"
-          :description="'model: ' + detail.model.public_alias + ' stays unchanged. Provider, revision and private model mapping stay inside SP Cambo.'"
+          :description="`model: ${detail.model.public_alias}` stays unchanged. Provider, revision and private model mapping stay inside SP Cambo."
         />
 
         <UCard class="sp-premium-card sp-app-card">
@@ -421,10 +421,10 @@ const totalRouteCapacity = computed(() =>
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
                     <strong class="text-highlighted">
-                      {{ entry.provider_name ?? 'Provider' }} Â· {{ entry.private_model ?? entry.internal_model_id }}
+                      {{ entry.provider_name ?? 'Provider' }} · {{ entry.private_model ?? entry.internal_model_id }}
                     </strong>
                     <UBadge color="neutral" variant="subtle">
-                      R{{ entry.route_version ?? 'â€”' }}
+                      R{{ entry.route_version ?? '—' }}
                     </UBadge>
                     <UBadge
                       :color="entry.health?.status === 'CIRCUIT_OPEN' ? 'warning' : 'success'"
@@ -437,7 +437,7 @@ const totalRouteCapacity = computed(() =>
                     </UBadge>
                   </div>
                   <p class="mt-1 truncate font-mono text-xs text-muted">
-                    {{ entry.internal_model_id }} Â· {{ entry.connection_type }}
+                    {{ entry.internal_model_id }} · {{ entry.connection_type }}
                   </p>
                   <p
                     v-if="entry.health?.last_error_code"
