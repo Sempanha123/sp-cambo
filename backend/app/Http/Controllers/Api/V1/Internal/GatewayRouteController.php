@@ -47,4 +47,26 @@ class GatewayRouteController extends Controller
             'route_healthy' => true,
         ]]);
     }
+
+    public function failure(
+        Request $request,
+        Reservation $reservation,
+        ModelRoutePoolService $routes,
+    ): JsonResponse {
+        $input = $request->validate([
+            'failure_code' => ['required', 'string', 'max:100', 'regex:/^[A-Za-z0-9._:-]+$/'],
+            'upstream_status' => ['nullable', 'integer', 'between:400,599'],
+        ]);
+
+        $routes->markReservationRouteFailed(
+            $reservation->fresh(),
+            (string) $input['failure_code'],
+            isset($input['upstream_status']) ? (int) $input['upstream_status'] : null,
+        );
+
+        return response()->json(['data' => [
+            'reservation_id' => (string) $reservation->id,
+            'route_failure_recorded' => true,
+        ]]);
+    }
 }

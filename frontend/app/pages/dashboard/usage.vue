@@ -119,7 +119,7 @@ const keyOptions = computed(() => [
 const limitOptions = [25, 50, 100].map(value => ({ label: `${value} requests`, value }))
 
 const activityEmptyDescription = computed(() => selectedKey.value
-  ? `Once a request runs against ${selectedKey.value.label}, it appears here within seconds.`
+  ? `Once a request runs against ${selectedKey.value.label}, it appears here within seconds. Account-wide metrics, chart and model totals above do not change with this filter.`
   : 'Once a request runs against your key it appears here within seconds.'
 )
 

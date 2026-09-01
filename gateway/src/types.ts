@@ -103,6 +103,10 @@ export interface ControlPlane {
     failure_code: string;
     upstream_status?: number;
   }): Promise<RouteData>;
+  routeFailure?(reservationId: string, input: {
+    failure_code: string;
+    upstream_status?: number;
+  }): Promise<void>;
   routeSuccess?(reservationId: string): Promise<void>;
   state?(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void>;
   settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void>;

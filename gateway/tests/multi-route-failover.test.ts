@@ -27,6 +27,7 @@ const config: GatewayConfig = {
 
 class RoutePoolControlPlane implements ControlPlane {
   reroutes: Array<{ id: string; failure_code: string; upstream_status?: number }> = [];
+  routeFailures: Array<{ id: string; failure_code: string; upstream_status?: number }> = [];
   routeSuccesses: string[] = [];
   releases: string[] = [];
   settles: string[] = [];
@@ -100,6 +101,13 @@ class RoutePoolControlPlane implements ControlPlane {
     this.routeSuccesses.push(reservationId);
   }
 
+  async routeFailure(
+    reservationId: string,
+    input: { failure_code: string; upstream_status?: number },
+  ): Promise<void> {
+    this.routeFailures.push({ id: reservationId, ...input });
+  }
+
   async settle(reservationId: string, _usage: Usage & { duration_ms: number }): Promise<void> {
     this.settles.push(reservationId);
   }
@@ -139,6 +147,7 @@ it("fails over from a retryable 503 before public output starts", async () => {
     .mockResolvedValueOnce(new Response(
       JSON.stringify({
         id: "msg-route-b",
+        model: "private-route-b",
         content: [{ type: "text", text: "served by route b" }],
         usage: { input_tokens: 10, output_tokens: 5 },
       }),
@@ -160,6 +169,8 @@ it("fails over from a retryable 503 before public output starts", async () => {
   });
 
   expect(response.statusCode).toBe(200);
+  expect(response.json().model).toBe("claude-coding");
+  expect(response.body).not.toContain("private-route-b");
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(String(fetchMock.mock.calls[0]?.[0])).toContain("omniroute-a");
   expect(String(fetchMock.mock.calls[1]?.[0])).toContain("omniroute-b");
@@ -205,4 +216,96 @@ it("fails over after a connection failure before headers", async () => {
     id: "reservation-route-pool",
     failure_code: "upstream_connect_error",
   });
+});
+
+it("fails over when a streaming route disconnects before its first public byte", async () => {
+  const control = new RoutePoolControlPlane();
+  const failedBeforeOutput = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new Error("stream disconnected before output"));
+    },
+  });
+  const routeBStream = [
+    `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg-route-b", model: "private-route-b" } })}\n\n`,
+    `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "served by route b" } })}\n\n`,
+    `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
+  ].join("");
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(failedBeforeOutput, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }))
+    .mockResolvedValueOnce(new Response(routeBStream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }));
+
+  const instance = buildApp(config, {
+    controlPlane: control,
+    rateStore: new MemoryRateStore(),
+    fetchImpl: fetchMock as typeof fetch,
+  });
+  apps.push(instance);
+
+  const response = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: auth,
+    payload: { ...body, stream: true },
+  });
+
+  expect(response.statusCode).toBe(200);
+  expect(response.body).toContain("served by route b");
+  expect(response.body).toContain('"model":"claude-coding"');
+  expect(response.body).not.toContain("private-route-b");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(control.reroutes).toEqual([{
+    id: "reservation-route-pool",
+    failure_code: "upstream_disconnect",
+  }]);
+  expect(control.routeFailures).toHaveLength(0);
+  expect(control.releases).toHaveLength(0);
+});
+
+it("never reroutes after the first public streaming byte", async () => {
+  const control = new RoutePoolControlPlane();
+  const firstFrame = new TextEncoder().encode(
+    `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "partial output" } })}\n\n`,
+  );
+  let pulls = 0;
+  const partialStream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulls++ === 0) {
+        controller.enqueue(firstFrame);
+        return;
+      }
+      controller.error(new Error("stream disconnected after output"));
+    },
+  });
+  const fetchMock = vi.fn().mockResolvedValue(new Response(partialStream, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  }));
+
+  const instance = buildApp(config, {
+    controlPlane: control,
+    rateStore: new MemoryRateStore(),
+    fetchImpl: fetchMock as typeof fetch,
+  });
+  apps.push(instance);
+
+  await expect(instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: auth,
+    payload: { ...body, stream: true },
+  })).rejects.toThrow("response destroyed before completion");
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(control.reroutes).toHaveLength(0);
+  expect(control.routeFailures).toEqual([{
+    id: "reservation-route-pool",
+    failure_code: "upstream_disconnect",
+  }]);
+  expect(control.settles).toContain("reservation-route-pool");
 });

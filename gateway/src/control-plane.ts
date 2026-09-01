@@ -40,6 +40,16 @@ export class HttpControlPlane implements ControlPlane {
     );
   }
 
+  async routeFailure(
+    reservationId: string,
+    input: { failure_code: string; upstream_status?: number },
+  ): Promise<void> {
+    await this.call(
+      `/internal/gateway/reservations/${encodeURIComponent(reservationId)}/route-failure`,
+      input,
+    );
+  }
+
   async state(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
     await this.call(`/internal/gateway/reservations/${encodeURIComponent(reservationId)}/state`, { state });
   }

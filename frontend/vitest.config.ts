@@ -16,6 +16,7 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['tests/unit/**/*.spec.ts'],
+          exclude: ['tests/unit/uiLocale.spec.ts'],
           environment: 'node'
         }
       },
@@ -27,7 +28,10 @@ export default defineConfig({
         },
         test: {
           name: 'nuxt',
-          include: ['tests/component/**/*.spec.ts'],
+          include: [
+            'tests/component/**/*.spec.ts',
+            'tests/unit/uiLocale.spec.ts'
+          ],
           environment: 'nuxt',
           environmentOptions: {
             nuxt: {

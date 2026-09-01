@@ -244,7 +244,7 @@ describe('entitlements spendability', () => {
 
     expect(page.text()).toContain('Not active yet')
     expect(page.text()).toContain('Awaiting activation')
-    expect(page.text()).toContain('Nothing is consumed from a lot in this state')
+    expect(page.text()).toContain('secured but not spendable until you choose')
   })
 
   /** Quota left in an expired lot is gone. Saying so is the honest version. */

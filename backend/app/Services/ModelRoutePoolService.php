@@ -77,30 +77,7 @@ class ModelRoutePoolService
             );
         }
 
-        $globalQuery = Reservation::query()
-            ->where('status', 'ACTIVE')
-            ->where('public_model_alias', $alias->public_alias);
-
-        if ($ignoreReservationId !== null) {
-            $globalQuery->whereKeyNot($ignoreReservationId);
-        }
-
-        $globalActive = $globalQuery->count();
-
-        if ($pool->max_concurrency !== null
-            && $globalActive >= (int) $pool->max_concurrency) {
-            throw new InferenceAccessException(
-                'model_concurrency_limit_exceeded',
-                'The selected model is currently at capacity. Retry shortly.',
-                429,
-            );
-        }
-
         $entries = ModelRoutePoolEntry::query()
-            ->with([
-                'model.provider',
-                'revision.provider',
-            ])
             ->where('model_route_pool_id', $pool->id)
             ->where('enabled', true)
             ->when(
@@ -126,21 +103,63 @@ class ModelRoutePoolService
             ->unique()
             ->values();
 
+        // A connection revision can be shared by several public aliases. Lock
+        // all candidate revisions in deterministic order so concurrent selectors
+        // cannot each observe the same free slot and oversubscribe OmniRoute.
+        $this->lockRevisions($revisionIds->all());
+
+        // Load route state only after acquiring the revision locks. A provider
+        // probe or lifecycle update that completed while we waited is therefore
+        // reflected in this selection.
+        $entries->load([
+            'model.provider',
+            'revision.provider',
+        ]);
+
+        // Use a locking read so MySQL does not serve a stale REPEATABLE READ
+        // snapshot after the selector waited for another request to commit.
         $activeQuery = Reservation::query()
             ->where('status', 'ACTIVE')
-            ->whereIn('provider_connection_revision_id', $revisionIds);
+            ->where(function ($query) use ($alias, $revisionIds): void {
+                $query->where('public_model_alias', $alias->public_alias)
+                    ->orWhereIn('provider_connection_revision_id', $revisionIds);
+            })
+            ->orderBy('id')
+            ->lockForUpdate();
 
         if ($ignoreReservationId !== null) {
             $activeQuery->whereKeyNot($ignoreReservationId);
         }
 
-        $routeActive = $activeQuery
-            ->selectRaw('provider_connection_revision_id, COUNT(*) AS active_count')
-            ->groupBy('provider_connection_revision_id')
-            ->pluck('active_count', 'provider_connection_revision_id');
+        $activeReservations = $activeQuery->get([
+            'id',
+            'public_model_alias',
+            'provider_connection_revision_id',
+        ]);
+
+        $globalActive = $activeReservations
+            ->where('public_model_alias', $alias->public_alias)
+            ->count();
+
+        if ($pool->max_concurrency !== null
+            && $globalActive >= (int) $pool->max_concurrency) {
+            throw new InferenceAccessException(
+                'model_concurrency_limit_exceeded',
+                'The selected model is currently at capacity. Retry shortly.',
+                429,
+            );
+        }
+
+        $routeActive = $activeReservations
+            ->filter(fn (Reservation $active): bool => $revisionIds->contains(
+                (string) $active->provider_connection_revision_id
+            ))
+            ->groupBy(fn (Reservation $active): string => (string) $active->provider_connection_revision_id)
+            ->map(fn (Collection $rows): int => $rows->count());
 
         $health = ProviderRouteHealth::query()
             ->whereIn('provider_connection_revision_id', $revisionIds)
+            ->lockForUpdate()
             ->get()
             ->keyBy(fn (ProviderRouteHealth $row): string => (string) $row->provider_connection_revision_id);
 
@@ -247,7 +266,35 @@ class ModelRoutePoolService
         string $failureCode,
         ?int $upstreamStatus = null,
     ): array {
-        return DB::transaction(function () use ($reservation, $failureCode, $upstreamStatus): array {
+        $result = DB::transaction(function () use ($reservation, $failureCode, $upstreamStatus): array {
+            // Resolve the pool first, then lock pool -> revisions -> reservation.
+            // Every selection path uses this order, preventing cross-alias
+            // deadlocks when several aliases share one OmniRoute revision.
+            $current = Reservation::query()->findOrFail($reservation->id);
+            $alias = ModelAlias::query()
+                ->where('public_alias', $current->public_model_alias)
+                ->firstOrFail();
+
+            $pool = ModelRoutePool::query()
+                ->where('model_alias_id', $alias->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $pool || ! $pool->enabled) {
+                throw new InferenceAccessException(
+                    'route_failover_unavailable',
+                    'No alternate route is configured for this request.',
+                    409,
+                );
+            }
+
+            $this->lockPoolRevisions(
+                $pool,
+                $current->provider_connection_revision_id === null
+                    ? null
+                    : (string) $current->provider_connection_revision_id,
+            );
+
             $locked = Reservation::query()
                 ->lockForUpdate()
                 ->findOrFail($reservation->id);
@@ -273,18 +320,8 @@ class ModelRoutePoolService
                 );
             }
 
-            $alias = ModelAlias::query()
-                ->where('public_alias', $locked->public_model_alias)
-                ->firstOrFail();
-
-            $primaryModel = $alias->model()->with('provider')->firstOrFail();
-
-            $pool = ModelRoutePool::query()
-                ->where('model_alias_id', $alias->id)
-                ->lockForUpdate()
-                ->first();
-
-            if (! $pool || ! $pool->enabled || $locked->model_route_pool_entry_id === null) {
+            if ($locked->model_route_pool_entry_id === null
+                || $locked->provider_connection_revision_id === null) {
                 throw new InferenceAccessException(
                     'route_failover_unavailable',
                     'No alternate route is configured for this request.',
@@ -292,12 +329,13 @@ class ModelRoutePoolService
                 );
             }
 
+            $primaryModel = $alias->model()->with('provider')->firstOrFail();
             $snapshot = is_array($locked->billing_snapshot)
                 ? $locked->billing_snapshot
                 : [];
 
             $history = is_array($snapshot['route_history'] ?? null)
-                ? $snapshot['route_history']
+                ? array_values($snapshot['route_history'])
                 : [];
 
             if ($history === []) {
@@ -308,26 +346,29 @@ class ModelRoutePoolService
                 ];
             }
 
-            $failoversUsed = max(0, count($history) - 1);
-            if ($failoversUsed >= (int) $pool->max_failover_attempts) {
-                $this->recordFailure(
-                    $pool,
-                    (string) $locked->provider_connection_revision_id,
-                    $failureCode,
-                );
-
-                throw new InferenceAccessException(
-                    'route_failover_exhausted',
-                    'No more automatic route retries are available for this request.',
-                    409,
-                );
-            }
+            $lastRoute = count($history) - 1;
+            $history[$lastRoute]['failed_at'] = now()->toAtomString();
+            $history[$lastRoute]['failure_code'] = mb_substr($failureCode, 0, 100);
+            $history[$lastRoute]['upstream_status'] = $upstreamStatus;
+            $snapshot['route_history'] = $history;
+            $locked->forceFill(['billing_snapshot' => $snapshot])->saveOrFail();
 
             $this->recordFailure(
                 $pool,
                 (string) $locked->provider_connection_revision_id,
                 $failureCode,
             );
+
+            $failoversUsed = max(0, count($history) - 1);
+            if ($failoversUsed >= (int) $pool->max_failover_attempts) {
+                // Return the error from inside the transaction so the circuit
+                // failure and route-history audit commit before it is thrown.
+                return ['error' => new InferenceAccessException(
+                    'route_failover_exhausted',
+                    'No more automatic route retries are available for this request.',
+                    409,
+                )];
+            }
 
             $excludeEntryIds = collect($history)
                 ->pluck('entry_id')
@@ -338,19 +379,27 @@ class ModelRoutePoolService
                 ->values()
                 ->all();
 
-            $next = $this->select(
-                $alias,
-                $primaryModel,
-                $excludeEntryIds,
-                (string) $locked->id,
-            );
-
-            if (! $next['entry'] || ! $next['pool']) {
-                throw new InferenceAccessException(
+            try {
+                $next = $this->select(
+                    $alias,
+                    $primaryModel,
+                    $excludeEntryIds,
+                    (string) $locked->id,
+                );
+            } catch (InferenceAccessException) {
+                return ['error' => new InferenceAccessException(
                     'route_failover_unavailable',
                     'No alternate pooled route is available.',
                     409,
-                );
+                )];
+            }
+
+            if (! $next['entry'] || ! $next['pool']) {
+                return ['error' => new InferenceAccessException(
+                    'route_failover_unavailable',
+                    'No alternate pooled route is available.',
+                    409,
+                )];
             }
 
             $history[] = [
@@ -360,8 +409,6 @@ class ModelRoutePoolService
                 'ai_model_id' => (int) $next['model']->id,
                 'internal_model_id' => (string) $next['model']->internal_model_id,
                 'selected_at' => now()->toAtomString(),
-                'previous_failure_code' => mb_substr($failureCode, 0, 100),
-                'previous_upstream_status' => $upstreamStatus,
             ];
 
             $snapshot['route_revision_id'] = (string) $next['revision']->id;
@@ -380,47 +427,153 @@ class ModelRoutePoolService
                 $log->forceFill(['state' => 'CONNECTING'])->save();
             }
 
-            return $next;
+            return ['route' => $next];
+        });
+
+        if (($result['error'] ?? null) instanceof InferenceAccessException) {
+            throw $result['error'];
+        }
+
+        return $result['route'];
+    }
+
+    public function markReservationRouteFailed(
+        Reservation $reservation,
+        string $failureCode,
+        ?int $upstreamStatus = null,
+    ): void
+    {
+        if ($reservation->provider_connection_revision_id === null
+            || $reservation->model_route_pool_entry_id === null) {
+            return;
+        }
+
+        DB::transaction(function () use ($reservation, $failureCode, $upstreamStatus): void {
+            $current = Reservation::query()->findOrFail($reservation->id);
+            $alias = ModelAlias::query()
+                ->where('public_alias', $current->public_model_alias)
+                ->first();
+
+            if (! $alias) {
+                return;
+            }
+
+            $pool = ModelRoutePool::query()
+                ->where('model_alias_id', $alias->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $pool) {
+                return;
+            }
+
+            $this->lockPoolRevisions(
+                $pool,
+                $current->provider_connection_revision_id === null
+                    ? null
+                    : (string) $current->provider_connection_revision_id,
+            );
+
+            $locked = Reservation::query()
+                ->lockForUpdate()
+                ->findOrFail($reservation->id);
+
+            if ($locked->provider_connection_revision_id === null
+                || $locked->model_route_pool_entry_id === null) {
+                return;
+            }
+
+            $snapshot = is_array($locked->billing_snapshot)
+                ? $locked->billing_snapshot
+                : [];
+            $history = is_array($snapshot['route_history'] ?? null)
+                ? array_values($snapshot['route_history'])
+                : [];
+
+            if ($history !== []) {
+                $lastRoute = count($history) - 1;
+                $history[$lastRoute]['failed_at'] = now()->toAtomString();
+                $history[$lastRoute]['failure_code'] = mb_substr($failureCode, 0, 100);
+                $history[$lastRoute]['upstream_status'] = $upstreamStatus;
+                $snapshot['route_history'] = $history;
+                $locked->forceFill(['billing_snapshot' => $snapshot])->saveOrFail();
+            }
+
+            $this->recordFailure(
+                $pool,
+                (string) $locked->provider_connection_revision_id,
+                $failureCode,
+            );
         });
     }
 
     public function markReservationRouteHealthy(Reservation $reservation): void
     {
-        if ($reservation->provider_connection_revision_id === null) {
+        if ($reservation->provider_connection_revision_id === null
+            || $reservation->model_route_pool_entry_id === null) {
             return;
         }
 
         DB::transaction(function () use ($reservation): void {
+            $expectedRevisionId = (string) $reservation->provider_connection_revision_id;
+            $this->lockRevisions([$expectedRevisionId]);
+
+            $locked = Reservation::query()
+                ->lockForUpdate()
+                ->findOrFail($reservation->id);
+
+            // A delayed success callback for a route that was already replaced
+            // must never clear the circuit state of the new/current route.
+            if ((string) $locked->provider_connection_revision_id !== $expectedRevisionId
+                || $locked->model_route_pool_entry_id === null) {
+                return;
+            }
+
             $health = ProviderRouteHealth::query()
-                ->where('provider_connection_revision_id', $reservation->provider_connection_revision_id)
+                ->where('provider_connection_revision_id', $expectedRevisionId)
                 ->lockForUpdate()
                 ->first();
 
             if (! $health) {
                 ProviderRouteHealth::query()->create([
-                    'provider_connection_revision_id' => $reservation->provider_connection_revision_id,
+                    'provider_connection_revision_id' => $expectedRevisionId,
                     'consecutive_failures' => 0,
                     'last_success_at' => now(),
                 ]);
+            } else {
+                // Avoid a database write on every successful request when the
+                // route is already healthy. Refresh at most once/minute.
+                $needsRefresh = $health->consecutive_failures > 0
+                    || $health->circuit_open_until !== null
+                    || $health->last_error_code !== null
+                    || $health->last_success_at === null
+                    || $health->last_success_at->lt(now()->subMinute());
 
-                return;
+                if ($needsRefresh) {
+                    $health->forceFill([
+                        'consecutive_failures' => 0,
+                        'circuit_open_until' => null,
+                        'last_error_code' => null,
+                        'last_success_at' => now(),
+                    ])->save();
+                }
             }
 
-            // Avoid a database write on every successful request when the route
-            // is already healthy. Refresh last_success_at at most once/minute.
-            $needsRefresh = $health->consecutive_failures > 0
-                || $health->circuit_open_until !== null
-                || $health->last_error_code !== null
-                || $health->last_success_at === null
-                || $health->last_success_at->lt(now()->subMinute());
+            $snapshot = is_array($locked->billing_snapshot)
+                ? $locked->billing_snapshot
+                : [];
+            $history = is_array($snapshot['route_history'] ?? null)
+                ? array_values($snapshot['route_history'])
+                : [];
 
-            if ($needsRefresh) {
-                $health->forceFill([
-                    'consecutive_failures' => 0,
-                    'circuit_open_until' => null,
-                    'last_error_code' => null,
-                    'last_success_at' => now(),
-                ])->save();
+            if ($history !== []) {
+                $lastRoute = count($history) - 1;
+                if (($history[$lastRoute]['revision_id'] ?? null) === $expectedRevisionId
+                    && ! isset($history[$lastRoute]['succeeded_at'])) {
+                    $history[$lastRoute]['succeeded_at'] = now()->toAtomString();
+                    $snapshot['route_history'] = $history;
+                    $locked->forceFill(['billing_snapshot' => $snapshot])->saveOrFail();
+                }
             }
         });
     }
@@ -428,7 +581,10 @@ class ModelRoutePoolService
     public function resetCircuit(string $revisionId): ProviderRouteHealth
     {
         return DB::transaction(function () use ($revisionId): ProviderRouteHealth {
-            ProviderConnectionRevision::query()->whereKey($revisionId)->firstOrFail();
+            ProviderConnectionRevision::query()
+                ->whereKey($revisionId)
+                ->lockForUpdate()
+                ->firstOrFail();
 
             $health = ProviderRouteHealth::query()
                 ->where('provider_connection_revision_id', $revisionId)
@@ -452,6 +608,43 @@ class ModelRoutePoolService
 
             return $health->fresh();
         });
+    }
+
+    private function lockPoolRevisions(
+        ModelRoutePool $pool,
+        ?string $currentRevisionId = null,
+    ): void {
+        $revisionIds = ModelRoutePoolEntry::query()
+            ->where('model_route_pool_id', $pool->id)
+            ->pluck('provider_connection_revision_id')
+            ->map(fn ($id): string => (string) $id);
+
+        if ($currentRevisionId !== null) {
+            $revisionIds->push($currentRevisionId);
+        }
+
+        $this->lockRevisions($revisionIds->unique()->values()->all());
+    }
+
+    /** @param array<int,string> $revisionIds */
+    private function lockRevisions(array $revisionIds): void
+    {
+        $revisionIds = array_values(array_unique(array_filter(
+            $revisionIds,
+            fn (string $id): bool => $id !== '',
+        )));
+
+        if ($revisionIds === []) {
+            return;
+        }
+
+        sort($revisionIds, SORT_STRING);
+
+        ProviderConnectionRevision::query()
+            ->whereIn('id', $revisionIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get(['id']);
     }
 
     private function recordFailure(

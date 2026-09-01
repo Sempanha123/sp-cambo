@@ -375,6 +375,42 @@ export function withLocalUsage(value: unknown, path: InferencePath, usage: Usage
 }
 
 /**
+ * Keep the public alias stable in response metadata. Only known protocol
+ * envelope objects are traversed so an assistant's structured output is never
+ * rewritten merely because it contains a field named `model`.
+ */
+export function restorePublicModel(value: unknown, publicModel: string): unknown {
+  if (!record(value)) return value;
+
+  if (typeof value.model === "string") value.model = publicModel;
+
+  for (const key of ["message", "response", "data"] as const) {
+    const child = value[key];
+    if (record(child)) restorePublicModel(child, publicModel);
+    else if (Array.isArray(child)) {
+      for (const item of child) if (record(item)) restorePublicModel(item, publicModel);
+    }
+  }
+
+  return value;
+}
+
+/** Restore the public alias inside JSON payloads carried by SSE events. */
+export function restorePublicModelInSse(frame: string, publicModel: string): string {
+  return frame.split(/(\r?\n)/).map((part) => {
+    if (!part.startsWith("data:")) return part;
+    const raw = part.slice(5).trim();
+    if (raw === "" || raw === "[DONE]") return part;
+
+    try {
+      return `data: ${JSON.stringify(restorePublicModel(JSON.parse(raw), publicModel))}`;
+    } catch {
+      return part;
+    }
+  }).join("");
+}
+
+/**
  * Overwrite every provider/OmniRoute usage object inside an SSE frame with
  * SP Cambo's local meter. No provider usage numbers are allowed through as a
  * customer-visible billing signal.

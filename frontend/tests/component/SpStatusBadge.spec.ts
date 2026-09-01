@@ -30,7 +30,7 @@ describe('request lifecycle states', () => {
       reserved: 'Reserved',
       connecting: 'Connecting',
       streaming: 'Streaming',
-      reconciling: 'Reconciling',
+      reconciling: 'Billing pending',
       settled: 'Settled',
       failed: 'Failed',
       released: 'Released'
