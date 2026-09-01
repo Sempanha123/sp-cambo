@@ -1,13 +1,8 @@
 {
-  "release": "multi-route-production-r5",
-  "purpose": "recover partial R3/R4 integration and fix pnpm ignored builds",
+  "release": "ci-fix-r6.2",
   "files": [
-    ".github/workflows/ci.yml",
-    "APPLY_MULTI_ROUTE_R5.ps1",
-    "PREPARE_NODE_DEPS_R5.ps1",
-    "README_MULTI_ROUTE_R5.md",
-    "VERIFY_MULTI_ROUTE_R5.ps1",
-    "frontend/pnpm-workspace.yaml",
-    "gateway/tests/multi-route-failover.test.ts"
+    "APPLY_CI_FIX_R6_2.ps1",
+    "README_CI_FIX_R6_2.md",
+    "VERIFY_CI_FIX_R6_2.ps1"
   ]
 }

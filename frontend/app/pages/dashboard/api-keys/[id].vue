@@ -55,12 +55,6 @@ const tabs = [
 
 const key = computed(() => details.data.value?.key ?? null)
 const tokenRemaining = computed(() => Number(details.data.value?.token_quota_remaining ?? 0))
-const formatSpCredits = (value: string | null | undefined) => {
-  if (value == null) return '—'
-  const amount = Number(value)
-  if (!Number.isFinite(amount)) return '—'
-  return `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 })}`
-}
 const fundingLots = computed(() => details.data.value?.funding ?? [])
 const daysRemaining = computed(() => {
   const expires = key.value?.expires_at

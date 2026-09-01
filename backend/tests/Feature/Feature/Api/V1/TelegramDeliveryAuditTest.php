@@ -276,7 +276,7 @@ class AuditTelegramBotClient extends TelegramBotClient
         private readonly bool $failureMessageFromSecret = false,
     ) {}
 
-    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): void
+    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): array
     {
         $this->messages[] = $text;
         if (preg_match('/sk-[a-z0-9]+/', $text, $matches)) {
@@ -290,6 +290,13 @@ class AuditTelegramBotClient extends TelegramBotClient
 
             throw new RuntimeException($message);
         }
+
+        return [
+            'message_id' => count($this->messages),
+            'chat' => [
+                'id' => $chatId,
+            ],
+        ];
     }
 }
 

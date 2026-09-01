@@ -154,7 +154,6 @@ const paidOnlyFunding = computed(() => !selectedIsFreeEligible.value && balanceA
 const balanceFundingForSelectedModel = computed(() => paidOnlyFunding.value || (useBalanceFallback.value && balanceAvailableForSelectedModel.value))
 const fundingForSelectedModel = computed(() => dailyFundingForSelectedModel.value || balanceFundingForSelectedModel.value)
 const quotaExhausted = computed(() => quota.data.value?.enabled === true && selectedIsFreeEligible.value && !dailyFundingForSelectedModel.value)
-const selectedBalance = computed(() => quota.data.value?.model_balances.find(row => row.alias === selectedAlias.value) ?? null)
 const canSend = computed(() => Boolean(
   quota.data.value?.enabled && selectedAlias.value && protocol.value && composer.value.trim() && fundingForSelectedModel.value && !sending.value
 ))
