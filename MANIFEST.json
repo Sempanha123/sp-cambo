@@ -1,8 +1,8 @@
 {
-  "release": "vue-runtime-cleanup-r8",
+  "release": "vue-direct-deps-r8.3",
   "files": [
-    "APPLY_VUE_RUNTIME_CLEANUP_R8.ps1",
-    "README_VUE_RUNTIME_CLEANUP_R8.md",
-    "VERIFY_VUE_RUNTIME_CLEANUP_R8.ps1"
+    "APPLY_VUE_DIRECT_DEPS_R8_3.ps1",
+    "README_VUE_DIRECT_DEPS_R8_3.md",
+    "VERIFY_VUE_DIRECT_DEPS_R8_3.ps1"
   ]
 }

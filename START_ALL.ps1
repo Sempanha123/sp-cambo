@@ -180,11 +180,10 @@ Start-ServiceWindow -Name 'Frontend' -HealthUrl 'http://127.0.0.1:3000/' -Comman
 `$ErrorActionPreference='Stop'
 Set-Location -LiteralPath '$frontendEsc'
 if (-not (Test-Path -LiteralPath '.\node_modules')) {
-    if (-not (Test-Path -LiteralPath '.\package-lock.json')) { throw 'frontend/package-lock.json is missing.' }
-    npm ci --no-audit --no-fund
-    if (`$LASTEXITCODE -ne 0) { throw 'Frontend npm ci failed.' }
+    npx pnpm@11.22.0 install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend pnpm install failed.' }
 }
-npm run dev -- --host 127.0.0.1 --port 3000
+npx pnpm@11.22.0 dev -- --host 127.0.0.1 --port 3000
 "@
 
 Write-Host '[7/7] Laravel scheduler' -ForegroundColor Cyan
