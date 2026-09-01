@@ -1,93 +1,82 @@
-# SP Cambo Telegram Custom Alerts R12
+# SP Cambo Route Pool R1
 
-Built against the current `Sempanha123/sp-cambo` main branch inspected on 2026-09-01.
+This package starts the multi-OmniRoute production architecture for the current
+`Sempanha123/sp-cambo` main branch.
 
-## What R12 adds
+## What R1 does now
 
-### `/admin/telegram`
-- persistent automatic-notification settings
-- multiple saved Telegram alert channels/groups
-- enable/disable each channel independently
-- Test button for each channel
-- routing per event:
-  - Off
-  - Bot only
-  - Channels only
-  - Bot + channels
-- saved routing for:
-  - new package
-  - package update
-  - stock/restock
-  - new public model
-  - public model update
-  - promotion create/update
-  - verified Telegram purchase activity
-- manual update target selector: Bot, Channels, or Both
+A customer still sends the same public model alias:
 
-“Bot” means the existing opted-in SP Cambo Store Bot subscribers.
-“Channels” means all enabled channel destinations configured in Admin.
-
-### Live Bakong KHQR countdown
-Existing QR photo messages are edited in place using Telegram `editMessageCaption`.
-
-Example:
-
-```text
-💳✨ BAKONG KHQR
-
-📦 Claude 10M Tokens
-💵 Amount: $0.79
-🧾 Order: #ABC123
-
-⏳ Time remaining: 04:30
-🔄 Countdown updates automatically.
+```json
+{ "model": "claude-sonnet" }
 ```
 
-- 10 / 15 / 30 / 60 second update interval
-- 15 seconds recommended
-- no extra countdown spam messages
-- stops when payment is verified
-- stops when QR expires/deletes
-- works for package purchases and Store Wallet top-ups
-- existing expiry-delete job remains authoritative
+SP Cambo can privately select between multiple READY provider connection
+revisions for that alias:
 
-Telegram does not provide a client-side live timer inside messages, so this is a
-real server-updated countdown. Updating every second would create unnecessary
-Telegram API traffic/rate-limit pressure; the configurable 10–60 second interval
-is the production-safe design.
+```text
+public alias
+    |
+    +-- Revision 1 / OmniRoute 1
+    +-- Revision 2 / OmniRoute 2
+```
 
-## Important safety/behavior
+The selection strategy is **weighted least connections**.
 
-- automatic alerts are asynchronous; Telegram network failure does not roll back
-  package/model/promotion admin writes
-- channel delivery jobs retry automatically
-- public model alerts remove provider/OmniRoute disclosure
-- no `.env` changes or bot-token changes are included
-- a channel must allow the SP Cambo bot to post messages
+R1 adds:
+- one route pool per public model alias
+- many provider revisions per route pool
+- per-route enable/disable
+- per-route weight
+- per-route concurrency cap
+- global per-model concurrency cap
+- DB-transaction locking so simultaneous preflights cannot all pick the same
+  stale "least loaded" route
+- legacy fallback to the provider's current active revision until a pool is
+  explicitly enabled
+- 429 when every enabled route is currently at capacity
+- new admin page: `/admin/route-pools`
 
-## New database tables
+The existing gateway contract does not change in R1. Laravel still returns one
+chosen private revision to the gateway, so customer model names, response format,
+local metering and billing behavior stay unchanged.
 
-- `telegram_notification_settings`
-- `telegram_alert_channels`
+## Why this helps
 
-Existing QR tracking columns are reused. R12 does not replace the existing
-`telegram_qr_message_id`, `telegram_qr_expires_at`, or expiry-delete mechanism.
+If OmniRoute 1 and OmniRoute 2 have independent authorized upstream capacity,
+SP Cambo can spread simultaneous customer traffic between them instead of
+sending every request to one connection revision.
 
-## Local apply/test
+A second IP by itself does not guarantee more provider quota. The real benefit
+comes from genuinely independent capacity allowed by the upstream service.
 
-Extract over the project root.
+## Apply safely
 
-Backend:
+1. Extract this ZIP over the SP Cambo project root.
+2. Run the merge script from the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\APPLY_ROUTE_POOL_R1.ps1
+```
+
+The script patches only two small existing areas:
+- `InferenceBillingService.php`
+- `bootstrap/providers.php`
+
+It stops with an error if your local file no longer matches the GitHub main
+structure used to build this package.
+
+3. Backend:
 
 ```powershell
 cd backend
 php artisan migrate
 php artisan optimize:clear
-php artisan route:list --path=telegram-store
+php artisan route:list --path=model-route-pools
 php artisan test
 ```
 
-Frontend:
+4. Frontend:
 
 ```powershell
 cd ..\frontend
@@ -95,24 +84,50 @@ npm run typecheck
 npm run build
 ```
 
-Keep a queue worker running because channel delivery and QR countdown edits are
-queued jobs.
+## Configure
+
+1. Create/probe Revision 1 and Revision 2 under the same provider.
+2. Both revisions must show:
+   - lifecycle: `READY`
+   - last probe: `SUCCESS`
+3. Open:
+   - `/admin/route-pools`
+4. Choose the public alias.
+5. Enable both revisions.
+6. Start with:
+   - Weight: 100 / 100
+   - Route concurrency: 10 / 10
+   - Global model concurrency: 18
+7. Save and test with concurrent requests.
+
+The global cap slightly below the combined route caps leaves headroom for health
+checks, admin probes and transient overlap.
 
 ## Production
 
-After the tested commit is deployed:
+After local tests/build pass and the tested commit is deployed:
 
 ```bash
 cd /var/www/sp-cambo/backend
 php artisan migrate --force
 php artisan optimize:clear
-php artisan queue:restart
 
 cd /var/www/sp-cambo/frontend
 npm run build
 sudo systemctl restart sp-cambo-frontend
-sudo systemctl status sp-cambo-frontend --no-pager
 ```
 
-Also confirm your existing Laravel queue worker is running. The QR countdown
-depends on delayed queue jobs.
+Restart the backend/PHP service used by your VPS as appropriate.
+
+## R2 (next architecture step)
+
+R1 performs live load balancing and capacity protection.
+
+The next step is pre-stream failover + circuit breaker:
+- if selected route returns 429/502/503/504 before response bytes, try another
+  healthy route once
+- temporarily open a route circuit after repeated failures
+- never switch routes after streaming has started
+
+That part should be added only after R1's route selection and reservation
+behavior pass the existing backend/gateway test suites.
