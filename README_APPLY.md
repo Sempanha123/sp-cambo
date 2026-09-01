@@ -127,22 +127,18 @@ Circuit cooldown       30 seconds
 
 Leave headroom instead of setting global capacity to the exact sum.
 
-## Apply locally
+## Test locally
 
-Extract over the project root, then:
-
-```powershell
-cd "C:\Users\Rg Gear\Desktop\SP Cambo"
-
-powershell -ExecutionPolicy Bypass -File .\APPLY_MULTI_ROUTE_R3.ps1
-```
+The multi-route implementation is part of the repository source. Do not run a
+separate patch script over it. Check out the tested Git commit, install locked
+dependencies, then run each application's checks.
 
 Backend:
 
 ```powershell
 cd backend
 
-php artisan migrate
+php artisan migrate:fresh --env=testing
 php artisan optimize:clear
 php artisan route:list --path=model-route-pools
 php artisan route:list --path=internal/gateway
@@ -152,7 +148,7 @@ php artisan test
 Gateway:
 
 ```powershell
-cd ..\gateway
+cd ../gateway
 
 pnpm install --frozen-lockfile
 pnpm run typecheck
@@ -163,12 +159,13 @@ pnpm run build
 Frontend:
 
 ```powershell
-cd ..\frontend
+cd ../frontend
 
-npm run lint
-npm run typecheck
-npm run test
-npm run build
+corepack pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run typecheck
+pnpm run test
+pnpm run build
 ```
 
 Do not deploy until all three sections pass.
@@ -195,23 +192,33 @@ Verify:
 
 ## Production deployment after tests pass
 
-Deploy the tested Git commit first. Then:
+Deploy the tested Git commit first. The repository's supported production
+layout is Docker Compose, so rebuild all three changed applications and run the
+database migration as a one-off command:
 
 ```bash
-cd /var/www/sp-cambo/backend
-php artisan migrate --force
-php artisan optimize:clear
-php artisan queue:restart
+cd /var/www/sp-cambo/infra
+docker compose build backend gateway frontend
+docker compose run --rm backend php artisan migrate --force
+docker compose up -d backend queue scheduler reverb gateway frontend nginx
+docker compose exec backend php artisan optimize:clear
+docker compose exec backend php artisan queue:restart
+docker compose ps
 ```
 
-Build/restart gateway using the existing SP Cambo gateway deployment process,
-then:
+If your production host uses systemd instead, run the same migration and
+locked builds, then restart the existing backend, queue, gateway, and frontend
+units. Unit names vary by installation; do not copy guessed service names.
+
+The OmniRoute ports should remain on a private network. Only the gateway needs
+network access to them. For two separate hosts, firewall each OmniRoute origin
+so it accepts traffic only from the gateway's private address.
+
+After deploy, verify the internal routes without exposing their secret header:
 
 ```bash
-cd /var/www/sp-cambo/frontend
-npm run build
-sudo systemctl restart sp-cambo-frontend
-sudo systemctl status sp-cambo-frontend --no-pager
+docker compose exec backend php artisan route:list --path=model-route-pools
+docker compose exec backend php artisan route:list --path=internal/gateway
 ```
 
 ## Before enabling a route pool

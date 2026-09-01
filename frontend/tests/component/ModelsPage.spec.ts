@@ -150,7 +150,7 @@ describe('credit pricing disclosure', () => {
       Output: '$15.00',
       Reasoning: 'Output rate'
     })
-    expect(page.text()).toContain('reasoning tokens are charged at the output rate')
+    expect(page.text()).toContain('Reasoning tokens are charged at the output rate')
     expect(page.text()).toContain('They are not free')
   })
 

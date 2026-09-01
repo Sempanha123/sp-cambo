@@ -173,11 +173,16 @@ describe('customer chat Playground', () => {
     await nextTick()
 
     expect(streamPlayground).not.toHaveBeenCalled()
-    expect(page.text()).toContain('Daily Playground quota exhausted')
-    expect(page.text()).toContain('Continue with customer balance')
-    expect(page.text()).toContain('asks before using purchased/redeemed balance')
+    const usageButton = page.findAll('button').find(button => button.text() === 'Usage')
+    expect(usageButton).toBeTruthy()
+    await usageButton!.trigger('click')
+    await nextTick()
 
-    const continueButton = page.findAll('button').find(button => button.text().includes('Continue with customer balance'))
+    expect(page.text()).toContain('Daily free limit reached')
+    expect(page.text()).toContain('Continue with Tokens / Credits')
+    expect(page.text()).toContain('Use your Tokens or Credits to continue now')
+
+    const continueButton = page.findAll('button').find(button => button.text().includes('Continue with Tokens / Credits'))
     expect(continueButton).toBeTruthy()
     await continueButton!.trigger('click')
     await textarea.trigger('keydown.enter')
@@ -187,7 +192,7 @@ describe('customer chat Playground', () => {
       model: 'sp-sonnet',
       funding_source: 'balance'
     }), expect.any(Object), expect.anything())
-    expect(page.text()).toContain('Customer balance enabled')
+    expect(page.text()).toContain('Tokens / Credits enabled')
   })
 
   it('offers a purchased-only model and explicitly spends its purchased balance when selected', async () => {
@@ -206,13 +211,19 @@ describe('customer chat Playground', () => {
     }))
 
     const page = await mountPlayground()
-    expect(page.text()).toContain('sp-premium')
-    expect(page.text()).toContain('5,000')
+    const vm = page.vm as unknown as {
+      selectedAlias: string | undefined
+      composer: string
+      modelOptions: Array<{ value: string }>
+      send: () => Promise<void>
+    }
+    expect(vm.modelOptions.some(option => option.value === 'sp-premium')).toBe(true)
 
-    const vm = page.vm as unknown as { selectedAlias: string | undefined, composer: string, send: () => Promise<void> }
     vm.selectedAlias = 'sp-premium'
     vm.composer = 'Use my purchased model'
     await nextTick()
+    expect(page.text()).toContain('sp-premium')
+    expect(page.text()).toContain('Purchased access')
     await vm.send()
 
     expect(streamPlayground).toHaveBeenCalledWith(expect.objectContaining({

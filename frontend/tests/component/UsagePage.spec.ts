@@ -229,11 +229,11 @@ describe('request token metadata', () => {
 
     expect(text).toContain('Input')
     expect(text).toContain('Output')
-    expect(text).toContain('Cache read')
+    expect(text).toContain('Reused input')
     expect(text).toContain('Cache write')
     expect(text).toContain('Reasoning')
     expect(text).not.toContain('Total')
-    expect(text).toContain('raw request metadata')
+    expect(text).toContain('local meter')
   })
 
   it('renders a server-recorded nonzero total without calculating it', async () => {

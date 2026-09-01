@@ -45,6 +45,7 @@ class ModelRoutePoolServiceProvider extends ServiceProvider
             ->prefix('api/v1/internal/gateway')
             ->group(function (): void {
                 Route::post('reservations/{reservation}/reroute', [GatewayRouteController::class, 'reroute']);
+                Route::post('reservations/{reservation}/route-failure', [GatewayRouteController::class, 'failure']);
                 Route::post('reservations/{reservation}/route-success', [GatewayRouteController::class, 'success']);
             });
     }

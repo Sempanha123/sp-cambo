@@ -54,6 +54,7 @@ type PoolEntry = {
   route_version?: number | null
   connection_type?: string | null
   active_connections?: number
+  active_entry_connections?: number
   health?: RouteHealth
 }
 
@@ -316,7 +317,7 @@ const totalRouteCapacity = computed(() =>
           variant="subtle"
           icon="i-lucide-shuffle"
           title="Customers never change model names"
-          :description="`model: ${detail.model.public_alias}` stays unchanged. Provider, revision and private model mapping stay inside SP Cambo."
+          :description="'model: ' + detail.model.public_alias + ' stays unchanged. Provider, revision and private model mapping stay inside SP Cambo.'"
         />
 
         <UCard class="sp-premium-card sp-app-card">
@@ -445,6 +446,12 @@ const totalRouteCapacity = computed(() =>
                   >
                     Last route error: {{ entry.health.last_error_code }}
                   </p>
+                  <p
+                    v-if="(entry.active_entry_connections ?? 0) > 0"
+                    class="mt-1 text-xs text-warning"
+                  >
+                    Disable this route and wait for its active requests before removing it.
+                  </p>
                 </div>
 
                 <div class="flex items-center gap-2">
@@ -464,6 +471,8 @@ const totalRouteCapacity = computed(() =>
                     color="error"
                     variant="ghost"
                     icon="i-lucide-trash-2"
+                    :disabled="(entry.active_entry_connections ?? 0) > 0"
+                    :title="(entry.active_entry_connections ?? 0) > 0 ? 'This route still has active requests' : 'Remove route'"
                     @click="removeRoute(index)"
                   >
                     Remove

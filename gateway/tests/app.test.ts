@@ -131,12 +131,12 @@ it("maps public model, strips customer auth and settles SP-local JSON usage", as
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
     const headers = init.headers as Record<string, string>; const sent = JSON.parse(init.body as string);
     expect(headers.authorization).toBe(`Bearer ${control.preflightData.upstream_credential}`); expect(headers["x-api-key"]).toBe(control.preflightData.upstream_credential); expect(JSON.stringify(headers)).not.toContain(secret); expect(sent.model).toBe("private-route");
-    return new Response(JSON.stringify({ id: "msg", content: [{ type: "text", text: "hello" }], usage: { input_tokens: 5000, output_tokens: 7000, cache_read_input_tokens: 2000 } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ id: "msg", model: "private-route", content: [{ type: "text", text: "hello" }], usage: { input_tokens: 5000, output_tokens: 7000, cache_read_input_tokens: 2000 } }), { status: 200, headers: { "content-type": "application/json" } });
   });
   const control = new FakeControlPlane();
   const [instance] = app(control, fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: { ...auth, "anthropic-version": "2023-06-01", cookie: secret }, payload: body });
-  expect(response.statusCode).toBe(200); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(body)), output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }); expect(control.releases).toHaveLength(0);
+  expect(response.statusCode).toBe(200); expect(response.json().model).toBe("claude-coding"); expect(response.body).not.toContain("private-route"); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(body)), output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }); expect(control.releases).toHaveLength(0);
 });
 
 

@@ -77,6 +77,13 @@ class ModelRoutePoolController extends Controller
             ->get()
             ->keyBy(fn (ProviderRouteHealth $row): string => (string) $row->provider_connection_revision_id);
 
+        $entryActive = Reservation::query()
+            ->where('status', 'ACTIVE')
+            ->whereIn('model_route_pool_entry_id', $pool?->entries->pluck('id') ?? collect())
+            ->selectRaw('model_route_pool_entry_id, COUNT(*) AS active_count')
+            ->groupBy('model_route_pool_entry_id')
+            ->pluck('active_count', 'model_route_pool_entry_id');
+
         return response()->json(['data' => [
             'model' => [
                 'id' => (string) $modelAlias->id,
@@ -91,7 +98,7 @@ class ModelRoutePoolController extends Controller
                 'max_failover_attempts' => (int) ($pool?->max_failover_attempts ?? 2),
                 'circuit_failure_threshold' => (int) ($pool?->circuit_failure_threshold ?? 3),
                 'circuit_cooldown_seconds' => (int) ($pool?->circuit_cooldown_seconds ?? 30),
-                'entries' => $pool?->entries->map(function (ModelRoutePoolEntry $entry) use ($active, $health): array {
+                'entries' => $pool?->entries->map(function (ModelRoutePoolEntry $entry) use ($active, $entryActive, $health): array {
                     /** @var ProviderRouteHealth|null $routeHealth */
                     $routeHealth = $health->get((string) $entry->provider_connection_revision_id);
 
@@ -109,6 +116,7 @@ class ModelRoutePoolController extends Controller
                         'route_version' => $entry->revision?->route_version,
                         'connection_type' => $entry->revision?->connection_type,
                         'active_connections' => (int) ($active[(string) $entry->provider_connection_revision_id] ?? 0),
+                        'active_entry_connections' => (int) ($entryActive[(string) $entry->id] ?? 0),
                         'health' => $this->healthResource($routeHealth),
                     ];
                 })->values() ?? [],
@@ -213,17 +221,28 @@ class ModelRoutePoolController extends Controller
             ->first();
 
         DB::transaction(function () use ($modelAlias, $input): void {
-            $pool = ModelRoutePool::query()->updateOrCreate(
-                ['model_alias_id' => $modelAlias->id],
-                [
-                    'enabled' => (bool) $input['enabled'],
-                    'strategy' => $input['strategy'],
-                    'max_concurrency' => $input['max_concurrency'] ?? null,
-                    'max_failover_attempts' => (int) $input['max_failover_attempts'],
-                    'circuit_failure_threshold' => (int) $input['circuit_failure_threshold'],
-                    'circuit_cooldown_seconds' => (int) $input['circuit_cooldown_seconds'],
-                ],
-            );
+            $pool = ModelRoutePool::query()
+                ->where('model_alias_id', $modelAlias->id)
+                ->lockForUpdate()
+                ->first();
+
+            $attributes = [
+                'enabled' => (bool) $input['enabled'],
+                'strategy' => $input['strategy'],
+                'max_concurrency' => $input['max_concurrency'] ?? null,
+                'max_failover_attempts' => (int) $input['max_failover_attempts'],
+                'circuit_failure_threshold' => (int) $input['circuit_failure_threshold'],
+                'circuit_cooldown_seconds' => (int) $input['circuit_cooldown_seconds'],
+            ];
+
+            if ($pool) {
+                $pool->forceFill($attributes)->saveOrFail();
+            } else {
+                $pool = ModelRoutePool::query()->create([
+                    'model_alias_id' => $modelAlias->id,
+                    ...$attributes,
+                ]);
+            }
 
             $keep = [];
             foreach ($input['entries'] as $entry) {
@@ -243,10 +262,25 @@ class ModelRoutePoolController extends Controller
                 $keep[] = $row->id;
             }
 
-            ModelRoutePoolEntry::query()
+            $removeIds = ModelRoutePoolEntry::query()
                 ->where('model_route_pool_id', $pool->id)
                 ->whereNotIn('id', $keep)
-                ->delete();
+                ->lockForUpdate()
+                ->pluck('id');
+
+            if ($removeIds->isNotEmpty()
+                && Reservation::query()
+                    ->where('status', 'ACTIVE')
+                    ->whereIn('model_route_pool_entry_id', $removeIds)
+                    ->exists()) {
+                throw ValidationException::withMessages([
+                    'entries' => ['A route with active requests cannot be removed. Disable it, wait for active requests to finish, then remove it.'],
+                ]);
+            }
+
+            if ($removeIds->isNotEmpty()) {
+                ModelRoutePoolEntry::query()->whereIn('id', $removeIds)->delete();
+            }
         });
 
         $after = ModelRoutePool::query()

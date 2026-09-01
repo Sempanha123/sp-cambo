@@ -4,12 +4,19 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { customerKey } from "./auth.js";
 import { GatewayError, writeError } from "./errors.js";
 import { LocalPromptCache } from "./local-prompt-cache.js";
-import { localizeSseUsage, prepare, spLocalOutputTokensFromSse, spLocalUsage, spLocalUsageFromOutputTokens, upstreamBody, withLocalUsage } from "./protocol.js";
+import { localizeSseUsage, prepare, restorePublicModel, restorePublicModelInSse, spLocalOutputTokensFromSse, spLocalUsage, spLocalUsageFromOutputTokens, upstreamBody, withLocalUsage } from "./protocol.js";
 import { buildToolNameMap, normalizeToolNames, rewriteSseToolNames, type ToolNameMap } from "./tool-names.js";
 import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore } from "./types.js";
 import { INFERENCE_PATHS } from "./types.js";
 
 export type Dependencies = { controlPlane: ControlPlane; rateStore: RateStore; fetchImpl?: Fetch };
+
+class PreStreamFailure extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "PreStreamFailure";
+  }
+}
 
 export function buildApp(config: GatewayConfig, dependencies: Dependencies): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: config.maxBodyBytes });
@@ -206,51 +213,73 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
             return proxyError(reply, upstream, path);
           }
 
-          // A successful response header is enough to mark the selected route
-          // healthy again. This best-effort telemetry never blocks the customer.
-          void routeSuccessBestEffort(reservationId);
-
-          // Once a streaming response has usable headers, the route timeout has
-          // served its purpose. Never switch providers after public output starts.
-          if (prepared.streaming && upstream.body) {
+          let publicOutputStarted = false;
+          const onPublicOutputStarted = (): void => {
+            if (publicOutputStarted) return;
+            publicOutputStarted = true;
             clearTimeout(timeout);
-          }
-
-          promptCache.remember(
-            inspection.key_id,
-            path,
-            prepared.publicModel,
-            prepared.promptSegments,
-          );
-          void markStateBestEffort(reservationId, "STREAMING");
+            promptCache.remember(
+              inspection.key_id,
+              path,
+              prepared.publicModel,
+              prepared.promptSegments,
+            );
+            void markStateBestEffort(preflight.reservation_id, "STREAMING");
+          };
 
           try {
-            if (prepared.streaming && upstream.body) {
-              return await stream(
+            try {
+              if (prepared.streaming && upstream.body) {
+                return await stream(
+                  reply,
+                  upstream,
+                  reservationId,
+                  path,
+                  preflight.correlation_id,
+                  requestStartedAt,
+                  controller.signal,
+                  toolNames,
+                  localInput.input_tokens,
+                  localInput.cache_read_tokens,
+                  prepared.publicModel,
+                  onPublicOutputStarted,
+                );
+              }
+
+              return await json(
                 reply,
                 upstream,
                 reservationId,
                 path,
-                preflight.correlation_id,
                 requestStartedAt,
                 controller.signal,
                 toolNames,
                 localInput.input_tokens,
                 localInput.cache_read_tokens,
+                prepared.publicModel,
+                onPublicOutputStarted,
               );
-            }
+            } catch (error) {
+              if (!(error instanceof PreStreamFailure)) throw error;
 
-            return await json(
-              reply,
-              upstream,
-              reservationId,
-              path,
-              requestStartedAt,
-              controller.signal,
-              toolNames,
-              localInput.input_tokens,
-              localInput.cache_read_tokens,
-            );
+              if (error.reason === "client_disconnect") {
+                await releaseBestEffort(reservationId);
+                throw operationFailure(error.reason);
+              }
+
+              const next = await rerouteBestEffort(
+                reservationId,
+                error.reason,
+              );
+
+              if (next) {
+                route = next;
+                continue;
+              }
+
+              await releaseBestEffort(reservationId);
+              throw operationFailure(error.reason);
+            }
           } finally {
             clearTimeout(timeout);
             clientController.signal.removeEventListener("abort", forwardClientAbort);
@@ -263,21 +292,22 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number): Promise<unknown> {
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<unknown> {
     let text: string;
     try {
       text = await abortable(upstream.text(), signal);
     } catch {
       const reason = abortReason(signal) ?? "upstream_disconnect";
-      await releaseBestEffort(reservationId);
-      throw operationFailure(reason);
+      throw new PreStreamFailure(reason);
     }
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch {
-      await releaseBestEffort(reservationId);
-      throw new GatewayError(502, "upstream_invalid_response", "The inference service returned an invalid response.");
+      throw new PreStreamFailure("upstream_invalid_response");
     }
-    const normalizedResponse = normalizeToolNames(parsed, toolNames);
+    const normalizedResponse = restorePublicModel(
+      normalizeToolNames(parsed, toolNames),
+      publicModel,
+    );
     // R29: customer settlement is measured entirely at the SP Cambo edge.
     // Provider/OmniRoute usage metadata and usage headers are intentionally
     // ignored for billing. They may remain in the proxied response for client
@@ -285,23 +315,33 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const usage = spLocalUsage(localInputTokens, localCacheReadTokens, normalizedResponse, JSON.stringify(normalizedResponse));
     const publicResponse = withLocalUsage(normalizedResponse, path, usage);
     await settleLocalBestEffort(reservationId, usage, Date.now() - requestStartedAt);
+    void routeSuccessBestEffort(reservationId);
+    onPublicOutputStarted();
     copyResponseHeaders(reply, upstream);
     reply.header("x-sp-cambo-metering", "local-cache-aware-v1");
     reply.status(upstream.status).send(publicResponse);
     return reply;
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number): Promise<void> {
-    reply.hijack();
-    reply.raw.statusCode = upstream.status;
-    reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
-    reply.raw.setHeader("cache-control", "no-store");
-    reply.raw.setHeader("x-request-id", requestId);
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<void> {
     let buffer = ""; let bytesSent = false; let localOutputTokens = 0;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
+    const beginPublicStream = (): void => {
+      if (reply.sent) return;
+      reply.hijack();
+      reply.raw.statusCode = upstream.status;
+      reply.raw.setHeader("content-type", upstream.headers.get("content-type") ?? "text/event-stream");
+      reply.raw.setHeader("cache-control", "no-store");
+      reply.raw.setHeader("x-request-id", requestId);
+      onPublicOutputStarted();
+    };
     const writePublic = async (text: string): Promise<void> => {
       if (text === "") return;
-      const publicText = rewriteSseToolNames(text, toolNames);
+      const publicText = restorePublicModelInSse(
+        rewriteSseToolNames(text, toolNames),
+        publicModel,
+      );
+      beginPublicStream();
       bytesSent = true;
       if (!reply.raw.write(publicText)) await abortable(once(reply.raw, "drain"), signal);
     };
@@ -326,19 +366,27 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       }
     } catch {
       void reader.cancel(signal.reason).catch(() => undefined);
-      if (!reply.raw.destroyed) reply.raw.destroy();
-      const reason = abortReason(signal) ?? (bytesSent ? "upstream_disconnect" : "upstream_timeout");
-      if (bytesSent) {
-        const partialUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
-        await settleLocalBestEffort(reservationId, partialUsage, Date.now() - requestStartedAt);
-      } else {
-        await releaseBestEffort(reservationId);
+      const reason = abortReason(signal) ?? "upstream_disconnect";
+
+      if (!bytesSent) {
+        // No public byte/header has been flushed, so the outer route loop can
+        // safely select another provider without corrupting the response.
+        throw new PreStreamFailure(reason);
       }
+
+      if (reason !== "client_disconnect") {
+        await routeFailureBestEffort(reservationId, reason);
+      }
+      if (!reply.raw.destroyed) reply.raw.destroy();
+      const partialUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
+      await settleLocalBestEffort(reservationId, partialUsage, Date.now() - requestStartedAt);
       return;
     }
 
     const usage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
     await settleLocalBestEffort(reservationId, usage, Date.now() - requestStartedAt);
+    void routeSuccessBestEffort(reservationId);
+    beginPublicStream();
     reply.raw.end();
   }
 
@@ -381,6 +429,23 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } catch {
       // Keep the original upstream failure when no alternate route is available.
       return null;
+    }
+  }
+
+  async function routeFailureBestEffort(
+    reservationId: string,
+    failureCode: string,
+    upstreamStatus?: number,
+  ): Promise<void> {
+    if (!dependencies.controlPlane.routeFailure) return;
+    try {
+      await dependencies.controlPlane.routeFailure(reservationId, {
+        failure_code: failureCode,
+        ...(upstreamStatus !== undefined ? { upstream_status: upstreamStatus } : {}),
+      });
+    } catch {
+      // Health telemetry is best-effort after output already began. Billing and
+      // partial settlement remain authoritative even if this call is unavailable.
     }
   }
 
