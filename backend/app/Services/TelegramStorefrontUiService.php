@@ -11,10 +11,11 @@ use RuntimeException;
 class TelegramStorefrontUiService
 {
     private const STORE_PAGE_SIZE = 6;
-    private const ORDER_PAGE_SIZE = 5;
+    private const ORDER_PAGE_SIZE = 4;
 
     public function __construct(
         private readonly TelegramBotClient $bot,
+        private readonly TelegramPendingOrderPolicy $pendingOrders,
     ) {}
 
     public function sendStorefront(TelegramAccount $account, int $page = 1): void
@@ -159,6 +160,11 @@ class TelegramStorefrontUiService
 
     public function sendOrders(TelegramAccount $account, string $view = 'completed'): void
     {
+        // Keep the list fresh even if the user opens Orders before the scheduled
+        // cleanup tick. Only abandoned unpaid orders older than one hour can be
+        // removed; paid/delivery-retry orders are protected.
+        $this->pendingOrders->cleanupExpired($account, 50);
+
         if ($view === 'pending') {
             $this->sendPendingOrders($account);
             return;
@@ -281,6 +287,7 @@ class TelegramStorefrontUiService
 
         $lines = [
             $km ? '⏳✨ ការបញ្ជាទិញកំពុងរង់ចាំ' : '⏳✨ PENDING ORDERS',
+            $km ? 'អតិបរមា 4 · មិនបានបង់ផុតកំណត់ក្នុង 1 ម៉ោង' : 'Max 4 open orders · unpaid orders expire after 1 hour',
             '',
         ];
 

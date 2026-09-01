@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exceptions\TelegramPendingOrderLimitException;
 use App\Http\Controllers\Controller;
 use App\Models\TelegramAccount;
 use App\Services\TelegramBotClient;
@@ -109,14 +110,9 @@ class TelegramWebhookController extends Controller
                 }
                 $telegram->sendCheckout($account, (int) $package->id);
             } elseif ($command === '/check') {
-                $purchase = $telegram->checkLatest($account);
+                $purchase = $telegram->checkPurchaseAndNotify($account, 'latest');
                 if (! $purchase) {
                     $bot->sendMessage($chatId, 'No Telegram purchase was found. Open Store to choose a package.');
-                } else {
-                    $telegram->deletePurchaseQrIfFinished($purchase);
-                    if ($purchase->delivered_at === null) {
-                        $bot->sendMessage($chatId, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
-                    }
                 }
             } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 my balance', '💰 សមតុល្យ', '💰 សមតុល្យរបស់ខ្ញុំ'])) {
                 $telegram->sendBalance($account);
@@ -139,6 +135,18 @@ class TelegramWebhookController extends Controller
             } else {
                 $telegram->sendCompactHome($account);
             }
+        } catch (TelegramPendingOrderLimitException $e) {
+            if ($callbackId !== '') {
+                try { $bot->answerCallbackQuery($callbackId, '4 open orders maximum'); } catch (Throwable) {}
+            }
+            try {
+                $bot->sendMessage($chatId, '🧾 '.$e->getMessage(), [
+                    'inline_keyboard' => [[
+                        ['text' => '⏳ Pending Orders', 'callback_data' => 'orders:pending'],
+                        ['text' => '🏠 Home', 'callback_data' => 'home'],
+                    ]],
+                ]);
+            } catch (Throwable) {}
         } catch (Throwable $e) {
             report($e);
             if ($callbackId !== '') {
@@ -245,16 +253,17 @@ class TelegramWebhookController extends Controller
             return;
         }
         if (str_starts_with($data, 'check:')) {
-            $purchase = $telegram->checkPurchase($account, substr($data, 6));
+            $purchase = $telegram->checkPurchaseAndNotify($account, substr($data, 6));
             if (! $purchase) {
                 $bot->sendMessage($account->chat_id, 'That purchase was not found. Open Store and try again.');
-            } else {
-                $telegram->deletePurchaseQrIfFinished($purchase);
-                if ($purchase->delivered_at === null) {
-                    $bot->sendMessage($account->chat_id, 'Payment is not verified yet. SP Cambo will keep checking automatically.');
-                }
             }
-            $ack($bot, $callbackId, $purchase?->delivered_at ? 'Delivered' : 'Checked');
+            $ack(
+                $bot,
+                $callbackId,
+                $purchase?->delivered_at !== null || $purchase?->status === 'DELIVERED'
+                    ? 'Delivered'
+                    : (in_array((string) ($purchase?->status ?? ''), ['PAID', 'DELIVERY_FAILED'], true) ? 'Paid · retrying delivery' : 'Checked')
+            );
             return;
         }
         if ($data === 'balance') {

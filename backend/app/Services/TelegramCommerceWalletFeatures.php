@@ -368,6 +368,12 @@ trait TelegramCommerceWalletFeatures
             throw new RuntimeException('Checkout is busy. Please try again in a moment.');
         }
 
+        $accountLock = Cache::lock('telegram:pending-order-limit:'.$account->id, 15);
+        if (! $accountLock->get()) {
+            $lock->release();
+            throw new RuntimeException('Another purchase is being prepared. Please try again in a moment.');
+        }
+
         try {
             $key = 'telegram:checkout:'.$token;
             $checkout = Cache::get($key);
@@ -397,6 +403,12 @@ trait TelegramCommerceWalletFeatures
             }
 
             $promotionCode = trim((string) ($checkout['promotion_code'] ?? ''));
+
+            // Keep at most four active Telegram orders. The policy only removes
+            // the oldest truly-unpaid order; paid and delivery-retry rows are
+            // protected and can never be discarded by this limit.
+            app(TelegramPendingOrderPolicy::class)->makeRoomForNewOrder($account);
+
             $created = $this->orders->create(
                 $account->user,
                 (string) $package->slug,
@@ -468,6 +480,7 @@ trait TelegramCommerceWalletFeatures
 
             return $purchase->fresh();
         } finally {
+            $accountLock->release();
             $lock->release();
         }
     }
@@ -583,9 +596,132 @@ trait TelegramCommerceWalletFeatures
         return $verified;
     }
 
+    /** @return array{checked:int,cancelled:int,protected:int} */
+    public function cleanupExpiredTelegramOrders(?TelegramAccount $account = null, int $batch = 100): array
+    {
+        return app(TelegramPendingOrderPolicy::class)->cleanupExpired($account, $batch);
+    }
+
+    /**
+     * Customer-facing payment/delivery check that never turns a retryable paid
+     * order into a generic storefront error. Delivery remains idempotent through
+     * TelegramCommerceService::reconcile()/deliver().
+     */
+    public function checkPurchaseAndNotify(TelegramAccount $account, string $purchaseId): ?TelegramPurchase
+    {
+        $purchase = $purchaseId === 'latest'
+            ? TelegramPurchase::query()
+                ->where('telegram_account_id', $account->id)
+                ->whereNull('delivered_at')
+                ->whereIn('status', ['AWAITING_PAYMENT', 'PAID', 'DELIVERY_FAILED'])
+                ->latest()
+                ->first()
+            : TelegramPurchase::query()
+                ->where('telegram_account_id', $account->id)
+                ->whereKey($purchaseId)
+                ->first();
+
+        if (! $purchase) {
+            return null;
+        }
+
+        $checkFailed = false;
+
+        // A soft-cancelled one-hour-old unpaid order is intentionally closed.
+        // Do not resurrect it into AWAITING_PAYMENT from an old inline button.
+        if ($purchase->status !== 'CANCELLED') {
+            try {
+                $purchase = $this->checkPurchase($account, (string) $purchase->id) ?? $purchase;
+            } catch (Throwable $exception) {
+            // Keep the original paid/retry state. A Telegram/network delivery
+            // failure must not tell the customer to pay again or fall through to
+            // the webhook's generic error handler.
+            report($exception);
+            $checkFailed = true;
+            $purchase = TelegramPurchase::query()->find($purchase->id) ?? $purchase;
+
+            $order = $purchase->order()->with('paymentAttempts')->first();
+            $hasPaidEvidence = $order !== null
+                && (in_array((string) $order->status, ['PAID', 'FULFILLED'], true)
+                    || $order->paymentAttempts->contains(fn ($attempt): bool => (string) $attempt->status === 'PAID'));
+
+            if ($hasPaidEvidence && $purchase->delivered_at === null) {
+                $purchase->forceFill([
+                    'status' => 'DELIVERY_FAILED',
+                    'last_checked_at' => now(),
+                    'last_error' => 'Paid order delivery retry is pending. Inspect the server log for the underlying delivery error.',
+                ])->save();
+                    $purchase = $purchase->fresh();
+                }
+            }
+        }
+
+        $this->deletePurchaseQrIfFinished($purchase);
+        $km = $this->isKhmer($account);
+
+        if ($purchase->delivered_at !== null || $purchase->status === 'DELIVERED') {
+            // deliver() already sent the API key/access message. No duplicate
+            // success message is needed here.
+            return $purchase;
+        }
+
+        if (in_array((string) $purchase->status, ['PAID', 'DELIVERY_FAILED'], true)) {
+            $this->bot->sendMessage(
+                $account->chat_id,
+                $km
+                    ? "✅ ការទូទាត់បានបញ្ជាក់រួចហើយ។\n🔄 SP Cambo កំពុងព្យាយាមផ្ញើ API access ម្តងទៀត។\n\nកុំបង់ប្រាក់ម្តងទៀត។ ចុច Check ម្តងទៀតបន្តិចក្រោយ។"
+                    : "✅ Payment is already confirmed.\n🔄 SP Cambo is retrying API access delivery.\n\nDo not pay again. Tap Check again shortly.",
+                ['inline_keyboard' => [
+                    [[
+                        'text' => $km ? '🔄 ពិនិត្យម្តងទៀត' : '🔄 Check Again',
+                        'callback_data' => 'check:'.$purchase->id,
+                    ]],
+                    [
+                        ['text' => $km ? '🧾 ការបញ្ជាទិញ' : '🧾 Orders', 'callback_data' => 'orders:pending'],
+                        ['text' => '🏠 Home', 'callback_data' => 'home'],
+                    ],
+                ]],
+            );
+
+            return $purchase;
+        }
+
+        if ($purchase->status === 'CANCELLED') {
+            $this->bot->sendMessage(
+                $account->chat_id,
+                $km
+                    ? '⌛ ការបញ្ជាទិញមិនបានបង់នេះផុតកំណត់ និងត្រូវបានដកចេញពី Pending។ សូមបង្កើតការបញ្ជាទិញថ្មី។'
+                    : '⌛ This unpaid order expired and was removed from Pending. Please create a new order.',
+                ['inline_keyboard' => [[
+                    ['text' => $km ? '🛍 ហាង' : '🛍 Store', 'callback_data' => 'store:1'],
+                    ['text' => '🏠 Home', 'callback_data' => 'home'],
+                ]]],
+            );
+
+            return $purchase;
+        }
+
+        $this->bot->sendMessage(
+            $account->chat_id,
+            $checkFailed
+                ? ($km
+                    ? '⚠️ មិនអាចពិនិត្យ Bakong បានឥឡូវនេះទេ។ ការបញ្ជាទិញរបស់អ្នកត្រូវបានរក្សាទុក។ កុំបង់ម្ដងទៀត ហើយសាក Check ម្តងទៀតបន្តិចក្រោយ។'
+                    : '⚠️ Payment check is temporarily unavailable. Your order is preserved. Do not pay again; try Check again shortly.')
+                : ($km
+                    ? '⏳ មិនទាន់ឃើញការទូទាត់ទេ។ រង់ចាំបន្តិច ហើយចុច Check ម្តងទៀត។'
+                    : '⏳ Payment is not confirmed yet. Wait a moment and tap Check again.'),
+            ['inline_keyboard' => [[
+                ['text' => $km ? '🔄 ពិនិត្យ' : '🔄 Check', 'callback_data' => 'check:'.$purchase->id],
+                ['text' => $km ? '🧾 Pending' : '🧾 Pending', 'callback_data' => 'orders:pending'],
+            ]]],
+        );
+
+        return $purchase;
+    }
+
     public function deletePurchaseQrIfFinished(TelegramPurchase $purchase): void
     {
-        if ($purchase->delivered_at !== null || in_array($purchase->status, ['PAID', 'DELIVERED'], true)) {
+        if ($purchase->delivered_at !== null || in_array($purchase->status, ['PAID', 'DELIVERY_FAILED', 'DELIVERED'], true)) {
             $this->deletePurchaseQr($purchase);
         }
     }

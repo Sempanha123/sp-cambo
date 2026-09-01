@@ -1,78 +1,49 @@
-# SP Cambo Dashboard UI R11
+# SP Cambo Telegram Order Fix R4
 
-R11 fixes the R10 collapsed-sidebar UX and makes the interaction much smoother.
+This package is built on top of the Telegram Store UX R3 files.
 
-## Main behavior
+## What it fixes
 
-### Collapsed
-- real sidebar width is 0
-- a thin glowing left-edge rail remains visible
-- a compact floating `Menu` handle remains visible
+- Maximum **4 open Telegram purchase orders per user**.
+- When a 5th payable order is created, SP Cambo immediately soft-cancels the **oldest unpaid** order to keep the active queue at 4.
+- **Paid / delivery-retry orders are never deleted** by the limit.
+- Unpaid `AWAITING_PAYMENT` orders older than **1 hour** are automatically soft-cancelled by Laravel Scheduler.
+- Expired unpaid KHQR messages are deleted when possible and stock reservations are released.
+- `PAID` / `DELIVERY_FAILED` QR messages are removed so the customer is not encouraged to pay again.
+- Check buttons now retry payment/delivery safely and show a specific paid/retrying message instead of the generic storefront error.
+- Pending list is limited to 4 rows and explains the 4-order / 1-hour policy.
+- If all 4 slots are paid or protected delivery retries, a new order is blocked instead of deleting paid history.
 
-### Hover
-- hovering the far-left edge opens a separate overlay preview
-- the real `sidebarCollapsed` state DOES NOT change
-- main content never shifts or jumps
-- moving away closes the preview smoothly
+## Safety behavior
 
-### Click
-- clicking the edge handle pins the real sidebar open
-- the preview disappears
+“Delete” is implemented as **soft-cancel** (`CANCELLED`) for unpaid orders. The database order/payment rows are kept for audit and late-payment recovery. Paid evidence always wins and is never cancelled by cleanup.
 
-### Collapse again
-- a dedicated `panel-left-close` button is always visible in the expanded sidebar header
-- click it to collapse again
-- no dependency on Nuxt UI's built-in collapse action
+## Files
 
-## Smoothness
+Replace/add the included files at the same paths from your SP Cambo repository root:
 
-- custom Vue transition
-- opacity + slide + tiny scale
-- dedicated cubic-bezier timing
-- no layout mutation during hover preview
-- actual pinned sidebar also has width transitions
-- reduced-motion fallback
+- `backend/app/Services/TelegramCommerceWalletFeatures.php`
+- `backend/app/Services/TelegramStorefrontUiService.php`
+- `backend/app/Services/TelegramPendingOrderPolicy.php` (new)
+- `backend/app/Exceptions/TelegramPendingOrderLimitException.php` (new)
+- `backend/app/Http/Controllers/Api/V1/TelegramWebhookController.php`
+- `backend/app/Providers/TelegramOrderRetentionServiceProvider.php` (new)
+- `backend/bootstrap/providers.php`
 
-## Padding
+No `.env` changes and no new database migration are required.
 
-R10's explicit shared page padding remains included:
-- phone: 16px
-- tablet: 20px
-- desktop: 24px
-- consistent direct-section vertical gaps
-- safe-area bottom padding
+## Local verification
 
-## Full package
-
-This ZIP carries forward R9 + R10 and replaces the dashboard layout/CSS with R11 behavior.
-
-Primary changed files:
-- frontend/app/layouts/dashboard.vue
-- frontend/app/assets/css/sp-dashboard-r9.css
-
-Also included:
-- frontend/app/components/SpDashboardPage.vue
-- frontend/app/components/SpMetric.vue
-- frontend/app/components/SpPublicAliasIcon.vue
-- frontend/app/pages/dashboard/index.vue
-- frontend/app/pages/dashboard/usage.vue
-- frontend/public/model-alias-icons/*.gif
-
-## Apply
-
-Extract over the project root, then:
+From `backend`:
 
 ```powershell
-cd frontend
-npm run typecheck
-npm run build
+php artisan optimize:clear
+php artisan schedule:list
+php artisan test
 ```
 
-Desktop test:
-1. Open `/dashboard`
-2. Click the sidebar collapse button
-3. Sidebar becomes fully hidden
-4. Hover the far-left edge — preview should slide in without moving content
-5. Move away — preview closes
-6. Hover again and click `Menu` — sidebar pins open
-7. Click the `panel-left-close` button in its header — sidebar collapses again
+Your existing Laravel scheduler must still be running in production. The new retention provider registers `telegram:cleanup-expired-unpaid-orders` every minute; each run only cancels unpaid orders that are already at least one hour old.
+
+## Important for existing `Delivery retry pending` rows
+
+Those rows are intentionally preserved. Use their **Check** buttons (or let the existing `telegram:reconcile-purchases` scheduler retry them). When delivery succeeds, the existing commerce service marks them `DELIVERED` and they move to Completed.
