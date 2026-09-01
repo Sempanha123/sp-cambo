@@ -14,11 +14,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
 class RegisterController extends Controller
 {
     /**
-     * Create a local user and issue a Sanctum API token.
+     * Create a local user and establish the browser session requested by Nuxt.
      */
     public function __invoke(
         RegisterRequest $request,
@@ -44,12 +45,12 @@ class RegisterController extends Controller
                 'password' => Hash::make($request->string('password')->value()),
                 'tenant_id' => $tenant->id,
             ]);
+
             // email_verified_at is intentionally guarded on the User model.
             // Set it explicitly only after the one-time code was verified/consumed.
             $user->forceFill(['email_verified_at' => now()])->saveQuietly();
+
             // Registration must remain available on a fresh migrated database.
-            // Seeders still establish the complete authorization baseline, but a
-            // missing CUSTOMER row should never turn a public sign-up into a 500.
             $customerRole = Role::query()->firstOrCreate(
                 ['name' => 'CUSTOMER'],
                 ['label' => 'Customer'],
@@ -57,7 +58,9 @@ class RegisterController extends Controller
             $user->roles()->syncWithoutDetaching([$customerRole->id]);
 
             $referralCode = strtoupper($request->string('referral_code')->trim()->value());
-            if ($referralCode !== '' && $referrals->settings()->enabled && User::query()->where('referral_code', $referralCode)->exists()) {
+            if ($referralCode !== ''
+                && $referrals->settings()->enabled
+                && User::query()->where('referral_code', $referralCode)->exists()) {
                 $user = $referrals->claim($user, $referralCode);
             }
 
@@ -65,7 +68,8 @@ class RegisterController extends Controller
         });
 
         $token = null;
-        if ($request->attributes->get('sanctum') === true) {
+
+        if ($this->usesCookieSession($request)) {
             Auth::guard('web')->login($user);
             $request->session()->regenerate();
         } else {
@@ -78,5 +82,16 @@ class RegisterController extends Controller
                 'token' => $token,
             ],
         ], 201);
+    }
+
+    /**
+     * Nuxt cookie mode obtains /sanctum/csrf-cookie before registration and sends
+     * X-XSRF-TOKEN. Bearer mode does not. Keep both transports supported.
+     */
+    private function usesCookieSession(RegisterRequest $request): bool
+    {
+        return $request->hasHeader('X-XSRF-TOKEN')
+            && $request->hasSession()
+            && EnsureFrontendRequestsAreStateful::fromFrontend($request);
     }
 }
