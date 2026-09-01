@@ -157,6 +157,22 @@ export interface PublicApiKeyStatus {
   funding_source?: 'none' | 'account' | 'dedicated_key' | 'mixed'
   funding_note?: string | null
   allowed_models?: string[]
+  model_details?: Array<{
+    public_alias: string
+    display_name: string
+    status: string
+    context_tokens: number | null
+    max_output_tokens: number | null
+    capability_basis: string | null
+    features: string[]
+  }>
+  limits?: {
+    requests_per_minute: number | null
+    tokens_per_minute: number | null
+    concurrency: number | null
+    max_request_bytes: number | null
+    max_output_tokens: number | null
+  }
   created_at?: string
   expires_at?: string | null
   quota_remaining?: string | null

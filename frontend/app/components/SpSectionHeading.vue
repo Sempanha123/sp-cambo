@@ -17,17 +17,17 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div class="sp-r12-section-heading flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div class="space-y-1.5">
       <component
         :is="level === 2 ? 'h2' : 'h3'"
-        class="flex items-center gap-2 font-semibold tracking-tight text-highlighted"
+        class="sp-r12-section-heading__title flex items-center gap-2 font-semibold tracking-tight text-highlighted"
         :class="level === 2 ? 'text-lg' : 'text-base'"
       >
         <UIcon
           v-if="icon"
           :name="icon"
-          class="size-4 shrink-0 text-dimmed"
+          class="sp-r12-section-heading__icon size-4 shrink-0 text-dimmed"
         />
         {{ title }}
       </component>

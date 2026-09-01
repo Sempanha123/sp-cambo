@@ -41,7 +41,7 @@ const links = [
 
 <template>
   <div
-    class="sp-r8-bg"
+    class="sp-r8-bg sp-r12-bg"
     :class="{
       'sp-r8-bg--home': isHome,
       'sp-r8-bg--showcase': isShowcase,
@@ -52,6 +52,10 @@ const links = [
     <div class="sp-r8-bg__base" />
     <div class="sp-r8-bg__mesh" />
     <div class="sp-r8-bg__vignette" />
+    <div class="sp-r12-bg__micro-grid" />
+    <div class="sp-r12-bg__beam" />
+    <div class="sp-r12-bg__hud sp-r12-bg__hud--top" />
+    <div class="sp-r12-bg__hud sp-r12-bg__hud--bottom" />
 
     <div class="sp-r8-bg__aurora sp-r8-bg__aurora--a" />
     <div class="sp-r8-bg__aurora sp-r8-bg__aurora--b" />

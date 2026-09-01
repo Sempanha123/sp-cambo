@@ -36,11 +36,6 @@ const keepPreviewOpen = () => {
   clearPreviewTimer()
 }
 
-const closePreview = () => {
-  clearPreviewTimer()
-  hoverPreview.value = false
-}
-
 const closePreviewSoon = () => {
   if (!hoverPreview.value) return
 
@@ -156,13 +151,16 @@ const closePreviewAfterNavigation = () => {
 
 <template>
   <div
-    class="sp-r9-dashboard-shell sp-r11-dashboard-shell sp-dashboard-shell"
+    class="sp-r9-dashboard-shell sp-r11-dashboard-shell sp-r12-dashboard-shell sp-dashboard-shell"
     :class="{
       'sp-r11-dashboard-shell--collapsed': sidebarCollapsed,
       'sp-r11-dashboard-shell--previewing': hoverPreview
     }"
   >
-    <div class="sp-r9-dashboard-atmosphere" aria-hidden="true">
+    <div
+      class="sp-r9-dashboard-atmosphere"
+      aria-hidden="true"
+    >
       <div class="sp-r9-dashboard-atmosphere__grid" />
       <div class="sp-r9-dashboard-atmosphere__glow sp-r9-dashboard-atmosphere__glow--a" />
       <div class="sp-r9-dashboard-atmosphere__glow sp-r9-dashboard-atmosphere__glow--b" />
@@ -277,7 +275,7 @@ const closePreviewAfterNavigation = () => {
 
     <UDashboardGroup
       storage-key="sp-cambo-dashboard"
-      class="sp-r9-dashboard-group sp-r11-dashboard-group relative z-[1]"
+      class="sp-r9-dashboard-group sp-r11-dashboard-group sp-r12-dashboard-group relative z-[1]"
     >
       <UDashboardSidebar
         v-model:collapsed="sidebarCollapsed"

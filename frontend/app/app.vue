@@ -1,5 +1,9 @@
 <script setup lang="ts">
+import '@fontsource-variable/manrope/wght.css'
+import '@fontsource-variable/jetbrains-mono/wght.css'
+import '@fontsource-variable/noto-sans-khmer/wght.css'
 import '~/assets/css/sp-global-r4.css'
+import '~/assets/css/sp-technology-r12.css'
 import { spCamboLocale } from '~/utils/uiLocale'
 
 const auth = useAuthStore()
@@ -93,14 +97,20 @@ await auth.initialize()
 
 <template>
   <UApp :locale="spCamboLocale">
-    <NuxtLoadingIndicator color="var(--ui-primary)" />
+    <NuxtLoadingIndicator
+      color="linear-gradient(90deg, #5b7cff, #33d6ff, #8b5cff)"
+      :height="2"
+    />
 
     <!-- One animated atmosphere for public, auth, dashboard, admin and reseller pages. -->
     <SpGlobalMotionBackground />
 
     <div class="sp-global-stage relative z-[1] min-h-dvh">
       <NuxtLayout>
-        <NuxtPage :keepalive="{ max: 8 }" />
+        <NuxtPage
+          :keepalive="{ max: 8 }"
+          :transition="{ name: 'sp-r12-page', mode: 'out-in' }"
+        />
       </NuxtLayout>
     </div>
   </UApp>

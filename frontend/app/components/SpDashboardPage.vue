@@ -13,7 +13,7 @@ withDefaults(defineProps<{
 
 <template>
   <UDashboardPanel
-    class="sp-dashboard-page sp-r9-dashboard-page sp-r10-dashboard-page min-w-0 max-w-full overflow-hidden"
+    class="sp-dashboard-page sp-r9-dashboard-page sp-r10-dashboard-page sp-r12-dashboard-page min-w-0 max-w-full overflow-hidden"
     :ui="{
       body: 'p-0 overflow-y-auto'
     }"
@@ -22,7 +22,7 @@ withDefaults(defineProps<{
       <UDashboardNavbar
         :title="title"
         :icon="icon"
-        class="sp-dashboard-navbar sp-r9-dashboard-navbar shrink-0"
+        class="sp-dashboard-navbar sp-r9-dashboard-navbar sp-r12-dashboard-navbar shrink-0"
       >
         <template
           v-if="$slots.actions"
@@ -40,10 +40,10 @@ withDefaults(defineProps<{
         R10 owns the padding explicitly so every Dashboard/Admin/Reseller page
         gets the same breathing room instead of relying on page-specific spacing.
       -->
-      <div class="sp-dashboard-content sp-r9-dashboard-content sp-r10-dashboard-content mx-auto w-full min-w-0 max-w-[1440px]">
+      <div class="sp-dashboard-content sp-r9-dashboard-content sp-r10-dashboard-content sp-r12-dashboard-content mx-auto w-full min-w-0 max-w-[1440px]">
         <section
           v-if="description || eyebrow"
-          class="sp-dashboard-intro sp-page-lead min-w-0 overflow-hidden rounded-xl p-4 sm:p-5"
+          class="sp-dashboard-intro sp-page-lead sp-r12-page-lead min-w-0 overflow-hidden rounded-xl p-4 sm:p-5"
         >
           <div class="flex min-w-0 items-start gap-3">
             <div class="sp-page-lead-icon flex size-9 shrink-0 items-center justify-center rounded-lg border text-primary">

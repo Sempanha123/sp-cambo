@@ -19,6 +19,116 @@ class SellCatalogSeeder extends Seeder
     private const DAY = 86_400;
     private const LONG_CREDIT_VALIDITY = 365 * self::DAY;
     private const SP_CREDIT_UNITS = 100_000; // $1 displayed Credit = 100k locally metered Tokens.
+    private const PACKAGE_MINIMUM_MARGIN_BPS = 2_500;
+
+    /**
+     * R44 LOW-PRICE VOLUME CURVES:
+     *
+     * Prices are SP Cambo package prices, not provider list prices. Each family has
+     * one easy-to-review anchor and a decreasing multiplier for larger bundles.
+     * priceFromProfile() performs integer-only calculation, applies the same private
+     * reference-floor margin rule as the website, and rounds to a familiar x.x9
+     * price. assertPriceProfile() prevents an accidental unit-price increase.
+     *
+     * @var array<string,array{label:string,sort_order:int,anchor_units:int,anchor_price_minor:int,multipliers_bps:array<int,int>}>
+     */
+    private const TOKEN_PRICE_PROFILES = [
+        'claude' => [
+            'label' => 'Claude',
+            'sort_order' => 10,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 249,
+            'multipliers_bps' => [
+                10 => 18_000,
+                50 => 11_200,
+                100 => 10_000,
+                200 => 9_500,
+                300 => 9_300,
+                400 => 9_200,
+                500 => 9_000,
+                1000 => 8_000,
+            ],
+        ],
+        'codex' => [
+            'label' => 'Codex',
+            'sort_order' => 30,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 749,
+            'multipliers_bps' => [
+                10 => 10_000,
+                50 => 10_000,
+                100 => 10_000,
+                200 => 9_650,
+                300 => 9_300,
+                500 => 9_050,
+                1000 => 8_670,
+            ],
+        ],
+        'gemini' => [
+            'label' => 'Gemini',
+            'sort_order' => 50,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 199,
+            'multipliers_bps' => [
+                10 => 18_000,
+                50 => 11_500,
+                100 => 10_000,
+                200 => 9_200,
+                300 => 8_800,
+                500 => 8_500,
+                1000 => 7_250,
+            ],
+        ],
+    ];
+
+    /** @var array<string,array{label:string,sort_order:int,anchor_units:int,anchor_price_minor:int,multipliers_bps:array<int,int>}> */
+    private const CREDIT_PRICE_PROFILES = [
+        'claude' => [
+            'label' => 'Claude',
+            'sort_order' => 70,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 249,
+            'multipliers_bps' => [
+                50 => 11_200,
+                100 => 10_000,
+                200 => 9_100,
+                500 => 7_950,
+                1000 => 6_990,
+                2000 => 5_620,
+                3000 => 4_810,
+            ],
+        ],
+        'codex' => [
+            'label' => 'Codex',
+            'sort_order' => 90,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 499,
+            'multipliers_bps' => [
+                50 => 11_000,
+                100 => 10_000,
+                200 => 8_950,
+                500 => 8_000,
+                1000 => 7_000,
+                2000 => 6_010,
+                3000 => 5_340,
+            ],
+        ],
+        'gemini' => [
+            'label' => 'Gemini',
+            'sort_order' => 110,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 149,
+            'multipliers_bps' => [
+                50 => 11_000,
+                100 => 10_000,
+                200 => 9_200,
+                500 => 8_600,
+                1000 => 7_350,
+                2000 => 6_680,
+                3000 => 6_250,
+            ],
+        ],
+    ];
 
     /**
      * R29 keeps three stable operator-owned OmniRoute combo IDs. Public aliases are
@@ -43,9 +153,24 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                'opus-5' => 'Claude Opus 5',
-                'sonnet-5' => 'Claude Sonnet 5',
-                'haiku-4.5' => 'Claude Haiku 4.5',
+                'opus-5' => [
+                    'display_name' => 'Claude Opus 5',
+                    'context_tokens' => 1_000_000,
+                    'max_output_tokens' => 128_000,
+                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+                ],
+                'sonnet-5' => [
+                    'display_name' => 'Claude Sonnet 5',
+                    'context_tokens' => 1_000_000,
+                    'max_output_tokens' => 128_000,
+                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+                ],
+                'haiku-4.5' => [
+                    'display_name' => 'Claude Haiku 4.5',
+                    'context_tokens' => 200_000,
+                    'max_output_tokens' => 64_000,
+                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+                ],
             ],
             // Aggressive SP-local customer rates, USD exponent-3 units / 1M SP-metered tokens.
             'sell' => [
@@ -90,9 +215,24 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                '5.6-sol' => 'GPT-5.6 Sol',
-                '4.8-sol' => 'GPT-4.8 Sol',
-                'openai-codex' => 'OpenAI Codex',
+                '5.6-sol' => [
+                    'display_name' => 'GPT-5.6 Sol',
+                    'context_tokens' => 1_050_000,
+                    'max_output_tokens' => 128_000,
+                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+                ],
+                '4.8-sol' => [
+                    'display_name' => 'GPT-4.8 Sol',
+                    'context_tokens' => 400_000,
+                    'max_output_tokens' => 128_000,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
+                'openai-codex' => [
+                    'display_name' => 'OpenAI Codex',
+                    'context_tokens' => 400_000,
+                    'max_output_tokens' => 128_000,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
             ],
             'sell' => [
                 'input' => 75,        // $0.075
@@ -134,9 +274,24 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                'gemini-3.6-flash' => 'Gemini 3.6 Flash',
-                'gemini-3.6-pro' => 'Gemini 3.6 Pro',
-                'gemini-google-ai-studio' => 'Gemini Google AI Studio',
+                'gemini-3.6-flash' => [
+                    'display_name' => 'Gemini 3.6 Flash',
+                    'context_tokens' => 1_048_576,
+                    'max_output_tokens' => 65_536,
+                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+                ],
+                'gemini-3.6-pro' => [
+                    'display_name' => 'Gemini 3.6 Pro Route',
+                    'context_tokens' => 1_048_576,
+                    'max_output_tokens' => 65_536,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
+                'gemini-google-ai-studio' => [
+                    'display_name' => 'Gemini Google AI Studio',
+                    'context_tokens' => 1_048_576,
+                    'max_output_tokens' => 65_536,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
             ],
             'sell' => [
                 'input' => 18,        // $0.018
@@ -212,12 +367,20 @@ class SellCatalogSeeder extends Seeder
             $modelIds[] = $model->id;
 
             $routeAliases[$routeKey] = [];
-            foreach ($route['aliases'] as $publicAlias => $displayName) {
+            foreach ($route['aliases'] as $publicAlias => $aliasProfile) {
+                $displayName = (string) $aliasProfile['display_name'];
+                $contextTokens = (int) $aliasProfile['context_tokens'];
+                $maxOutputTokens = (int) $aliasProfile['max_output_tokens'];
+                $capabilityBasis = (string) $aliasProfile['capability_basis'];
+                $description = $capabilityBasis === 'PROVIDER_PUBLIC_SPEC'
+                    ? 'SP Cambo routing alias. Capability window values follow the provider-published model specification; package and service limits may be lower. Routing and prices are operated by SP Cambo and are not provider list prices.'
+                    : 'SP Cambo-specific routing alias for the operator-configured combo. Capability values are an SP Cambo route profile, not a provider-published model specification. Routing and prices are operated by SP Cambo.';
+
                 $alias = ModelAlias::query()->firstOrNew(['public_alias' => $publicAlias]);
                 $alias->forceFill([
                     'ai_model_id' => $model->id,
                     'display_name' => $displayName,
-                    'description' => 'SP Cambo public routing alias. It is served by the operator-configured OmniRoute combo and may use backend failover; the public label does not change the private combo ID.',
+                    'description' => $description,
                     'status' => 'active',
                     'enabled' => true,
                     'customer_visible' => true,
@@ -230,11 +393,12 @@ class SellCatalogSeeder extends Seeder
                         'tools' => true,
                         'vision' => (bool) $route['vision'],
                         'reasoning' => (bool) $route['reasoning'],
-                        'context_tokens' => (int) $route['context_tokens'],
-                        'max_output_tokens' => (int) $route['max_output_tokens'],
+                        'context_tokens' => $contextTokens,
+                        'max_output_tokens' => $maxOutputTokens,
+                        'capability_basis' => $capabilityBasis,
                     ],
-                    'limits' => $this->customerLimits() + [
-                        'context_tokens' => (int) $route['context_tokens'],
+                    'limits' => $this->customerLimits($maxOutputTokens) + [
+                        'context_tokens' => $contextTokens,
                         'billing_unit_label' => 'Tokens',
                         'billing_multipliers_bps' => $route['billing_multipliers_bps'],
                         'billing_usage_classes' => ['input', 'output', 'cache_read'],
@@ -270,7 +434,7 @@ class SellCatalogSeeder extends Seeder
                     'upstream_cost_verified_at' => now(),
                 ])->save();
 
-                $this->assertLocalReferenceMargin($publicAlias, $sell, $reference, 2500);
+                $this->assertLocalReferenceMargin($publicAlias, $sell, $reference, self::PACKAGE_MINIMUM_MARGIN_BPS);
             }
         }
 
@@ -319,8 +483,8 @@ class SellCatalogSeeder extends Seeder
                     'duration_seconds' => 30 * self::DAY,
                     'limits' => $this->customerLimits(),
                     'auto_creates_api_key' => true,
-                    'minimum_margin_bps' => 2500,
-                    'profitability_override_reason' => 'R43 final margin-balanced policy: SP Cambo meters new input/output 1:1 and locally matched repeated context at 0.25x. OmniRoute/provider usage, cache and cost metadata never control customer billing. Package prices use volume tiers with lower effective unit cost on larger bundles.',
+                    'minimum_margin_bps' => self::PACKAGE_MINIMUM_MARGIN_BPS,
+                    'profitability_override_reason' => null,
                     'stock_quantity' => null,
                     'enabled' => true,
                     'customer_visible' => true,
@@ -346,27 +510,27 @@ class SellCatalogSeeder extends Seeder
         if ($this->command) {
             $routeReady = $provider->fresh()->activeConnectionRevision?->isRouteReady() ?? false;
             $this->command->newLine();
-            $this->command->info('SP Cambo R43 final margin-balanced billing seed completed.');
+            $this->command->info('SP Cambo R44 low-price volume billing seed completed.');
             $this->command->line($bootstrapRevision
                 ? 'OmniRoute bootstrap revision exists; probe/activate it in Admin > Providers.'
                 : 'Configure OmniRoute in Admin > Providers, then Probe and Activate.');
             $this->command->line('Private combo IDs: AgentRouter-claude-opus-5, OpenAI Codex, Gemini Google AI Studio.');
             $this->command->line('Public aliases: '.implode(', ', $allPublicAliases).'.');
-            $this->command->line('Final volume-priced 1-day Token lines + long-life dollar Credit lines seeded for Claude, Codex and Gemini.');
+            $this->command->line('Calculated volume-priced 1-day Token lines + long-life SP Credit lines seeded for Claude, Codex and Gemini.');
             $this->command->line('Customer billing: local 1:1 new input/output; locally reused context bills at 0.25x; OmniRoute/provider usage and cost metadata are ignored.');
             $this->command->line('Provider route: '.($routeReady ? 'READY' : 'NOT READY - Probe/activate Admin > Providers > OmniRoute'));
         }
     }
 
     /** @return array<string,int> */
-    private function customerLimits(): array
+    private function customerLimits(int $maxOutputTokens = 65_536): array
     {
         return [
             'requests_per_minute' => 60,
             'tokens_per_minute' => 200_000,
             'concurrency' => 4,
             'max_request_bytes' => 1_048_576,
-            'max_output_tokens' => 65_536,
+            'max_output_tokens' => $maxOutputTokens,
         ];
     }
 
@@ -432,121 +596,161 @@ class SellCatalogSeeder extends Seeder
     {
         $packages = [];
 
-        // Competitor screenshots: active Claude token line was roughly $0.75/10M,
-        // $1.75/50M, $2.50/100M, $5/200M, $7.50/300M, $10/400M,
-        // $12/500M and $17.80/1B. R43 keeps a competitive range while adding a little more margin and preserving lower effective unit prices on larger bundles.
-        foreach ([
-            [10, 79], [50, 179], [100, 259], [200, 499],
-            [300, 739], [400, 969], [500, 1199], [1000, 1799],
-        ] as $index => [$millions, $priceMinor]) {
-            $packages[] = $this->tokenPackage(
-                "claude-token-{$millions}m",
-                $millions === 1000 ? 'Claude 1B Tokens' : "Claude {$millions}M Tokens",
-                'Claude Token',
-                $millions * 1_000_000,
-                $priceMinor,
-                10 + $index,
-                $routeAliases['claude'],
-                $millions === 100,
-                self::DAY,
-                self::ROUTES['claude'],
-            );
+        foreach (self::TOKEN_PRICE_PROFILES as $routeKey => $profile) {
+            $route = self::ROUTES[$routeKey];
+            $prices = $this->calculatedPrices($profile, $route, 1_000_000);
+            $this->assertPriceProfile("{$routeKey} Token", $prices);
+
+            foreach (array_keys($profile['multipliers_bps']) as $index => $millions) {
+                $label = $profile['label'];
+                $packages[] = $this->tokenPackage(
+                    "{$routeKey}-token-{$millions}m",
+                    $millions === 1000 ? "{$label} 1B Tokens" : "{$label} {$millions}M Tokens",
+                    $label,
+                    $millions * 1_000_000,
+                    $prices[$millions],
+                    $profile['sort_order'] + $index,
+                    $routeAliases[$routeKey],
+                    $millions === 100,
+                    self::DAY,
+                    $route,
+                );
+            }
         }
 
-        // Competitor Codex showed $7.50/100M and $15/200M, while 10M/50M were
-        // sold out. R43 keeps those entry tiers available and applies progressive volume pricing.
-        foreach ([
-            [10, 79], [50, 379], [100, 749], [200, 1449],
-            [300, 2099], [500, 3449], [1000, 6499],
-        ] as $index => [$millions, $priceMinor]) {
-            $packages[] = $this->tokenPackage(
-                "codex-token-{$millions}m",
-                $millions === 1000 ? 'Codex 1B Tokens' : "Codex {$millions}M Tokens",
-                'Codex Token',
-                $millions * 1_000_000,
-                $priceMinor,
-                30 + $index,
-                $routeAliases['codex'],
-                $millions === 100,
-                self::DAY,
-                self::ROUTES['codex'],
-            );
-        }
+        // SP Credits are quota-backed platform units, not USD, withdrawable cash,
+        // raw provider tokens or an official provider price. One displayed Credit
+        // settles as exactly 100,000 SP Cambo billable Tokens.
+        foreach (self::CREDIT_PRICE_PROFILES as $routeKey => $profile) {
+            $route = self::ROUTES[$routeKey];
+            $prices = $this->calculatedPrices($profile, $route, self::SP_CREDIT_UNITS);
+            $this->assertPriceProfile("{$routeKey} Credit", $prices);
 
-        // Gemini is the low-price acquisition line.
-        foreach ([
-            [10, 59], [50, 129], [100, 209], [200, 379],
-            [300, 549], [500, 869], [1000, 1499],
-        ] as $index => [$millions, $priceMinor]) {
-            $packages[] = $this->tokenPackage(
-                "gemini-token-{$millions}m",
-                $millions === 1000 ? 'Gemini 1B Tokens' : "Gemini {$millions}M Tokens",
-                'Gemini Token',
-                $millions * 1_000_000,
-                $priceMinor,
-                50 + $index,
-                $routeAliases['gemini'],
-                $millions === 100,
-                self::DAY,
-                self::ROUTES['gemini'],
-            );
-        }
-
-        // Credits are dollar-denominated platform usage credits backed by quota,
-        // not withdrawable cash and not raw provider tokens. $1 Credit =
-        // 100,000 platform Tokens for settlement.
-        foreach ([
-            [50, 159], [100, 269], [200, 489], [500, 1079],
-            [1000, 1899], [2000, 2699], [3000, 3299],
-        ] as $index => [$credits, $priceMinor]) {
-            $packages[] = $this->creditQuotaPackage(
-                "claude-credit-{$credits}",
-                "Claude $".number_format($credits)." Credits",
-                'Claude Credits',
-                $credits,
-                $priceMinor,
-                70 + $index,
-                $routeAliases['claude'],
-                $credits === 100,
-                self::ROUTES['claude'],
-            );
-        }
-
-        foreach ([
-            [50, 299], [100, 519], [200, 919], [500, 2049],
-            [1000, 3599], [2000, 6199], [3000, 8199],
-        ] as $index => [$credits, $priceMinor]) {
-            $packages[] = $this->creditQuotaPackage(
-                "codex-credit-{$credits}",
-                "Codex $".number_format($credits)." Credits",
-                'Codex Credits',
-                $credits,
-                $priceMinor,
-                90 + $index,
-                $routeAliases['codex'],
-                $credits === 100,
-                self::ROUTES['codex'],
-            );
-        }
-
-        foreach ([
-            [50, 99], [100, 169], [200, 319], [500, 699],
-            [1000, 1199], [2000, 2099], [3000, 2899],
-        ] as $index => [$credits, $priceMinor]) {
-            $packages[] = $this->creditQuotaPackage(
-                "gemini-credit-{$credits}",
-                "Gemini $".number_format($credits)." Credits",
-                'Gemini Credits',
-                $credits,
-                $priceMinor,
-                110 + $index,
-                $routeAliases['gemini'],
-                $credits === 100,
-                self::ROUTES['gemini'],
-            );
+            foreach (array_keys($profile['multipliers_bps']) as $index => $credits) {
+                $label = $profile['label'];
+                $packages[] = $this->creditQuotaPackage(
+                    "{$routeKey}-credit-{$credits}",
+                    "{$label} $".number_format($credits)." SP Credits",
+                    $label,
+                    $credits,
+                    $prices[$credits],
+                    $profile['sort_order'] + $index,
+                    $routeAliases[$routeKey],
+                    $credits === 100,
+                    $route,
+                );
+            }
         }
 
         return $packages;
+    }
+
+    /**
+     * @param array{anchor_units:int,anchor_price_minor:int,multipliers_bps:array<int,int>} $profile
+     * @param array<string,mixed> $route
+     */
+    private function priceFromProfile(array $profile, int $units, array $route, int $billableTokenUnits): int
+    {
+        $multiplierBps = (int) ($profile['multipliers_bps'][$units] ?? 0);
+        if ($units <= 0 || $billableTokenUnits <= 0 || $profile['anchor_units'] <= 0 || $profile['anchor_price_minor'] <= 0 || $multiplierBps <= 0) {
+            throw new \RuntimeException('R44 package price profile contains an invalid value.');
+        }
+
+        $numerator = $profile['anchor_price_minor'] * $units * $multiplierBps;
+        $denominator = $profile['anchor_units'] * 10_000;
+        $rawPriceMinor = intdiv($numerator + $denominator - 1, $denominator);
+        $curvePriceMinor = $this->friendlyPriceMinor($rawPriceMinor);
+        $referenceCostMinor = intdiv(
+            ($billableTokenUnits * $this->referenceCostPerMillionMinor($route)) + 999_999,
+            1_000_000,
+        );
+        $marginDenominator = 10_000 - self::PACKAGE_MINIMUM_MARGIN_BPS;
+        $minimumSafePriceMinor = intdiv(
+            ($referenceCostMinor * 10_000) + $marginDenominator - 1,
+            $marginDenominator,
+        );
+
+        return max($curvePriceMinor, $this->friendlyPriceMinor($minimumSafePriceMinor));
+    }
+
+    /**
+     * @param array{anchor_units:int,anchor_price_minor:int,multipliers_bps:array<int,int>} $profile
+     * @param array<string,mixed> $route
+     * @return array<int,int>
+     */
+    private function calculatedPrices(array $profile, array $route, int $billableTokensPerUnit): array
+    {
+        $prices = [];
+        foreach (array_keys($profile['multipliers_bps']) as $units) {
+            $prices[$units] = $this->priceFromProfile(
+                $profile,
+                $units,
+                $route,
+                $units * $billableTokensPerUnit,
+            );
+        }
+
+        // Work backwards so friendly x.x9 rounding cannot make a larger tier
+        // accidentally cost more per unit than the tier immediately below it.
+        $units = array_keys($prices);
+        for ($index = count($units) - 2; $index >= 0; $index--) {
+            $currentUnits = $units[$index];
+            $nextUnits = $units[$index + 1];
+            $minimumForCurve = intdiv(
+                ($prices[$nextUnits] * $currentUnits) + $nextUnits - 1,
+                $nextUnits,
+            );
+            $prices[$currentUnits] = max($prices[$currentUnits], $this->friendlyPriceMinor($minimumForCurve));
+        }
+
+        return $prices;
+    }
+
+    /** @param array<string,mixed> $route */
+    private function referenceCostPerMillionMinor(array $route): int
+    {
+        $worst = 0;
+        foreach (['input', 'output', 'cache_read'] as $class) {
+            $reference = (int) ($route['reference'][$class] ?? 0);
+            $weight = max(1, (int) ($route['weights'][$class] ?? 1_000_000));
+            $normalizedExponentThree = intdiv(($reference * 1_000_000) + $weight - 1, $weight);
+            $packageMinor = intdiv($normalizedExponentThree + 9, 10);
+            $worst = max($worst, $packageMinor);
+        }
+
+        if ($worst <= 0) {
+            throw new \RuntimeException('R44 package price profile has no positive private reference floor.');
+        }
+
+        return $worst;
+    }
+
+    private function friendlyPriceMinor(int $priceMinor): int
+    {
+        // Round up to a customer-friendly amount ending in 9 cents without using floats.
+        return $priceMinor < 10
+            ? $priceMinor
+            : (intdiv($priceMinor + 10, 10) * 10) - 1;
+    }
+
+    /** @param array<int,int> $prices */
+    private function assertPriceProfile(string $label, array $prices): void
+    {
+        $previousUnits = 0;
+        $previousPriceMinor = 0;
+
+        foreach ($prices as $units => $priceMinor) {
+            if ($units <= $previousUnits || $priceMinor <= $previousPriceMinor) {
+                throw new \RuntimeException("R44 {$label} tiers must increase in units and total price.");
+            }
+
+            if ($previousUnits > 0 && $priceMinor * $previousUnits > $previousPriceMinor * $units) {
+                throw new \RuntimeException("R44 {$label} effective unit price must not increase for a larger tier.");
+            }
+
+            $previousUnits = $units;
+            $previousPriceMinor = $priceMinor;
+        }
     }
 
     /** @param list<string> $aliases @param array<string,mixed> $route @return array<string,mixed> */
@@ -565,7 +769,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => number_format($units).' Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day.',
+            'subtitle' => number_format($units).' SP Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day. SP Cambo package price; not provider API list pricing.',
             'badge' => $featured ? 'Popular' : ($units >= 500_000_000 ? 'Best bulk value' : ($units >= 100_000_000 ? 'Volume value' : 'Starter value')),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
@@ -578,6 +782,7 @@ class SellCatalogSeeder extends Seeder
             'duration_seconds' => $durationSeconds,
             'featured' => $featured,
             'sort_order' => $sortOrder,
+            'limits' => $this->customerLimits((int) $route['max_output_tokens']),
             'billing_rules' => [
                 'input_weight_microunits' => $route['weights']['input'],
                 'output_weight_microunits' => $route['weights']['output'],
@@ -588,6 +793,7 @@ class SellCatalogSeeder extends Seeder
                 'minimum_request_units' => (int) $route['minimum_request_units'],
                 'local_cache_read_billing_bps' => (int) $route['local_cache_read_billing_bps'],
                 'metering_method' => 'LOCAL_CACHE_AWARE_V1',
+                'pricing_basis' => 'SP_CAMBO_VOLUME_CURVE_R44',
                 'package_kind' => 'SP_TOKENS',
             ],
             'aliases' => $aliases,
@@ -611,7 +817,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => '$'.number_format($credits).' Credits. $1 Credit = '.number_format(self::SP_CREDIT_UNITS).' billable Tokens. Locally reused context uses 0.25x. Larger bundles lower the effective purchase price. Platform usage credit only; not withdrawable cash.',
+            'subtitle' => '$'.number_format($credits).' SP Credits. $1 SP Credit = '.number_format(self::SP_CREDIT_UNITS).' billable SP Tokens. Locally reused context uses 0.25x. Platform usage credit only; not USD, provider credit, or withdrawable cash.',
             'badge' => $featured ? 'Popular credits' : ($credits >= 1000 ? 'Best bulk value' : 'Long-life value'),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
@@ -624,6 +830,7 @@ class SellCatalogSeeder extends Seeder
             'duration_seconds' => self::LONG_CREDIT_VALIDITY,
             'featured' => $featured,
             'sort_order' => $sortOrder,
+            'limits' => $this->customerLimits((int) $route['max_output_tokens']),
             'billing_rules' => [
                 'input_weight_microunits' => $route['weights']['input'],
                 'output_weight_microunits' => $route['weights']['output'],
@@ -634,8 +841,9 @@ class SellCatalogSeeder extends Seeder
                 'minimum_request_units' => (int) $route['minimum_request_units'],
                 'local_cache_read_billing_bps' => (int) $route['local_cache_read_billing_bps'],
                 'metering_method' => 'LOCAL_CACHE_AWARE_V1',
+                'pricing_basis' => 'SP_CAMBO_VOLUME_CURVE_R44',
                 'display_units' => $credits,
-                'display_unit_label' => 'Credits',
+                'display_unit_label' => 'SP Credits',
                 'sp_credit_billable_units' => self::SP_CREDIT_UNITS,
                 'package_kind' => 'SP_CREDITS',
             ],

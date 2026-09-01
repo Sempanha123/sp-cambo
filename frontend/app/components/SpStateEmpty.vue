@@ -17,7 +17,7 @@ withDefaults(defineProps<{
   -->
   <div
     role="status"
-    class="flex flex-col items-center gap-4 rounded-lg border border-default bg-elevated/30 px-6 py-12 text-center"
+    class="sp-r12-state flex flex-col items-center gap-4 rounded-lg border border-default bg-elevated/30 px-6 py-12 text-center"
   >
     <div class="flex size-11 items-center justify-center rounded-full bg-elevated text-dimmed">
       <UIcon

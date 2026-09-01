@@ -3,12 +3,21 @@
 </script>
 
 <template>
-  <div class="sp-r4-layout sp-r4-auth-layout sp-auth-shell flex min-h-svh flex-col">
-    <div class="sp-r4-layout-mesh" aria-hidden="true" />
-    <div class="sp-r4-auth-orbit sp-r4-auth-orbit--a" aria-hidden="true" />
-    <div class="sp-r4-auth-orbit sp-r4-auth-orbit--b" aria-hidden="true" />
+  <div class="sp-r4-layout sp-r4-auth-layout sp-r12-layout sp-r12-auth-layout sp-auth-shell flex min-h-svh flex-col">
+    <div
+      class="sp-r4-layout-mesh"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-auth-orbit sp-r4-auth-orbit--a"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-auth-orbit sp-r4-auth-orbit--b"
+      aria-hidden="true"
+    />
 
-    <header class="sp-r4-auth-header relative z-10 flex items-center justify-between px-4 py-5 sm:px-8 lg:px-10">
+    <header class="sp-r4-auth-header sp-r12-auth-header relative z-10 flex items-center justify-between px-4 py-5 sm:px-8 lg:px-10">
       <NuxtLink
         to="/"
         class="inline-flex items-center gap-2.5"
@@ -34,8 +43,11 @@
     </header>
 
     <div class="relative z-[1] mx-auto grid w-full max-w-7xl flex-1 items-stretch gap-8 px-4 pb-8 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-10 lg:pb-10">
-      <aside class="sp-auth-showcase sp-r4-glass-panel relative hidden min-h-[38rem] overflow-hidden rounded-[1.4rem] p-8 lg:flex lg:flex-col lg:justify-between xl:p-10">
-        <div class="sp-r4-panel-scan" aria-hidden="true" />
+      <aside class="sp-auth-showcase sp-r4-glass-panel sp-r12-auth-showcase relative hidden min-h-[38rem] overflow-hidden rounded-[1.4rem] p-8 lg:flex lg:flex-col lg:justify-between xl:p-10">
+        <div
+          class="sp-r4-panel-scan"
+          aria-hidden="true"
+        />
         <div
           class="sp-khmer-motif pointer-events-none absolute inset-0 opacity-[0.18]"
           aria-hidden="true"
@@ -70,7 +82,7 @@
             </p>
             <p
               class="text-sm font-medium text-default"
-              style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
+              style="font-family: 'Noto Sans Khmer Variable', 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
             >
               បច្ចេកវិទ្យា AI សម្រាប់កម្ពុជា · សាមញ្ញ សុវត្ថិភាព និងងាយគ្រប់គ្រង
             </p>

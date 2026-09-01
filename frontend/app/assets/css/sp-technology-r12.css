@@ -1,0 +1,677 @@
+/*
+ * SP Cambo R12 — technology interface layer
+ *
+ * A shared visual system for public, auth and dashboard routes. The layer is
+ * intentionally class-driven so it can modernise every screen without changing
+ * any product logic, API contract or page-specific content.
+ */
+
+:root {
+  --sp-r12-cyan: 36 211 238;
+  --sp-r12-blue: 79 110 255;
+  --sp-r12-violet: 139 92 246;
+  --sp-r12-ink: 7 12 26;
+  --sp-r12-panel: rgb(10 17 35 / 0.72);
+  --sp-r12-panel-strong: rgb(8 14 30 / 0.9);
+  --sp-r12-line: rgb(148 163 184 / 0.13);
+  --sp-r12-line-hot: rgb(var(--sp-r12-cyan) / 0.34);
+  --sp-r12-glow: 0 0 0 1px rgb(var(--sp-r12-blue) / 0.07), 0 22px 70px rgb(1 7 22 / 0.28);
+  --sp-r12-glow-hot: 0 0 0 1px rgb(var(--sp-r12-cyan) / 0.16), 0 18px 55px rgb(var(--sp-r12-blue) / 0.14);
+  --sp-r12-radius: 1rem;
+}
+
+html.light {
+  --sp-r12-panel: rgb(255 255 255 / 0.74);
+  --sp-r12-panel-strong: rgb(255 255 255 / 0.92);
+  --sp-r12-line: rgb(51 65 85 / 0.12);
+  --sp-r12-line-hot: rgb(37 99 235 / 0.27);
+  --sp-r12-glow: 0 0 0 1px rgb(59 130 246 / 0.05), 0 20px 60px rgb(30 64 175 / 0.1);
+  --sp-r12-glow-hot: 0 0 0 1px rgb(6 182 212 / 0.13), 0 18px 50px rgb(37 99 235 / 0.11);
+}
+
+html,
+body {
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  font-variation-settings: "wght" 450;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  letter-spacing: -0.005em;
+}
+
+::selection {
+  background: rgb(var(--sp-r12-cyan) / 0.25);
+  color: var(--ui-text-highlighted);
+}
+
+* {
+  scrollbar-color: rgb(var(--sp-r12-blue) / 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgb(var(--sp-r12-cyan) / 0.42), rgb(var(--sp-r12-blue) / 0.38)) padding-box;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  font-variation-settings: "wght" 720;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+:where(code, pre, kbd, samp, .sp-numeric) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+:where(:lang(km), .sp-khmer-chip) {
+  font-family: 'Noto Sans Khmer Variable', 'Noto Sans Khmer', 'Khmer OS System', sans-serif;
+  letter-spacing: 0;
+}
+
+/* Route changes feel precise without hiding content behind long animation. */
+.sp-r12-page-enter-active,
+.sp-r12-page-leave-active {
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1), filter 180ms ease;
+}
+
+.sp-r12-page-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+  filter: blur(3px);
+}
+
+.sp-r12-page-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
+  filter: blur(2px);
+}
+
+/* ── Ambient technology canvas ───────────────────────────────────────────── */
+.sp-r12-bg__micro-grid,
+.sp-r12-bg__beam,
+.sp-r12-bg__hud {
+  position: absolute;
+  pointer-events: none;
+}
+
+.sp-r12-bg__micro-grid {
+  inset: 0;
+  opacity: .2;
+  background-image:
+    linear-gradient(rgb(var(--sp-r12-cyan) / .07) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--sp-r12-cyan) / .07) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, black, transparent 64%);
+}
+
+.sp-r12-bg__beam {
+  inset: -20% -12%;
+  opacity: .4;
+  background: conic-gradient(from 210deg at 52% 38%, transparent 0deg, rgb(var(--sp-r12-cyan) / .075) 11deg, transparent 27deg);
+  animation: sp-r12-beam 18s ease-in-out infinite alternate;
+}
+
+.sp-r12-bg__hud {
+  left: clamp(1rem, 4vw, 4rem);
+  right: clamp(1rem, 4vw, 4rem);
+  height: 20px;
+  opacity: .36;
+  border-inline: 1px solid rgb(var(--sp-r12-cyan) / .3);
+}
+
+.sp-r12-bg__hud::before,
+.sp-r12-bg__hud::after {
+  position: absolute;
+  top: 0;
+  width: clamp(3rem, 10vw, 9rem);
+  height: 1px;
+  content: '';
+  background: linear-gradient(90deg, rgb(var(--sp-r12-cyan) / .65), transparent);
+}
+
+.sp-r12-bg__hud::before { left: 0; }
+.sp-r12-bg__hud::after { right: 0; transform: scaleX(-1); }
+.sp-r12-bg__hud--top { top: 5.75rem; }
+.sp-r12-bg__hud--bottom { bottom: 2.5rem; transform: rotate(180deg); }
+
+.sp-r8-bg--private .sp-r12-bg__micro-grid { opacity: .1; }
+.sp-r8-bg--private .sp-r12-bg__beam { opacity: .22; }
+
+html.light .sp-r12-bg__micro-grid { opacity: .12; }
+html.light .sp-r12-bg__beam { opacity: .2; }
+
+@keyframes sp-r12-beam {
+  from { transform: translate3d(-2%, -1%, 0) rotate(-1deg); }
+  to { transform: translate3d(3%, 2%, 0) rotate(2deg); }
+}
+
+/* ── Brand and navigation ────────────────────────────────────────────────── */
+.sp-r12-wordmark {
+  min-width: 0;
+  line-height: 1;
+}
+
+.sp-r12-wordmark__name {
+  display: block;
+  font-size: .9rem;
+  font-variation-settings: "wght" 770;
+  letter-spacing: -.04em;
+}
+
+.sp-r12-wordmark__meta {
+  display: block;
+  margin-top: .24rem;
+  color: rgb(var(--sp-r12-cyan) / .78);
+  font-family: var(--font-mono);
+  font-size: .52rem;
+  font-variation-settings: "wght" 600;
+  letter-spacing: .17em;
+  text-transform: uppercase;
+}
+
+.sp-r12-header {
+  border-bottom-color: var(--sp-r12-line) !important;
+  background: color-mix(in oklab, var(--sp-r12-panel-strong) 82%, transparent) !important;
+  box-shadow: 0 1px 0 rgb(var(--sp-r12-cyan) / .035), 0 12px 40px rgb(2 6 23 / .08);
+  backdrop-filter: blur(22px) saturate(135%);
+}
+
+.sp-r12-header::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(90deg, transparent 5%, rgb(var(--sp-r12-cyan) / .22) 35%, rgb(var(--sp-r12-blue) / .18) 65%, transparent 95%);
+}
+
+.sp-r12-header nav a,
+.sp-r12-header nav button {
+  letter-spacing: -.015em;
+}
+
+.sp-r12-header nav a {
+  position: relative;
+}
+
+.sp-r12-header nav a::after {
+  position: absolute;
+  right: 34%;
+  bottom: -.52rem;
+  left: 34%;
+  height: 1px;
+  border-radius: 999px;
+  content: '';
+  opacity: 0;
+  background: rgb(var(--sp-r12-cyan));
+  box-shadow: 0 0 10px rgb(var(--sp-r12-cyan) / .7);
+  transition: right 180ms ease, left 180ms ease, opacity 180ms ease;
+}
+
+.sp-r12-header nav a:hover::after,
+.sp-r12-header nav a.router-link-active::after {
+  right: 10%;
+  left: 10%;
+  opacity: .9;
+}
+
+.sp-r12-footer {
+  border-top-color: var(--sp-r12-line) !important;
+  background: linear-gradient(180deg, transparent, rgb(var(--sp-r12-ink) / .3));
+}
+
+html.light .sp-r12-footer {
+  background: linear-gradient(180deg, transparent, rgb(239 246 255 / .48));
+}
+
+/* ── Buttons, controls and keyboard focus ───────────────────────────────── */
+.sp-global-stage :where(button, a)[data-slot="base"] {
+  font-variation-settings: "wght" 630;
+  letter-spacing: -.018em;
+  transition: transform 160ms ease, box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):active {
+  transform: translateY(0) scale(.985);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:focus-visible,
+.sp-global-stage :where(input, textarea, select):focus-visible {
+  outline: 2px solid rgb(var(--sp-r12-cyan) / .72);
+  outline-offset: 2px;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class*="bg-primary"] {
+  border-color: rgb(var(--sp-r12-cyan) / .2);
+  background-image: linear-gradient(112deg, rgb(var(--sp-r12-blue)), rgb(89 82 224) 54%, rgb(var(--sp-r12-violet))) !important;
+  box-shadow: 0 8px 26px rgb(var(--sp-r12-blue) / .19), inset 0 1px rgb(255 255 255 / .16);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class*="bg-primary"]:hover {
+  box-shadow: 0 11px 34px rgb(var(--sp-r12-blue) / .28), 0 0 0 1px rgb(var(--sp-r12-cyan) / .18), inset 0 1px rgb(255 255 255 / .2);
+}
+
+/* Nuxt UI inputs keep their data-slot on the native control. */
+.sp-global-stage :where(input, textarea, select)[data-slot="base"] {
+  border-color: var(--sp-r12-line) !important;
+  background: color-mix(in oklab, var(--sp-r12-panel-strong) 70%, transparent) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .025), 0 1px 0 rgb(0 0 0 / .08);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.sp-global-stage :where(input, textarea, select)[data-slot="base"]:focus {
+  border-color: var(--sp-r12-line-hot) !important;
+  background: var(--sp-r12-panel-strong) !important;
+  box-shadow: 0 0 0 3px rgb(var(--sp-r12-cyan) / .07), 0 10px 28px rgb(2 6 23 / .09);
+}
+
+.sp-global-stage label {
+  font-variation-settings: "wght" 610;
+  letter-spacing: -.012em;
+}
+
+/* ── Shared surfaces ─────────────────────────────────────────────────────── */
+.sp-app-card,
+.sp-premium-card,
+.sp-auth-card,
+.sp-dashboard-section,
+.sp-admin-mini-card,
+.sp-admin-record,
+.sp-buy-package-card,
+.sp-checkout-card,
+.sp-catalog-option,
+.sp-key-checker-card,
+.sp-checker-side-card,
+.sp-checker-result,
+.sp-r8-package-card,
+.sp-r8-model-card,
+.sp-r8-billing-panel,
+.sp-r9-activity-panel {
+  border-color: var(--sp-r12-line) !important;
+  border-radius: var(--sp-r12-radius) !important;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--sp-r12-panel) 96%, rgb(var(--sp-r12-blue) / .04)), var(--sp-r12-panel)) !important;
+  box-shadow: var(--sp-r12-glow);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.sp-app-card,
+.sp-premium-card,
+.sp-auth-card,
+.sp-dashboard-section,
+.sp-buy-package-card,
+.sp-catalog-option,
+.sp-key-checker-card,
+.sp-r8-package-card,
+.sp-r8-model-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.sp-app-card::before,
+.sp-premium-card::before,
+.sp-auth-card::before,
+.sp-dashboard-section::before,
+.sp-buy-package-card::before,
+.sp-catalog-option::before,
+.sp-key-checker-card::before,
+.sp-r8-package-card::before,
+.sp-r8-model-card::before {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 12%;
+  left: 12%;
+  height: 1px;
+  pointer-events: none;
+  content: '';
+  opacity: .7;
+  background: linear-gradient(90deg, transparent, rgb(var(--sp-r12-cyan) / .56), rgb(var(--sp-r12-blue) / .38), transparent);
+}
+
+.sp-premium-card:hover,
+.sp-buy-package-card:hover,
+.sp-catalog-option:hover,
+.sp-r8-package-card:hover,
+.sp-r8-model-card:hover {
+  border-color: var(--sp-r12-line-hot) !important;
+  box-shadow: var(--sp-r12-glow-hot);
+}
+
+.sp-metric-tile {
+  border-color: var(--sp-r12-line) !important;
+  border-radius: .9rem !important;
+  background: linear-gradient(145deg, color-mix(in oklab, var(--sp-r12-panel) 96%, var(--sp-r9-metric-accent, transparent) 4%), var(--sp-r12-panel)) !important;
+  box-shadow: 0 12px 35px rgb(2 6 23 / .1), inset 0 1px rgb(255 255 255 / .025);
+}
+
+.sp-metric-tile::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  content: '';
+  opacity: .68;
+  background: linear-gradient(180deg, var(--sp-r9-metric-accent, rgb(var(--sp-r12-cyan))), transparent 82%);
+}
+
+/* Alerts and resolved async states use the same operational-status language. */
+.sp-r12-state,
+.sp-r12-loading {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--sp-r12-line) !important;
+  border-radius: var(--sp-r12-radius) !important;
+  background: linear-gradient(145deg, var(--sp-r12-panel), color-mix(in oklab, var(--sp-r12-panel) 96%, rgb(var(--sp-r12-cyan) / .04))) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .03);
+}
+
+.sp-r12-state::after,
+.sp-r12-loading::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  opacity: .22;
+  background: linear-gradient(110deg, transparent 34%, rgb(var(--sp-r12-cyan) / .11) 48%, transparent 62%);
+  transform: translateX(-100%);
+  animation: sp-r12-state-scan 3.6s ease-in-out infinite;
+}
+
+@keyframes sp-r12-state-scan {
+  50%, 100% { transform: translateX(100%); }
+}
+
+/* ── Tables, code and data-density ───────────────────────────────────────── */
+.sp-global-stage table {
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-global-stage thead {
+  background: color-mix(in oklab, var(--sp-r12-panel-strong) 84%, transparent);
+}
+
+.sp-global-stage thead th {
+  color: var(--ui-text-muted);
+  font-size: .68rem;
+  font-variation-settings: "wght" 690;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+}
+
+.sp-global-stage tbody tr {
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.sp-global-stage tbody tr:hover {
+  background: rgb(var(--sp-r12-cyan) / .025);
+  box-shadow: inset 2px 0 rgb(var(--sp-r12-cyan) / .36);
+}
+
+.sp-code-block,
+.sp-playground-code,
+.sp-live-request-console {
+  overflow: hidden;
+  border: 1px solid var(--sp-r12-line) !important;
+  border-radius: .9rem !important;
+  background: rgb(3 8 22 / .9) !important;
+  box-shadow: 0 20px 50px rgb(1 4 15 / .28), inset 0 1px rgb(255 255 255 / .025);
+}
+
+.sp-code-block__header,
+.sp-console-titlebar {
+  border-bottom: 1px solid var(--sp-r12-line);
+  background: linear-gradient(90deg, rgb(var(--sp-r12-blue) / .08), rgb(var(--sp-r12-cyan) / .035));
+  color: rgb(203 213 225);
+}
+
+.sp-code-block pre,
+.sp-playground-code pre,
+.sp-console-json {
+  tab-size: 2;
+  letter-spacing: -.018em;
+}
+
+/* ── Page hierarchy ──────────────────────────────────────────────────────── */
+.sp-page-eyebrow,
+.sp-r8-kicker,
+.sp-r8-pricing-kicker,
+.sp-r9-overview-kicker {
+  font-family: var(--font-mono);
+  font-variation-settings: "wght" 650;
+  letter-spacing: .12em !important;
+  text-transform: uppercase;
+}
+
+.sp-r12-page-lead {
+  position: relative;
+  padding-bottom: .25rem;
+}
+
+.sp-r12-page-lead::after {
+  position: absolute;
+  bottom: -.25rem;
+  left: 0;
+  width: min(11rem, 38%);
+  height: 1px;
+  content: '';
+  background: linear-gradient(90deg, rgb(var(--sp-r12-cyan) / .58), transparent);
+}
+
+.sp-r12-section-heading__icon,
+.sp-page-lead-icon,
+.sp-card-icon,
+.sp-checker-icon {
+  border: 1px solid rgb(var(--sp-r12-cyan) / .14);
+  background: linear-gradient(145deg, rgb(var(--sp-r12-blue) / .15), rgb(var(--sp-r12-cyan) / .07)) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .07), 0 8px 22px rgb(var(--sp-r12-blue) / .09);
+}
+
+.sp-r12-section-heading__title {
+  font-variation-settings: "wght" 700;
+  letter-spacing: -.025em;
+}
+
+.sp-khmer-chip {
+  border-color: rgb(var(--sp-r12-cyan) / .14) !important;
+  background: rgb(var(--sp-r12-cyan) / .055) !important;
+  box-shadow: inset 0 0 0 1px rgb(var(--sp-r12-blue) / .035);
+}
+
+/* ── Public and authentication shells ───────────────────────────────────── */
+.sp-r12-public-layout main {
+  isolation: isolate;
+}
+
+.sp-public-hero h1,
+.sp-live-hero h1,
+.sp-r8-model-hero h1,
+.sp-r8-pricing-hero h1,
+.sp-checker-hero h1 {
+  font-variation-settings: "wght" 760;
+  letter-spacing: -.055em;
+  line-height: .98;
+}
+
+.sp-gradient-text,
+.sp-live-gradient-text,
+.sp-r8-gradient-text,
+.sp-r8-pricing-gradient {
+  background-image: linear-gradient(100deg, rgb(var(--sp-r12-cyan)), rgb(114 139 255) 46%, rgb(168 85 247)) !important;
+  background-size: 160% auto !important;
+  animation: sp-r12-gradient 7s ease-in-out infinite alternate;
+}
+
+@keyframes sp-r12-gradient {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
+}
+
+.sp-r12-auth-header {
+  border-bottom: 1px solid var(--sp-r12-line);
+  background: color-mix(in oklab, var(--sp-r12-panel-strong) 68%, transparent);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.sp-r12-auth-showcase {
+  position: relative;
+  overflow: hidden;
+}
+
+.sp-r12-auth-showcase::before,
+.sp-r12-auth-showcase::after {
+  position: absolute;
+  width: 2.5rem;
+  height: 2.5rem;
+  pointer-events: none;
+  content: '';
+  border-color: rgb(var(--sp-r12-cyan) / .32);
+}
+
+.sp-r12-auth-showcase::before {
+  top: 1.5rem;
+  left: 1.5rem;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+
+.sp-r12-auth-showcase::after {
+  right: 1.5rem;
+  bottom: 1.5rem;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
+
+/* ── Dashboard shell ─────────────────────────────────────────────────────── */
+.sp-r12-dashboard-shell {
+  --sp-r12-panel: rgb(8 14 30 / .68);
+}
+
+html.light .sp-r12-dashboard-shell {
+  --sp-r12-panel: rgb(255 255 255 / .7);
+}
+
+.sp-r12-dashboard-navbar {
+  border-bottom-color: var(--sp-r12-line) !important;
+  background: color-mix(in oklab, var(--sp-r12-panel-strong) 76%, transparent) !important;
+  backdrop-filter: blur(20px) saturate(130%);
+}
+
+.sp-r12-dashboard-navbar::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(90deg, transparent, rgb(var(--sp-r12-cyan) / .2), transparent);
+}
+
+.sp-r12-dashboard-content {
+  position: relative;
+}
+
+.sp-r12-dashboard-content::before {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  left: 50%;
+  width: min(62rem, 84vw);
+  height: 22rem;
+  pointer-events: none;
+  content: '';
+  background: radial-gradient(ellipse, rgb(var(--sp-r12-blue) / .055), transparent 68%);
+  transform: translateX(-50%);
+}
+
+.sp-r12-dashboard-group [data-slot="root"] {
+  scroll-margin-top: 6rem;
+}
+
+.sp-r12-dashboard-group :where([data-sidebar], aside) {
+  border-color: var(--sp-r12-line);
+}
+
+.sp-r12-dashboard-page .sp-r10-page-flow > * {
+  animation: sp-r12-rise 420ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.sp-r12-dashboard-page .sp-r10-page-flow > :nth-child(2) { animation-delay: 35ms; }
+.sp-r12-dashboard-page .sp-r10-page-flow > :nth-child(3) { animation-delay: 70ms; }
+.sp-r12-dashboard-page .sp-r10-page-flow > :nth-child(4) { animation-delay: 105ms; }
+
+@keyframes sp-r12-rise {
+  from { opacity: 0; transform: translateY(7px); }
+}
+
+/* Operational badges read like status LEDs, not decorative pills. */
+.sp-global-stage [data-slot="base"][class*="rounded-full"] {
+  letter-spacing: .01em;
+}
+
+.sp-global-stage [data-slot="base"][class*="rounded-full"]::before {
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* ── Responsive and accessibility ───────────────────────────────────────── */
+@media (max-width: 767px) {
+  :root { --sp-r12-radius: .85rem; }
+
+  .sp-r12-bg__micro-grid {
+    background-size: 26px 26px;
+    opacity: .13;
+  }
+
+  .sp-r12-bg__hud { display: none; }
+
+  .sp-r12-wordmark__meta {
+    font-size: .48rem;
+    letter-spacing: .13em;
+  }
+
+  .sp-public-hero h1,
+  .sp-live-hero h1,
+  .sp-r8-model-hero h1,
+  .sp-r8-pricing-hero h1,
+  .sp-checker-hero h1 {
+    letter-spacing: -.045em;
+    line-height: 1.02;
+  }
+
+  .sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):hover {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-r12-page-enter-active,
+  .sp-r12-page-leave-active,
+  .sp-r12-bg__beam,
+  .sp-r12-state::after,
+  .sp-r12-loading::after,
+  .sp-gradient-text,
+  .sp-live-gradient-text,
+  .sp-r8-gradient-text,
+  .sp-r8-pricing-gradient,
+  .sp-r12-dashboard-page .sp-r10-page-flow > * {
+    animation: none !important;
+    transition-duration: .01ms !important;
+  }
+}

@@ -62,7 +62,7 @@ const settle = async () => {
 const submitKey = async (response: PublicApiKeyStatus) => {
   checkApiKey.mockResolvedValueOnce(response)
   const page = await mountSuspended(PublicKeyCheckerPage)
-  const input = page.find('input[placeholder="spc_..."]')
+  const input = page.find('input[placeholder="sk-..."]')
   await input.setValue('sk-real-secret')
   await page.find('form').trigger('submit')
   await settle()
@@ -94,5 +94,69 @@ describe('public API key checker contract', () => {
     expect(text).toContain('$0.125000')
     expect(text).toContain('claude-coding')
     expect(text).toContain('135')
+  })
+
+  it('rejects an impossible key format before sending the secret', async () => {
+    const page = await mountSuspended(PublicKeyCheckerPage)
+    await page.find('input[placeholder="sk-..."]').setValue('wrong-prefix-key')
+    await page.find('form').trigger('submit')
+    await settle()
+
+    expect(checkApiKey).not.toHaveBeenCalled()
+    expect(page.text()).toContain('SP Cambo API keys begin with “sk-”.')
+  })
+
+  it('renders safe per-model capability details returned by the checker', async () => {
+    const page = await submitKey({
+      ...activeResponse(),
+      model_details: [{
+        public_alias: 'claude-coding',
+        display_name: 'Claude Coding',
+        status: 'ACTIVE',
+        context_tokens: 200_000,
+        max_output_tokens: 64_000,
+        capability_basis: 'PROVIDER_PUBLIC_SPEC',
+        features: ['Streaming', 'Tools']
+      }],
+      limits: {
+        requests_per_minute: 60,
+        tokens_per_minute: 200_000,
+        concurrency: 4,
+        max_request_bytes: 1_048_576,
+        max_output_tokens: 64_000
+      }
+    })
+
+    const text = page.text()
+    expect(text).toContain('Claude Coding')
+    expect(text).toContain('200K')
+    expect(text).toContain('64K')
+    expect(text).toMatch(/Requests\/min\s*60/)
+    expect(text).toContain('1 MB')
+  })
+
+  it('keeps live refresh enabled across more than one successful interval', async () => {
+    const page = await submitKey(activeResponse())
+    const liveSwitch = page.find('[role="switch"]')
+    expect(liveSwitch.exists()).toBe(true)
+
+    vi.useFakeTimers()
+    try {
+      await liveSwitch.trigger('click')
+      await nextTick()
+      expect(liveSwitch.attributes('aria-checked')).toBe('true')
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      await nextTick()
+      expect(checkApiKey).toHaveBeenCalledTimes(2)
+      expect(liveSwitch.attributes('aria-checked')).toBe('true')
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      await nextTick()
+      expect(checkApiKey).toHaveBeenCalledTimes(3)
+      expect(liveSwitch.attributes('aria-checked')).toBe('true')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

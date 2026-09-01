@@ -32,7 +32,7 @@ defineEmits<{
   -->
   <div
     role="alert"
-    class="rounded-lg border border-error/30 bg-error/5 p-6"
+    class="sp-r12-state rounded-lg border border-error/30 bg-error/5 p-6"
   >
     <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
       <div class="flex size-10 shrink-0 items-center justify-center rounded-full bg-error/10 text-error">

@@ -5,14 +5,23 @@ const year = new Date().getFullYear()
 </script>
 
 <template>
-  <div class="sp-r4-layout sp-r4-public-layout sp-shell-aurora flex min-h-screen flex-col">
-    <div class="sp-r4-layout-mesh" aria-hidden="true" />
-    <div class="sp-r4-corner-orb sp-r4-corner-orb--a" aria-hidden="true" />
-    <div class="sp-r4-corner-orb sp-r4-corner-orb--b" aria-hidden="true" />
+  <div class="sp-r4-layout sp-r4-public-layout sp-r12-layout sp-r12-public-layout sp-shell-aurora flex min-h-screen flex-col">
+    <div
+      class="sp-r4-layout-mesh"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-corner-orb sp-r4-corner-orb--a"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-corner-orb sp-r4-corner-orb--b"
+      aria-hidden="true"
+    />
 
     <UHeader
       to="/"
-      :ui="{ root: 'sp-site-header sp-r4-header' }"
+      :ui="{ root: 'sp-site-header sp-r4-header sp-r12-header' }"
     >
       <template #title>
         <span class="inline-flex items-center gap-2.5">
@@ -120,7 +129,7 @@ const year = new Date().getFullYear()
       <slot />
     </UMain>
 
-    <UFooter :ui="{ root: 'sp-r4-footer border-t border-default/80 mt-16 bg-default/45' }">
+    <UFooter :ui="{ root: 'sp-r4-footer sp-r12-footer border-t border-default/80 mt-16 bg-default/45' }">
       <template #top>
         <UContainer class="py-10 lg:py-14">
           <div class="grid gap-10 lg:grid-cols-5">
@@ -134,7 +143,7 @@ const year = new Date().getFullYear()
               </p>
               <p
                 class="font-medium text-xs text-dimmed"
-                style="font-family: 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
+                style="font-family: 'Noto Sans Khmer Variable', 'Noto Sans Khmer', 'Khmer OS System', sans-serif;"
               >
                 បច្ចេកវិទ្យា AI សម្រាប់កម្ពុជា
               </p>

@@ -52,8 +52,15 @@ class ApiKeyCheckTest extends TestCase
             'ai_model_id' => $model->id,
             'public_alias' => $publicAlias,
             'display_name' => 'Model '.$publicAlias,
-            'capabilities' => ['messages_api' => true],
-            'limits' => [],
+            'capabilities' => [
+                'messages_api' => true,
+                'streaming' => true,
+                'tools' => true,
+                'context_tokens' => 200_000,
+                'max_output_tokens' => 64_000,
+                'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
+            ],
+            'limits' => ['context_tokens' => 200_000, 'max_output_tokens' => 64_000],
             'status' => 'active',
             'enabled' => true,
             'customer_visible' => true,
@@ -104,12 +111,36 @@ class ApiKeyCheckTest extends TestCase
         $user = User::factory()->create();
         $alias = $this->alias();
         $issued = $this->issueKey($user, $alias);
+        $issued['key']->forceFill([
+            'requests_per_minute' => 60,
+            'tokens_per_minute' => 200_000,
+            'concurrency_limit' => 4,
+            'max_request_bytes' => 1_048_576,
+            'max_output_tokens' => 64_000,
+        ])->save();
 
         // No test-only digest rewrite is required. A real issued secret must work.
         $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
             ->assertOk()
             ->assertJsonPath('data.valid', true)
-            ->assertJsonPath('data.status', 'ACTIVE');
+            ->assertJsonPath('data.status', 'ACTIVE')
+            ->assertJsonPath('data.model_details.0.public_alias', 'claude-coding')
+            ->assertJsonPath('data.model_details.0.context_tokens', 200_000)
+            ->assertJsonPath('data.model_details.0.max_output_tokens', 64_000)
+            ->assertJsonPath('data.model_details.0.capability_basis', 'PROVIDER_PUBLIC_SPEC')
+            ->assertJsonPath('data.model_details.0.features.0', 'Streaming')
+            ->assertJsonPath('data.model_details.0.features.1', 'Tools')
+            ->assertJsonPath('data.limits.requests_per_minute', 60)
+            ->assertJsonPath('data.limits.tokens_per_minute', 200_000)
+            ->assertJsonPath('data.limits.concurrency', 4)
+            ->assertJsonPath('data.limits.max_request_bytes', 1_048_576)
+            ->assertJsonPath('data.limits.max_output_tokens', 64_000)
+            ->assertJsonMissingPath('data.model_details.0.internal_model_id')
+            ->assertJsonMissingPath('data.model_details.0.provider');
+
+        $this->postJson('/api/v1/keys/check', ['api_key' => " \n{$issued['secret']}\r\n"])
+            ->assertOk()
+            ->assertJsonPath('data.valid', true);
     }
 
     public function test_check_separates_token_quota_from_credit_balance_and_subtracts_reservations(): void

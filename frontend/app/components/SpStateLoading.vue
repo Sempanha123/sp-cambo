@@ -11,7 +11,7 @@ withDefaults(defineProps<{
 
 <template>
   <div
-    class="animate-pulse"
+    class="sp-r12-loading animate-pulse"
     role="status"
     aria-live="polite"
   >

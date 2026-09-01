@@ -5,14 +5,23 @@ const year = new Date().getFullYear()
 </script>
 
 <template>
-  <div class="sp-r4-layout sp-r4-public-layout sp-shell-aurora flex min-h-screen flex-col">
-    <div class="sp-r4-layout-mesh" aria-hidden="true" />
-    <div class="sp-r4-corner-orb sp-r4-corner-orb--a" aria-hidden="true" />
-    <div class="sp-r4-corner-orb sp-r4-corner-orb--b" aria-hidden="true" />
+  <div class="sp-r4-layout sp-r4-public-layout sp-r12-layout sp-r12-public-layout sp-shell-aurora flex min-h-screen flex-col">
+    <div
+      class="sp-r4-layout-mesh"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-corner-orb sp-r4-corner-orb--a"
+      aria-hidden="true"
+    />
+    <div
+      class="sp-r4-corner-orb sp-r4-corner-orb--b"
+      aria-hidden="true"
+    />
 
     <UHeader
       to="/"
-      :ui="{ root: 'sp-site-header sp-r4-header' }"
+      :ui="{ root: 'sp-site-header sp-r4-header sp-r12-header' }"
     >
       <template #title>
         <span class="inline-flex items-center gap-2.5">
@@ -110,7 +119,7 @@ const year = new Date().getFullYear()
       <slot />
     </main>
 
-    <footer class="sp-public-footer sp-r4-footer mt-16 border-t border-default/80 bg-default/45">
+    <footer class="sp-public-footer sp-r4-footer sp-r12-footer mt-16 border-t border-default/80 bg-default/45">
       <UContainer class="flex flex-col gap-4 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-3">
           <SpLogo />

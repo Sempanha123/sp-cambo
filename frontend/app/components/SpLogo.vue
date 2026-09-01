@@ -14,7 +14,10 @@ withDefaults(defineProps<{
     <SpBrandMark :size="size" />
     <span
       v-if="!markOnly"
-      class="text-[15px] font-semibold tracking-tight text-highlighted"
-    >SP Cambo</span>
+      class="sp-r12-wordmark inline-flex flex-col"
+    >
+      <span class="sp-r12-wordmark__name text-[15px] font-semibold tracking-tight text-highlighted">SP Cambo</span>
+      <span class="sp-r12-wordmark__meta">AI Gateway</span>
+    </span>
   </span>
 </template>

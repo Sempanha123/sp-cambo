@@ -27,7 +27,10 @@ class InferenceBillingService
     // only from hashes of the customer request received at SP Cambo.
     private const LOCAL_CACHE_READ_BPS = 2_500;
 
-    public function __construct(private readonly ReservationService $reservations) {}
+    public function __construct(
+        private readonly ReservationService $reservations,
+        private readonly ModelRoutePoolService $routePools,
+    ) {}
 
     /** Published SP Cambo local smart-reuse rate; provider cache metadata is never consulted. */
     public static function localCacheReadBps(): int
@@ -89,12 +92,11 @@ class InferenceBillingService
         }
 
         return DB::transaction(function () use ($user, $apiKey, $alias, $estimatedInputTokens, $estimatedCacheReadTokens, $boundedOutput, $hardMaxOutput, $requestId, $requestFingerprint, $playgroundFundingScope): array {
-            $model = $alias->model()->with('provider.activeConnectionRevision')->firstOrFail();
-            $provider = $model->provider;
-            $revision = $provider?->activeConnectionRevision;
-            if (! $provider || ! $provider->enabled || ! $revision || ! $revision->isRouteReady()) {
-                throw new InvalidArgumentException('The selected model route is not ready.');
-            }
+            $primaryModel = $alias->model()->with('provider')->firstOrFail();
+            $route = $this->routePools->select($alias, $primaryModel);
+            $model = $route['model'];
+            $revision = $route['revision'];
+            $routePoolEntryId = $route['entry']?->id;
 
             $isPlaygroundKey = PlaygroundCredential::query()
                 ->where('user_id', $user->id)
@@ -173,7 +175,16 @@ class InferenceBillingService
                     $snapshot['request_fingerprint'] = $requestFingerprint;
                     $snapshot['route_revision_id'] = (string) $revision->id;
                     $snapshot['route_version'] = (int) $revision->route_version;
+                    $snapshot['route_pool_entry_id'] = $routePoolEntryId === null ? null : (int) $routePoolEntryId;
                     $snapshot['internal_model_id'] = (string) $model->internal_model_id;
+                    $snapshot['route_history'] = [[
+                        'entry_id' => $routePoolEntryId === null ? null : (int) $routePoolEntryId,
+                        'revision_id' => (string) $revision->id,
+                        'provider_id' => (int) $model->provider_id,
+                        'ai_model_id' => (int) $model->id,
+                        'internal_model_id' => (string) $model->internal_model_id,
+                        'selected_at' => now()->toAtomString(),
+                    ]];
                     $snapshot['estimated_input_tokens'] = $estimatedInputTokens;
                     $snapshot['estimated_cache_read_tokens'] = $estimatedCacheReadTokens;
                     $snapshot['requested_max_output_tokens'] = $boundedOutput;
@@ -200,8 +211,15 @@ class InferenceBillingService
                         $playgroundScope,
                     );
 
+                    if ($routePoolEntryId !== null
+                        && (string) $reservation->model_route_pool_entry_id !== (string) $routePoolEntryId) {
+                        $reservation->forceFill([
+                            'model_route_pool_entry_id' => $routePoolEntryId,
+                        ])->saveOrFail();
+                    }
+
                     return [
-                        'reservation' => $reservation,
+                        'reservation' => $reservation->fresh('allocations'),
                         'billing_mode' => $billingMode,
                         'hard_max_output_tokens' => $hardMaxOutput,
                         'route_revision_id' => (string) $revision->id,

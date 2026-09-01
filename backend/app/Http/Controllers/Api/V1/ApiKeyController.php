@@ -134,6 +134,13 @@ class ApiKeyController extends Controller
 
     public function check(Request $request, ApiKeySecretService $secrets): JsonResponse
     {
+        // Issued secrets never contain surrounding whitespace. Normalising a
+        // pasted newline here avoids reporting a real key as invalid without
+        // weakening the exact HMAC lookup or storing the plaintext value.
+        $submittedKey = $request->input('api_key');
+        if (is_string($submittedKey)) {
+            $request->merge(['api_key' => trim($submittedKey)]);
+        }
         $request->validate(['api_key' => ['required', 'string', 'min:10', 'max:255']]);
 
         $digest = $secrets->digest((string) $request->input('api_key'));
@@ -281,6 +288,32 @@ class ApiKeyController extends Controller
 
         $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
         $packages = $eligibleLots->pluck('package_name')->filter()->unique()->values();
+        $aliases = $key->modelAliases->sortBy('public_alias')->values();
+        $publishedAliasIds = array_fill_keys(
+            ModelAlias::query()->published()->whereKey($aliases->pluck('id'))->pluck('id')->map(fn ($id): string => (string) $id)->all(),
+            true,
+        );
+        $modelDetails = $aliases->map(function (ModelAlias $alias) use ($publishedAliasIds): array {
+            $capabilities = is_array($alias->capabilities) ? $alias->capabilities : [];
+            $limits = is_array($alias->limits) ? $alias->limits : [];
+            $contextTokens = $capabilities['context_tokens'] ?? $limits['context_tokens'] ?? null;
+            $maxOutputTokens = $capabilities['max_output_tokens'] ?? $limits['max_output_tokens'] ?? null;
+
+            return [
+                'public_alias' => $alias->public_alias,
+                'display_name' => $alias->display_name,
+                'status' => isset($publishedAliasIds[(string) $alias->id]) ? 'AVAILABLE' : 'UNAVAILABLE',
+                'context_tokens' => is_numeric($contextTokens) ? (int) $contextTokens : null,
+                'max_output_tokens' => is_numeric($maxOutputTokens) ? (int) $maxOutputTokens : null,
+                'capability_basis' => $capabilities['capability_basis'] ?? null,
+                'features' => collect([
+                    'Streaming' => $capabilities['streaming'] ?? false,
+                    'Tools' => $capabilities['tools'] ?? false,
+                    'Vision' => $capabilities['vision'] ?? false,
+                    'Reasoning' => $capabilities['reasoning'] ?? false,
+                ])->filter()->keys()->values()->all(),
+            ];
+        })->values();
 
         return response()->json(['data' => [
             'valid' => $status === 'ACTIVE',
@@ -295,7 +328,9 @@ class ApiKeyController extends Controller
             'funding_note' => $eligibleLots->isEmpty()
                 ? 'This key has model permission but no matching spendable purchased/redeemed balance.'
                 : 'Normal API keys spend matching account-level balance plus any package dedicated to this key. Playground daily quota is never shared with API keys.',
-            'allowed_models' => $key->modelAliases->pluck('public_alias')->values(),
+            'allowed_models' => $aliases->pluck('public_alias')->values(),
+            'model_details' => $modelDetails,
+            'limits' => $this->limits($key),
             'created_at' => $key->created_at->toAtomString(),
             'expires_at' => $key->expires_at?->toAtomString(),
             'last_used' => $key->last_used_at?->toAtomString(),
