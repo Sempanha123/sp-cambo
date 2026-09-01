@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ModelRoutePool extends Model
 {
-    public const STRATEGY_LEAST_CONNECTIONS = 'LEAST_CONNECTIONS';
+    public const STRATEGY_WEIGHTED_LEAST_CONNECTIONS = 'WEIGHTED_LEAST_CONNECTIONS';
 
     protected $guarded = [];
 
@@ -17,6 +17,9 @@ class ModelRoutePool extends Model
         return [
             'enabled' => 'boolean',
             'max_concurrency' => 'integer',
+            'max_failover_attempts' => 'integer',
+            'circuit_failure_threshold' => 'integer',
+            'circuit_cooldown_seconds' => 'integer',
         ];
     }
 

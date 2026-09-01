@@ -1,20 +1,31 @@
 {
-  "release": "route-pool-r1",
-  "php_syntax_checked": 8,
+  "release": "multi-route-production-r3",
+  "standalone_against_current_main": true,
+  "supports_cross_provider_routes": true,
+  "supports_n_routes": true,
+  "pre_stream_failover": true,
+  "circuit_breaker": true,
+  "php_files_syntax_checked": 9,
   "php_syntax_passed": true,
-  "vue_template_open": 4,
-  "vue_template_close": 4,
+  "vue_template_tags": {
+    "open": 6,
+    "close": 6
+  },
+  "full_repo_tests_run": false,
   "files": [
-    "APPLY_ROUTE_POOL_R1.ps1",
+    "APPLY_MULTI_ROUTE_R3.ps1",
     "README_APPLY.md",
     "backend/app/Http/Controllers/Api/V1/Admin/ModelRoutePoolController.php",
+    "backend/app/Http/Controllers/Api/V1/Internal/GatewayRouteController.php",
     "backend/app/Models/ModelRoutePool.php",
     "backend/app/Models/ModelRoutePoolEntry.php",
-    "backend/app/Providers/ModelRoutePoolRouteServiceProvider.php",
+    "backend/app/Models/ProviderRouteHealth.php",
+    "backend/app/Providers/ModelRoutePoolServiceProvider.php",
     "backend/app/Services/ModelRoutePoolService.php",
-    "backend/database/migrations/2026_09_01_170000_create_model_route_pools.php",
-    "backend/routes/admin_model_route_pools.php",
-    "backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php",
-    "frontend/app/pages/admin/route-pools.vue"
+    "backend/app/Services/RoutePoolSystemHealthService.php",
+    "backend/database/migrations/2026_09_01_180000_create_scalable_model_route_pools.php",
+    "frontend/app/pages/admin/route-pools.vue",
+    "gateway/src/control-plane.ts",
+    "gateway/src/types.ts"
   ]
 }

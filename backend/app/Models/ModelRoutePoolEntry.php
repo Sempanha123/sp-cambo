@@ -24,6 +24,11 @@ class ModelRoutePoolEntry extends Model
         return $this->belongsTo(ModelRoutePool::class, 'model_route_pool_id');
     }
 
+    public function model(): BelongsTo
+    {
+        return $this->belongsTo(AiModel::class, 'ai_model_id');
+    }
+
     public function revision(): BelongsTo
     {
         return $this->belongsTo(

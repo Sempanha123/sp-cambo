@@ -49,20 +49,22 @@ export type InspectData = {
   service_status: string;
 };
 
-export type PreflightData = {
+export type RouteData = {
+  internal_model: string;
+  route_revision_id: string | null;
+  route_version: number | null;
+  upstream_origin: string;
+  upstream_credential: string;
+  upstream_timeout_ms: number;
+};
+
+export type PreflightData = RouteData & {
   reservation_id: string;
   public_model: string;
-  internal_model: string;
   reserved_units: string;
   billing_mode: "TOKEN_QUOTA" | "CREDIT_BALANCE";
   max_output_tokens: number;
   correlation_id: string;
-  route_revision_id: string | null;
-  route_version: number | null;
-  /** Private route material supplied only by the authenticated control plane. */
-  upstream_origin: string;
-  upstream_credential: string;
-  upstream_timeout_ms: number;
 };
 
 export type Usage = {
@@ -97,6 +99,11 @@ export interface ControlPlane {
     endpoint: InferencePath;
     playground_funding_scope?: "DAILY" | "BALANCE";
   }): Promise<PreflightData>;
+  reroute?(reservationId: string, input: {
+    failure_code: string;
+    upstream_status?: number;
+  }): Promise<RouteData>;
+  routeSuccess?(reservationId: string): Promise<void>;
   state?(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void>;
   settle(reservationId: string, usage: Usage & { duration_ms: number }): Promise<void>;
   release(reservationId: string): Promise<void>;

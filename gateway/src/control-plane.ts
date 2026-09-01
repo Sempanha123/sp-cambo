@@ -1,5 +1,5 @@
 import { ControlPlaneError, GatewayError } from "./errors.js";
-import type { ControlPlane, Fetch, GatewayConfig, InferencePath, InspectData, PreflightData, Usage } from "./types.js";
+import type { ControlPlane, Fetch, GatewayConfig, InferencePath, InspectData, PreflightData, RouteData, Usage } from "./types.js";
 
 export class HttpControlPlane implements ControlPlane {
   constructor(private readonly config: GatewayConfig, private readonly fetchImpl: Fetch = globalThis.fetch) {}
@@ -21,6 +21,23 @@ export class HttpControlPlane implements ControlPlane {
     playground_funding_scope?: "DAILY" | "BALANCE";
   }): Promise<PreflightData> {
     return this.call<PreflightData>("/internal/gateway/preflight", input);
+  }
+
+  async reroute(
+    reservationId: string,
+    input: { failure_code: string; upstream_status?: number },
+  ): Promise<RouteData> {
+    return this.call<RouteData>(
+      `/internal/gateway/reservations/${encodeURIComponent(reservationId)}/reroute`,
+      input,
+    );
+  }
+
+  async routeSuccess(reservationId: string): Promise<void> {
+    await this.call(
+      `/internal/gateway/reservations/${encodeURIComponent(reservationId)}/route-success`,
+      {},
+    );
   }
 
   async state(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
@@ -47,22 +64,35 @@ export class HttpControlPlane implements ControlPlane {
     try {
       response = await this.fetchImpl(`${this.config.controlPlaneBaseUrl}/api/v1${path}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${this.config.internalSecret}`, "content-type": "application/json", accept: "application/json" },
+        headers: {
+          authorization: `Bearer ${this.config.internalSecret}`,
+          "content-type": "application/json",
+          accept: "application/json",
+        },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.config.controlPlaneTimeoutMs),
       });
     } catch {
       throw new GatewayError(503, "billing_unavailable", "The billing service is temporarily unavailable.");
     }
+
     const parsed = await safeJson(response);
     if (!response.ok) {
       const record = isRecord(parsed) ? parsed : {};
       const status = response.status >= 500 ? 503 : response.status;
-      const code = response.status >= 500 ? "billing_unavailable" : safeString(record.code, "request_rejected");
-      const message = response.status >= 500 ? "The billing service is temporarily unavailable." : safeString(record.message, "The request was rejected.");
+      const code = response.status >= 500
+        ? "billing_unavailable"
+        : safeString(record.code, "request_rejected");
+      const message = response.status >= 500
+        ? "The billing service is temporarily unavailable."
+        : safeString(record.message, "The request was rejected.");
       throw new ControlPlaneError(status, code, message);
     }
-    if (!isRecord(parsed) || !("data" in parsed)) throw new GatewayError(503, "billing_unavailable", "The billing service returned an invalid response.");
+
+    if (!isRecord(parsed) || !("data" in parsed)) {
+      throw new GatewayError(503, "billing_unavailable", "The billing service returned an invalid response.");
+    }
+
     return parsed.data as T;
   }
 }
