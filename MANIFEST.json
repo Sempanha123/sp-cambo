@@ -1,0 +1,29 @@
+{
+  "release": "R12",
+  "php_files_syntax_checked": 16,
+  "php_syntax_passed": true,
+  "vue_template_tags": {
+    "open": 10,
+    "close": 10
+  },
+  "files": [
+    "README_APPLY.md",
+    "backend/app/Http/Controllers/Api/V1/Admin/TelegramStoreController.php",
+    "backend/app/Jobs/RefreshTelegramQrCountdown.php",
+    "backend/app/Jobs/SendTelegramAlertChannelMessage.php",
+    "backend/app/Models/ModelAlias.php",
+    "backend/app/Models/StoreWalletTopup.php",
+    "backend/app/Models/TelegramAlertChannel.php",
+    "backend/app/Models/TelegramAnnouncement.php",
+    "backend/app/Models/TelegramNotificationSetting.php",
+    "backend/app/Models/TelegramPurchase.php",
+    "backend/app/Providers/TelegramAdminRouteServiceProvider.php",
+    "backend/app/Services/TelegramBotClient.php",
+    "backend/app/Services/TelegramNotificationRouter.php",
+    "backend/app/Services/TelegramQrCountdownService.php",
+    "backend/bootstrap/providers.php",
+    "backend/database/migrations/2026_09_01_160000_create_telegram_notification_settings.php",
+    "backend/routes/admin_telegram.php",
+    "frontend/app/pages/admin/telegram.vue"
+  ]
+}

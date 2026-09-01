@@ -15,10 +15,7 @@ class TelegramBotClient
             ->timeout((int) config('services.telegram.timeout_seconds', 15));
     }
 
-    /**
-     * @param array<string,mixed>|null $replyMarkup
-     * @return array<string,mixed>
-     */
+    /** @param array<string,mixed>|null $replyMarkup @return array<string,mixed> */
     public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): array
     {
         $payload = [
@@ -36,10 +33,7 @@ class TelegramBotClient
         return is_array($result) ? $result : [];
     }
 
-    /**
-     * @param array<string,mixed>|null $replyMarkup
-     * @return array<string,mixed>
-     */
+    /** @param array<string,mixed>|null $replyMarkup @return array<string,mixed> */
     public function sendPhotoBytes(
         string $chatId,
         string $pngBytes,
@@ -69,6 +63,71 @@ class TelegramBotClient
         return is_array($json) && is_array($json['result'] ?? null)
             ? $json['result']
             : [];
+    }
+
+    /** @param array<string,mixed>|null $replyMarkup @return array<string,mixed> */
+    public function editMessageCaption(
+        string $chatId,
+        int $messageId,
+        string $caption,
+        ?array $replyMarkup = null,
+    ): array {
+        if ($messageId <= 0) {
+            return [];
+        }
+
+        $payload = [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'caption' => $caption,
+        ];
+
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = $replyMarkup;
+        }
+
+        try {
+            $result = $this->call('editMessageCaption', $payload);
+            return is_array($result) ? $result : [];
+        } catch (RuntimeException $exception) {
+            if (str_contains(mb_strtolower($exception->getMessage()), 'message is not modified')) {
+                return [];
+            }
+            throw $exception;
+        }
+    }
+
+    /** @param array<string,mixed>|null $replyMarkup @return array<string,mixed> */
+    public function editMessageText(
+        string $chatId,
+        int $messageId,
+        string $text,
+        ?array $replyMarkup = null,
+    ): array {
+        if ($messageId <= 0) {
+            return [];
+        }
+
+        $payload = [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'text' => $text,
+            'disable_web_page_preview' => true,
+        ];
+
+        if ($replyMarkup !== null) {
+            $payload['reply_markup'] = $replyMarkup;
+        }
+
+        try {
+            $result = $this->call('editMessageText', $payload);
+            return is_array($result) ? $result : [];
+        } catch (RuntimeException $exception) {
+            if (str_contains(mb_strtolower($exception->getMessage()), 'message is not modified')) {
+                return [];
+            }
+            throw $exception;
+        }
     }
 
     public function deleteMessage(string $chatId, int $messageId): void

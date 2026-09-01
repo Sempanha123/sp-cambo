@@ -1,72 +1,118 @@
-# SP Cambo Login / Registration Session Fix R1
+# SP Cambo Telegram Custom Alerts R12
 
-## What this fixes
+Built against the current `Sempanha123/sp-cambo` main branch inspected on 2026-09-01.
 
-The repository currently has two different browser-session expectations:
+## What R12 adds
 
-- `frontend/nuxt.config.ts` says **bearer** is the currently implemented default.
-- `frontend/.env.example` uses **bearer**.
-- `infra/.env.example` and `infra/compose.yaml` use **cookie** for production.
-- `LoginController` and `RegisterController` previously decided whether to create
-  a cookie session by checking `$request->attributes->get('sanctum') === true`.
+### `/admin/telegram`
+- persistent automatic-notification settings
+- multiple saved Telegram alert channels/groups
+- enable/disable each channel independently
+- Test button for each channel
+- routing per event:
+  - Off
+  - Bot only
+  - Channels only
+  - Bot + channels
+- saved routing for:
+  - new package
+  - package update
+  - stock/restock
+  - new public model
+  - public model update
+  - promotion create/update
+  - verified Telegram purchase activity
+- manual update target selector: Bot, Channels, or Both
 
-That attribute is not a reliable transport signal for this application. In cookie
-mode the backend could return a bearer token instead of creating the Laravel web
-session. Nuxt cookie mode ignores that bearer token, so the user can appear to
-click Sign in successfully and then remain/bounce back to `/login`.
+“Bot” means the existing opted-in SP Cambo Store Bot subscribers.
+“Channels” means all enabled channel destinations configured in Admin.
 
-R1 detects cookie mode from the request Nuxt already sends:
-`X-XSRF-TOKEN` + a real session + Sanctum's stateful-origin check.
+### Live Bakong KHQR countdown
+Existing QR photo messages are edited in place using Telegram `editMessageCaption`.
 
-Bearer mode continues to receive a personal-access token.
+Example:
 
-## Files
+```text
+💳✨ BAKONG KHQR
 
-Replace these two files in the project:
+📦 Claude 10M Tokens
+💵 Amount: $0.79
+🧾 Order: #ABC123
 
-- `backend/app/Http/Controllers/Api/V1/Auth/LoginController.php`
-- `backend/app/Http/Controllers/Api/V1/Auth/RegisterController.php`
+⏳ Time remaining: 04:30
+🔄 Countdown updates automatically.
+```
 
-## After applying on local machine
+- 10 / 15 / 30 / 60 second update interval
+- 15 seconds recommended
+- no extra countdown spam messages
+- stops when payment is verified
+- stops when QR expires/deletes
+- works for package purchases and Store Wallet top-ups
+- existing expiry-delete job remains authoritative
+
+Telegram does not provide a client-side live timer inside messages, so this is a
+real server-updated countdown. Updating every second would create unnecessary
+Telegram API traffic/rate-limit pressure; the configurable 10–60 second interval
+is the production-safe design.
+
+## Important safety/behavior
+
+- automatic alerts are asynchronous; Telegram network failure does not roll back
+  package/model/promotion admin writes
+- channel delivery jobs retry automatically
+- public model alerts remove provider/OmniRoute disclosure
+- no `.env` changes or bot-token changes are included
+- a channel must allow the SP Cambo bot to post messages
+
+## New database tables
+
+- `telegram_notification_settings`
+- `telegram_alert_channels`
+
+Existing QR tracking columns are reused. R12 does not replace the existing
+`telegram_qr_message_id`, `telegram_qr_expires_at`, or expiry-delete mechanism.
+
+## Local apply/test
+
+Extract over the project root.
+
+Backend:
 
 ```powershell
-cd "C:\Users\Rg Gear\Desktop\SP Cambo\backend"
+cd backend
+php artisan migrate
 php artisan optimize:clear
+php artisan route:list --path=telegram-store
 php artisan test
 ```
 
-Then test:
+Frontend:
 
-1. Create/register a test account.
-2. Sign out.
-3. Sign in again.
-4. Confirm the browser reaches `/dashboard`.
-5. Refresh `/dashboard` and confirm it stays signed in.
+```powershell
+cd ..\frontend
+npm run typecheck
+npm run build
+```
+
+Keep a queue worker running because channel delivery and QR countdown edits are
+queued jobs.
 
 ## Production
 
-After the code is deployed:
+After the tested commit is deployed:
 
 ```bash
 cd /var/www/sp-cambo/backend
+php artisan migrate --force
 php artisan optimize:clear
+php artisan queue:restart
+
+cd /var/www/sp-cambo/frontend
+npm run build
 sudo systemctl restart sp-cambo-frontend
+sudo systemctl status sp-cambo-frontend --no-pager
 ```
 
-Also restart the PHP/backend service used by your VPS (PHP-FPM/container/etc.).
-
-If production uses cookie mode, verify the non-secret values are aligned with
-your actual domain:
-
-- `NUXT_PUBLIC_SESSION_MODE=cookie`
-- `SANCTUM_STATEFUL_DOMAINS` includes the frontend host (include port only when non-standard).
-- `SESSION_DOMAIN` is valid for the frontend/API host arrangement.
-- HTTPS is used when `SESSION_SECURE_COOKIE=true`.
-
-Do not paste `.env` secrets into chat.
-
-## Quick temporary workaround
-
-If you need an immediate recovery before deploying this backend fix, change the
-frontend to `NUXT_PUBLIC_SESSION_MODE=bearer`, restart the Nuxt service, and test
-again. The existing backend already issues bearer tokens correctly.
+Also confirm your existing Laravel queue worker is running. The QR countdown
+depends on delayed queue jobs.

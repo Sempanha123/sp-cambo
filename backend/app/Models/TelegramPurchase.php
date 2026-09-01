@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\TelegramQrCountdownService;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,18 @@ class TelegramPurchase extends Model
     use HasUlids;
 
     protected $guarded = [];
+
+    protected static function booted(): void
+    {
+        static::saved(function (TelegramPurchase $purchase): void {
+            if ($purchase->wasChanged(['telegram_qr_message_id', 'telegram_qr_expires_at'])
+                && $purchase->telegram_qr_deleted_at === null
+                && (int) ($purchase->telegram_qr_message_id ?? 0) > 0
+                && $purchase->telegram_qr_expires_at?->isFuture()) {
+                app(TelegramQrCountdownService::class)->schedulePurchase($purchase);
+            }
+        });
+    }
 
     protected function casts(): array
     {
