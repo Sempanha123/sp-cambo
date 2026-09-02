@@ -281,7 +281,7 @@ class SellCatalogSeeder extends Seeder
                     'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
                 ],
                 'gemini-3.6-pro' => [
-                    'display_name' => 'Gemini 3.6 Pro Route',
+                    'display_name' => 'Gemini 3.6 Pro',
                     'context_tokens' => 1_048_576,
                     'max_output_tokens' => 65_536,
                     'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',

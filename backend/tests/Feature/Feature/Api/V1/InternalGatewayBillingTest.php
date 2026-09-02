@@ -578,6 +578,8 @@ class InternalGatewayBillingTest extends TestCase
             'timeout_ms' => 30000,
             'policy_version' => 1,
             'lifecycle_status' => ProviderConnectionRevision::STATUS_READY,
+            'last_probe_status' => 'SUCCESS',
+            'last_probe_at' => now(),
         ]);
         $provider->forceFill(['active_connection_revision_id' => $revision->id])->save();
         $model = AiModel::query()->create(['provider_id' => $provider->id, 'internal_model_id' => 'private-route', 'family' => 'claude', 'family_label' => 'Claude', 'commercial_resale_verified_at' => now(), 'enabled' => true]);

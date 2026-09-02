@@ -257,8 +257,11 @@ class AlertCaptureBot extends TelegramBotClient
     /** @var array<int,array{chat_id:string,text:string,reply_markup:array|null}> */
     public array $messages = [];
 
-    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): void
+    /** @return array<string,mixed> */
+    public function sendMessage(string $chatId, string $text, ?array $replyMarkup = null): array
     {
         $this->messages[] = ['chat_id' => $chatId, 'text' => $text, 'reply_markup' => $replyMarkup];
+
+        return ['message_id' => count($this->messages)];
     }
 }
