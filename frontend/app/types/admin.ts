@@ -459,7 +459,10 @@ export interface ProviderConnectionRevisionInput {
   resolve_until?: string | null
 }
 
-/** Update an unused PENDING revision. Omit/blank credential to keep the stored secret. */
+/**
+ * Edit a connection. Immutable/live revisions are safely replaced server-side;
+ * omit/blank credential to reuse the stored encrypted secret.
+ */
 export interface ProviderConnectionRevisionUpdateInput {
   route_version: number
   origin: string

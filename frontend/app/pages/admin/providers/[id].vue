@@ -55,9 +55,14 @@ const createForm = ref<ProviderConnectionRevisionInput>({
 const createError = ref<string | null>(null)
 const createFormRef = useTemplateRef<{ setErrors: (errors: FormError[]) => void }>('createFormRef')
 
+const nextRouteVersion = () => Math.max(
+  0,
+  ...(revisions.data.value ?? []).map(revision => revision.route_version)
+) + 1
+
 const resetCreateForm = () => {
   createForm.value = {
-    route_version: 1,
+    route_version: nextRouteVersion(),
     origin: '',
     connection_type: 'omniroute',
     credential: '',
@@ -99,16 +104,33 @@ const submitCreate = async () => {
       credential: createForm.value.credential.trim()
     })
 
-    createOpen.value = false
-    resetCreateForm()
-    await revisions.refresh()
+    try {
+      const verified = await api.admin.probeProviderConnectionRevision(providerId.value, revision.id)
 
-    toast.add({
-      title: 'Connection revision created',
-      description: `Revision ${revision.route_version} has been created successfully.`,
-      color: 'success',
-      icon: 'i-lucide-plus-circle'
-    })
+      createOpen.value = false
+      resetCreateForm()
+      await Promise.all([revisions.refresh(), provider.refresh()])
+
+      toast.add({
+        title: verified.auto_activated ? 'Connection ready and active' : 'Connection ready',
+        description: `Revision ${verified.route_version} was created and verified successfully.`,
+        color: 'success',
+        icon: 'i-lucide-circle-check-big'
+      })
+      return
+    } catch (probeCause) {
+      createOpen.value = false
+      resetCreateForm()
+      await revisions.refresh()
+
+      toast.add({
+        title: 'Connection needs attention',
+        description: `${toSpApiError(probeCause).message} The draft was kept so you can edit and retry it.`,
+        color: 'error',
+        icon: 'i-lucide-circle-alert'
+      })
+      return
+    }
   } catch (cause) {
     const error = toSpApiError(cause)
 
@@ -125,8 +147,8 @@ const submitCreate = async () => {
   }
 }
 
-// Edit an unused PENDING connection revision. Credentials are never read back;
-// leaving the credential field blank preserves the encrypted secret server-side.
+// Drafts edit in place. READY/active/historical revisions are replaced safely
+// by the backend after the new connection passes its complete provider probe.
 const editRevisionOpen = ref(false)
 const editingRevision = ref(false)
 const editRevisionTarget = ref<ProviderConnectionRevision | null>(null)
@@ -142,16 +164,21 @@ const editRevisionForm = ref<ProviderConnectionRevisionUpdateInput>({
   resolve_until: null
 })
 
-const canEditRevision = (revision: ProviderConnectionRevision) =>
-  revision.lifecycle_status === 'PENDING'
-  && provider.data.value?.active_connection_revision_id !== revision.id
+const editCreatesReplacement = computed(() =>
+  editRevisionTarget.value !== null
+  && (
+    editRevisionTarget.value.lifecycle_status !== 'PENDING'
+    || provider.data.value?.active_connection_revision_id === editRevisionTarget.value.id
+  )
+)
 
 const openEditRevision = (revision: ProviderConnectionRevision) => {
-  if (!canEditRevision(revision)) return
-
   editRevisionTarget.value = revision
   editRevisionForm.value = {
-    route_version: revision.route_version,
+    route_version: revision.lifecycle_status === 'PENDING'
+      && provider.data.value?.active_connection_revision_id !== revision.id
+      ? revision.route_version
+      : nextRouteVersion(),
     origin: revision.origin,
     connection_type: revision.connection_type,
     credential: '',
@@ -182,20 +209,24 @@ const validateEditRevisionForm = (state: ProviderConnectionRevisionUpdateInput):
 
 const submitEditRevision = async () => {
   if (!editRevisionTarget.value) return
+  const target = editRevisionTarget.value
   editingRevision.value = true
   editRevisionError.value = null
   try {
-    const updated = await api.admin.updateProviderConnectionRevision(providerId.value, editRevisionTarget.value.id, {
+    const updated = await api.admin.updateProviderConnectionRevision(providerId.value, target.id, {
       ...editRevisionForm.value,
       origin: editRevisionForm.value.origin.trim(),
       credential: editRevisionForm.value.credential?.trim() || undefined
     })
+    const replaced = updated.id !== target.id
     editRevisionOpen.value = false
     editRevisionTarget.value = null
-    await revisions.refresh()
+    await Promise.all([revisions.refresh(), provider.refresh()])
     toast.add({
-      title: 'Connection revision updated',
-      description: `Revision ${updated.route_version} has been updated successfully.`,
+      title: replaced ? 'Connection replaced safely' : 'Connection updated',
+      description: replaced
+        ? `Revision ${updated.route_version} passed verification and replaced Revision ${target.route_version}. Active and pooled routes were moved automatically.`
+        : `Revision ${updated.route_version} has been updated successfully.`,
       color: 'success',
       icon: 'i-lucide-pencil'
     })
@@ -1693,8 +1724,7 @@ useSeoMeta({
                         variant="ghost"
                         size="sm"
                         icon="i-lucide-pencil"
-                        :disabled="!canEditRevision(revision)"
-                        :title="canEditRevision(revision) ? 'Edit this unused pending revision' : 'Only unused PENDING revisions can be edited'"
+                        title="Edit this connection. Live revisions are replaced safely after verification."
                         @click="openEditRevision(revision)"
                       >
                         Edit
@@ -2072,7 +2102,7 @@ useSeoMeta({
     <UModal
       v-model:open="createOpen"
       title="Create new connection revision"
-      description="Configure a new connection revision for this provider."
+      description="Configure and verify a connection in one step. Successful connections become READY automatically."
     >
       <template #body>
         <UForm
@@ -2187,7 +2217,7 @@ useSeoMeta({
               type="submit"
               :loading="creating"
             >
-              Create revision
+              Create & verify
             </UButton>
           </div>
         </UForm>
@@ -2197,8 +2227,10 @@ useSeoMeta({
     <!-- Edit connection revision modal -->
     <UModal
       v-model:open="editRevisionOpen"
-      title="Edit connection revision"
-      description="Only unused PENDING revisions can be changed. Leave credential blank to keep the existing secret."
+      title="Edit connection"
+      :description="editCreatesReplacement
+        ? 'Save verifies a replacement and moves active and pooled routes automatically. The current route stays online if verification fails.'
+        : 'Update this unused draft. Leave credential blank to keep the existing secret.'"
     >
       <template #body>
         <UForm
@@ -2222,11 +2254,13 @@ useSeoMeta({
             label="Route version"
             name="route_version"
             required
+            :help="editCreatesReplacement ? 'Assigned automatically for the replacement revision.' : undefined"
           >
             <UInput
               v-model="editRevisionForm.route_version"
               type="number"
               min="1"
+              :disabled="editCreatesReplacement"
               class="w-full"
             />
           </UFormField>
@@ -2310,7 +2344,7 @@ useSeoMeta({
               type="submit"
               :loading="editingRevision"
             >
-              Save changes
+              {{ editCreatesReplacement ? 'Save, verify & replace' : 'Save changes' }}
             </UButton>
           </div>
         </UForm>
