@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AccountSecurityController extends Controller
 {
@@ -30,7 +31,7 @@ class AccountSecurityController extends Controller
             throw ValidationException::withMessages(['current_password' => ['The current password is incorrect.']]);
         }
         $request->user()->update(['password' => $data['password']]);
-        $currentId = $request->user()->currentAccessToken()?->id;
+        $currentId = $this->currentBearerTokenId($request);
         $request->user()->tokens()->when($currentId, fn ($query) => $query->whereKeyNot($currentId))->delete();
         $audit->record($request->user(), 'account.password.updated', 'user', $request->user()->id, 'Customer changed password and revoked other bearer sessions.');
 
@@ -39,7 +40,7 @@ class AccountSecurityController extends Controller
 
     public function sessions(Request $request): JsonResponse
     {
-        $currentId = $request->user()->currentAccessToken()?->id;
+        $currentId = $this->currentBearerTokenId($request);
 
         return response()->json(['data' => $request->user()->tokens()->latest()->get()->map(fn ($token) => [
             'id' => (string) $token->id,
@@ -99,5 +100,22 @@ class AccountSecurityController extends Controller
         $user = $request->user();
 
         return SafeUserData::from($user);
+    }
+
+    /**
+     * Cookie-authenticated Sanctum requests carry a TransientToken, not a
+     * persisted PersonalAccessToken. Only persisted bearer tokens have an ID
+     * that can be listed, retained after a password change, or marked current.
+     */
+    private function currentBearerTokenId(Request $request): int|string|null
+    {
+        $token = $request->user()->currentAccessToken();
+        if (! $token instanceof PersonalAccessToken) {
+            return null;
+        }
+
+        $key = $token->getKey();
+
+        return is_int($key) || is_string($key) ? $key : null;
     }
 }

@@ -3,17 +3,20 @@
 namespace App\Services\Payments;
 
 use App\Contracts\BakongVerifier;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class BakongOpenApiClient implements BakongVerifier
 {
+    public function __construct(private readonly BakongTokenPool $tokens) {}
+
     public function checkByMd5(string $md5): array
     {
         $baseUrl = rtrim((string) config('services.bakong.base_url'), '/');
-        $token = trim((string) config('services.bakong.token'));
 
-        if ($baseUrl === '' || $token === '') {
+        if ($baseUrl === '' || ! $this->tokens->hasConfiguredTokens()) {
             throw new RuntimeException('Bakong verification is not configured.');
         }
 
@@ -21,13 +24,45 @@ class BakongOpenApiClient implements BakongVerifier
             throw new RuntimeException('Bakong verification received an invalid KHQR digest.');
         }
 
-        $response = Http::acceptJson()
-            ->withToken($token)
-            ->connectTimeout(4)
-            ->timeout(10)
-            ->retry(2, 250, throw: false)
-            ->post($baseUrl.'/v1/check_transaction_by_md5', ['md5' => strtolower($md5)]);
+        while ($credential = $this->tokens->reserve()) {
+            $response = Http::acceptJson()
+                ->withToken($credential['token'])
+                ->connectTimeout(4)
+                ->timeout(10)
+                ->post($baseUrl.'/v1/check_transaction_by_md5', ['md5' => strtolower($md5)]);
 
+            if ($this->dailyLimitReached($response)) {
+                $this->tokens->markDailyLimitReached($credential['token']);
+                Log::warning('Bakong credential reached its approved daily request limit; advancing to the next configured slot.', [
+                    'token_slot' => $credential['slot'],
+                    'bakong_error_code' => 17,
+                ]);
+
+                continue;
+            }
+
+            return $this->parseResponse($response);
+        }
+
+        throw new RuntimeException('Bakong verification daily request capacity is exhausted across all configured credentials.');
+    }
+
+    private function dailyLimitReached(Response $response): bool
+    {
+        $decoded = json_decode($response->body(), true);
+        if (! is_array($decoded)) {
+            return false;
+        }
+
+        $message = strtolower(trim((string) ($decoded['responseMessage'] ?? '')));
+
+        return (string) ($decoded['errorCode'] ?? '') === '17'
+            || str_contains($message, 'daily request limit');
+    }
+
+    /** @return array{found:bool,transaction_hash:?string,to_account_id:?string,currency:?string,amount_decimal:?string} */
+    private function parseResponse(Response $response): array
+    {
         // NBC documents HTTP 404 as a normal "transaction not found" outcome for
         // this endpoint. It is not an infrastructure failure and must stay
         // retryable while the QR is live. Authentication/quota/upstream errors are

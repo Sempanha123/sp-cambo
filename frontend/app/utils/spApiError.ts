@@ -52,6 +52,8 @@ export class SpApiError extends Error {
       || this.code === 'idempotency_conflict'
       || this.code === 'invalid_status_transition'
       || this.code === 'profitability_review_required'
+      || this.code === 'payment_not_available'
+      || this.code === 'payment_replayed'
   }
 
   /** First validation message for a field, for inline form errors. */
@@ -77,7 +79,12 @@ const DEFAULT_MESSAGES: Record<SpErrorCode, string> = {
   invalid_status_transition: 'That customer status has already changed and this transition is no longer available.',
   profitability_review_required: 'This needs a profitability review before it can be published.',
   payment_pending: 'This payment has not been confirmed yet.',
+  payment_unavailable: 'Payments are temporarily unavailable. Please try again later.',
+  payment_not_available: 'This order is not awaiting payment.',
   payment_verification_failed: 'The payment could not be verified.',
+  payment_verification_unavailable: 'Bakong verification is temporarily unavailable. Your order remains pending; do not pay again.',
+  payment_fulfillment_recovery_required: 'The payment was found, but access delivery needs recovery. Do not pay again.',
+  payment_replayed: 'This payment transaction was already used.',
   provider_probe_failed: 'The provider connection could not be verified.',
   insufficient_tokens: 'This entitlement has no remaining token quota.',
   insufficient_credits: 'This account has no remaining credit balance.',
@@ -108,7 +115,12 @@ const KNOWN_CODES = new Set<string>([
   'invalid_status_transition',
   'profitability_review_required',
   'payment_pending',
+  'payment_unavailable',
+  'payment_not_available',
   'payment_verification_failed',
+  'payment_verification_unavailable',
+  'payment_fulfillment_recovery_required',
+  'payment_replayed',
   'provider_probe_failed',
   'insufficient_tokens',
   'insufficient_credits',
@@ -242,7 +254,11 @@ export function toSpApiError(error: unknown, notFoundMeansUnavailable = false): 
     status,
     message: safeMessage,
     errors,
-    retryable: resolvedCode === 'network_unreachable' || resolvedCode === 'server_error'
+    retryable: resolvedCode === 'network_unreachable'
+      || resolvedCode === 'server_error'
+      || resolvedCode === 'payment_unavailable'
+      || resolvedCode === 'payment_verification_unavailable'
+      || resolvedCode === 'payment_fulfillment_recovery_required'
   })
 }
 

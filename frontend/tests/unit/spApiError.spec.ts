@@ -41,6 +41,18 @@ describe('toSpApiError — backend code', () => {
     expect(error.message).not.toContain('SQLSTATE')
   })
 
+  it('preserves a retryable Bakong verification outage instead of showing a generic 503', () => {
+    const message = 'SP Cambo could not verify this transfer with Bakong right now. Your order remains pending; do not pay again.'
+    const error = toSpApiError(fetchError(503, {
+      message,
+      code: 'payment_verification_unavailable'
+    }))
+
+    expect(error.code).toBe('payment_verification_unavailable')
+    expect(error.message).toBe(message)
+    expect(error.retryable).toBe(true)
+  })
+
   it('accepts the documented alias spellings rather than degrading a clear failure', () => {
     expect(toSpApiError(fetchError(402, { message: 'x', code: 'token_quota_exhausted' })).code)
       .toBe('insufficient_tokens')
@@ -233,7 +245,12 @@ describe('messageForCode', () => {
       'invalid_status_transition',
       'profitability_review_required',
       'payment_pending',
+      'payment_unavailable',
+      'payment_not_available',
       'payment_verification_failed',
+      'payment_verification_unavailable',
+      'payment_fulfillment_recovery_required',
+      'payment_replayed',
       'insufficient_tokens',
       'insufficient_credits',
       'database_migration_required',

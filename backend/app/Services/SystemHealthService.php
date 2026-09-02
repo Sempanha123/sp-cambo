@@ -89,8 +89,9 @@ class SystemHealthService
             ? $this->httpHealth('khqr', 'KHQR generator', $khqrUrl)
             : ['key' => 'khqr', 'label' => 'KHQR generator', 'status' => 'degraded', 'detail' => 'KHQR generator URL is not configured.'];
 
+        $configuredBakongTokens = app(\App\Services\Payments\BakongTokenPool::class)->hasConfiguredTokens();
         $bakongReady = trim((string) config('services.bakong.base_url')) !== ''
-            && trim((string) config('services.bakong.token')) !== ''
+            && $configuredBakongTokens
             && trim((string) config('services.bakong.account_id')) !== ''
             && trim((string) config('services.bakong.merchant_name')) !== '';
         $components[] = [

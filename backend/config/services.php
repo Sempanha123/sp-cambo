@@ -65,13 +65,19 @@ return [
     'bakong' => [
         'base_url' => env('BAKONG_BASE_URL', 'https://api-bakong.nbc.gov.kh'),
         'token' => env('BAKONG_TOKEN'),
+        'tokens' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('BAKONG_TOKENS', ''))
+        ))),
+        'token_daily_limit' => max(1, (int) env('BAKONG_TOKEN_DAILY_LIMIT', 100)),
+        'quota_timezone' => env('BAKONG_QUOTA_TIMEZONE', 'Asia/Phnom_Penh'),
         'account_id' => env('BAKONG_ACCOUNT_ID'),
         'merchant_name' => env('BAKONG_MERCHANT_NAME'),
         'merchant_city' => env('BAKONG_MERCHANT_CITY', 'Phnom Penh'),
         'currency' => env('BAKONG_CURRENCY', 'USD'),
         'attempt_ttl_seconds' => (int) env('BAKONG_PAYMENT_ATTEMPT_TTL_SECONDS', 300),
-        'reconcile_interval_seconds' => max(15, (int) env('BAKONG_RECONCILE_INTERVAL_SECONDS', 60)),
-        'customer_auto_check_interval_seconds' => max(15, (int) env('BAKONG_CUSTOMER_AUTO_CHECK_INTERVAL_SECONDS', 15)),
+        'reconcile_interval_seconds' => max(15, (int) env('BAKONG_RECONCILE_INTERVAL_SECONDS', 300)),
+        'customer_auto_check_interval_seconds' => max(15, (int) env('BAKONG_CUSTOMER_AUTO_CHECK_INTERVAL_SECONDS', 120)),
         'reconcile_expired_grace_seconds' => max(0, (int) env('BAKONG_RECONCILE_EXPIRED_GRACE_SECONDS', 900)),
         'verification_lease_seconds' => max(30, (int) env('BAKONG_VERIFICATION_LEASE_SECONDS', 90)),
         'khqr_generator_url' => env('BAKONG_KHQR_GENERATOR_URL'),
