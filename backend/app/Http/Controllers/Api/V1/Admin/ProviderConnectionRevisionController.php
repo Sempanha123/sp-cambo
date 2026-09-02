@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Exceptions\ProviderConnectionException;
 use App\Http\Controllers\Controller;
+use App\Models\ModelRoutePoolEntry;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
 use App\Services\AuditService;
@@ -92,33 +93,31 @@ class ProviderConnectionRevisionController extends Controller
     }
 
     /**
-     * Edit a draft connection revision. Only unused PENDING revisions may change
-     * routing fields; once activated/probed ready or referenced by usage history,
-     * create a new revision instead.
+     * Edit an unused draft in place. For a live or historical revision, perform
+     * a safe replacement: clone the stored credential when it is left blank,
+     * verify the new route, then atomically move active/pool references to it.
      */
-    public function update(Request $request, string $provider, string $revision, AuditService $audit): JsonResponse
+    public function update(
+        Request $request,
+        string $provider,
+        string $revision,
+        AuditService $audit,
+        ProviderProbeService $probeService,
+    ): JsonResponse
     {
         $provider = Provider::query()->findOrFail($provider);
         $revision = ProviderConnectionRevision::query()
             ->where('provider_id', $provider->id)
             ->findOrFail($revision);
 
-        if ($provider->active_connection_revision_id === $revision->id || $revision->reservations()->exists()) {
-            return response()->json([
-                'message' => 'This revision is active or has request history. Create a new revision instead.',
-                'code' => 'provider_revision_immutable',
-            ], 409);
-        }
-
-        if ($revision->lifecycle_status !== ProviderConnectionRevision::STATUS_PENDING) {
-            return response()->json([
-                'message' => 'Only PENDING revisions can be edited. Create a new revision instead.',
-                'code' => 'provider_revision_immutable',
-            ], 409);
-        }
+        $isEditableDraft = $revision->lifecycle_status === ProviderConnectionRevision::STATUS_PENDING
+            && $provider->active_connection_revision_id !== $revision->id
+            && ! $revision->reservations()->exists();
 
         $data = $request->validate([
-            'route_version' => ['required', 'integer', 'min:1', Rule::unique('provider_connection_revisions', 'route_version')->where('provider_id', $provider->id)->ignore($revision->id)],
+            'route_version' => $isEditableDraft
+                ? ['required', 'integer', 'min:1', Rule::unique('provider_connection_revisions', 'route_version')->where('provider_id', $provider->id)->ignore($revision->id)]
+                : ['required', 'integer', 'min:1'],
             'origin' => ['required', 'string', 'max:512'],
             'connection_type' => ['required', 'string', 'max:50', Rule::in(ProviderConnectionRevision::CONNECTION_TYPES)],
             'credential' => ['nullable', 'string'],
@@ -129,6 +128,18 @@ class ProviderConnectionRevisionController extends Controller
 
         $origin = $this->normalizeOrigin($data['origin'], $data['connection_type']);
         $this->validateOrigin($origin);
+
+        if (! $isEditableDraft) {
+            return $this->replaceRevision(
+                $request,
+                $provider,
+                $revision,
+                array_merge($data, ['origin' => $origin]),
+                $audit,
+                $probeService,
+            );
+        }
+
         $before = $this->resource($revision);
         $updates = [
             'route_version' => $data['route_version'],
@@ -150,6 +161,200 @@ class ProviderConnectionRevisionController extends Controller
             'Updated unused provider connection revision.', ['before' => $before, 'after' => $this->resource($revision->fresh())]);
 
         return response()->json(['data' => $this->resource($revision->fresh())]);
+    }
+
+    /**
+     * Replace an immutable revision without exposing or requiring its existing
+     * credential. The old row remains unchanged for billing/audit history.
+     */
+    private function replaceRevision(
+        Request $request,
+        Provider $provider,
+        ProviderConnectionRevision $source,
+        array $data,
+        AuditService $audit,
+        ProviderProbeService $probeService,
+    ): JsonResponse
+    {
+        $credential = filled($data['credential'] ?? null)
+            ? trim((string) $data['credential'])
+            : (string) $source->credential;
+
+        if ($credential === '') {
+            return response()->json([
+                'message' => 'Enter a credential before replacing this connection.',
+                'code' => 'provider_connection_credential_required',
+                'errors' => ['credential' => ['A credential is required for this connection.']],
+            ], 422);
+        }
+
+        $replacement = DB::transaction(function () use ($provider, $source, $data, $credential): ProviderConnectionRevision {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->lockForUpdate()
+                ->get(['id']);
+
+            $lockedSource = ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->lockForUpdate()
+                ->findOrFail($source->id);
+            $nextVersion = ((int) ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->max('route_version')) + 1;
+
+            return ProviderConnectionRevision::query()->create([
+                'provider_id' => $lockedProvider->id,
+                'route_version' => $nextVersion,
+                'origin' => $data['origin'],
+                'connection_type' => $data['connection_type'],
+                'credential' => $credential,
+                'credential_suffix' => $this->extractCredentialSuffix($credential),
+                'timeout_ms' => $data['timeout_ms'],
+                'policy_version' => $data['policy_version'] ?? $lockedSource->policy_version,
+                'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
+                'resolve_until' => filled($data['resolve_until'] ?? null)
+                    ? Carbon::parse($data['resolve_until'])
+                    : null,
+            ]);
+        });
+
+        $audit->record(
+            $request->user(),
+            'provider_connection_revision.replacement_started',
+            'provider_connection_revision',
+            $replacement->id,
+            'Created and started verifying a replacement provider connection.',
+            [
+                'provider_id' => $provider->id,
+                'source_revision_id' => (string) $source->id,
+                'replacement_route_version' => (int) $replacement->route_version,
+            ]
+        );
+
+        // Keep the currently serving revision untouched unless the complete
+        // provider/model probe succeeds.
+        $capabilitySnapshot = $provider->models()
+            ->with('aliases:id,ai_model_id,capabilities')
+            ->get()
+            ->flatMap(fn ($model) => $model->aliases->mapWithKeys(
+                fn ($alias): array => [(string) $alias->id => $alias->capabilities]
+            ));
+
+        $probeResponse = $this->probe(
+            $request,
+            (string) $provider->id,
+            (string) $replacement->id,
+            $audit,
+            $probeService,
+        );
+
+        if ($probeResponse->getStatusCode() >= 400) {
+            DB::transaction(function () use ($replacement, $capabilitySnapshot): void {
+                foreach ($capabilitySnapshot as $aliasId => $capabilities) {
+                    DB::table('model_aliases')
+                        ->where('id', $aliasId)
+                        ->update([
+                            'capabilities' => json_encode($capabilities ?? [], JSON_THROW_ON_ERROR),
+                            'updated_at' => now(),
+                        ]);
+                }
+
+                ProviderConnectionRevision::query()
+                    ->whereKey($replacement->id)
+                    ->where('lifecycle_status', ProviderConnectionRevision::STATUS_PENDING)
+                    ->delete();
+            });
+
+            $audit->record(
+                $request->user(),
+                'provider_connection_revision.replacement_failed',
+                'provider_connection_revision',
+                $source->id,
+                'Replacement verification failed; the existing connection was left unchanged.',
+                [
+                    'provider_id' => $provider->id,
+                    'attempted_revision_id' => (string) $replacement->id,
+                    'attempted_route_version' => (int) $replacement->route_version,
+                ]
+            );
+
+            return response()->json([
+                'message' => 'The replacement connection could not be verified. The existing route was left unchanged.',
+                'code' => 'provider_connection_replacement_probe_failed',
+            ], 502);
+        }
+
+        $swap = DB::transaction(function () use ($provider, $source, $replacement): array {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            $lockedSource = ProviderConnectionRevision::query()->lockForUpdate()->findOrFail($source->id);
+            $lockedReplacement = ProviderConnectionRevision::query()->lockForUpdate()->findOrFail($replacement->id);
+
+            if (! $lockedReplacement->isRouteReady() || $lockedReplacement->last_probe_status !== 'SUCCESS') {
+                throw new ProviderConnectionException(
+                    'The replacement connection is not ready.',
+                    'provider_revision_not_ready'
+                );
+            }
+
+            $wasActive = (string) $lockedProvider->active_connection_revision_id === (string) $lockedSource->id;
+            if ($wasActive) {
+                $lockedProvider->forceFill([
+                    'active_connection_revision_id' => $lockedReplacement->id,
+                ])->saveOrFail();
+            }
+
+            $movedPoolEntries = ModelRoutePoolEntry::query()
+                ->where('provider_connection_revision_id', $lockedSource->id)
+                ->update([
+                    'provider_connection_revision_id' => $lockedReplacement->id,
+                    'updated_at' => now(),
+                ]);
+
+            return [
+                'was_active' => $wasActive,
+                'moved_pool_entries' => $movedPoolEntries,
+                'active_connection_revision_id' => $lockedProvider->fresh()->active_connection_revision_id,
+            ];
+        });
+
+        if ($swap['was_active']) {
+            $audit->record(
+                $request->user(),
+                'provider.active_connection_revision_changed',
+                'provider',
+                $provider->id,
+                'Activated a verified replacement provider connection.',
+                [
+                    'previous_revision_id' => (string) $source->id,
+                    'new_revision_id' => (string) $replacement->id,
+                    'source' => 'safe_revision_replacement',
+                ]
+            );
+        }
+
+        $audit->record(
+            $request->user(),
+            'provider_connection_revision.replaced',
+            'provider_connection_revision',
+            $replacement->id,
+            'Verified and installed a replacement provider connection.',
+            [
+                'provider_id' => $provider->id,
+                'source_revision_id' => (string) $source->id,
+                'moved_pool_entries' => (int) $swap['moved_pool_entries'],
+                'became_active' => (bool) $swap['was_active'],
+            ]
+        );
+
+        return response()->json(['data' => $this->resource($replacement->fresh()) + [
+            'replacement_created' => true,
+            'replaced_revision_id' => (string) $source->id,
+            'active_connection_revision_id' => $swap['active_connection_revision_id']
+                ? (string) $swap['active_connection_revision_id']
+                : null,
+            'moved_pool_entries' => (int) $swap['moved_pool_entries'],
+        ]]);
     }
 
     /** Delete an unused, non-active connection revision. */

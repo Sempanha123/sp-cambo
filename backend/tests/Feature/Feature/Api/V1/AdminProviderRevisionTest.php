@@ -4,6 +4,9 @@ namespace Tests\Feature\Feature\Api\V1;
 
 use App\Models\AiModel;
 use App\Models\AuditLog;
+use App\Models\ModelAlias;
+use App\Models\ModelRoutePool;
+use App\Models\ModelRoutePoolEntry;
 use App\Models\Permission;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
@@ -48,6 +51,126 @@ class AdminProviderRevisionTest extends TestCase
         $revision->refresh();
         $this->assertSame('initial-secret', $revision->credential);
         $this->assertSame(2, $revision->route_version);
+    }
+
+    public function test_editing_a_ready_active_revision_verifies_a_replacement_and_moves_live_references(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision(ProviderConnectionRevision::STATUS_READY);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->saveOrFail();
+
+        $model = AiModel::query()->create([
+            'provider_id' => $provider->id,
+            'internal_model_id' => 'private-model',
+            'display_name' => 'Private Model',
+            'family' => 'test',
+            'family_label' => 'Test',
+            'capabilities' => [],
+            'limits' => [],
+            'commercial_resale_verified_at' => now(),
+            'enabled' => true,
+        ]);
+        $alias = ModelAlias::query()->create([
+            'ai_model_id' => $model->id,
+            'public_alias' => 'public-model',
+            'display_name' => 'Public Model',
+            'capabilities' => [],
+            'limits' => [],
+            'status' => 'active',
+            'enabled' => true,
+            'customer_visible' => false,
+        ]);
+        $pool = ModelRoutePool::query()->create([
+            'model_alias_id' => $alias->id,
+            'enabled' => true,
+            'strategy' => ModelRoutePool::STRATEGY_WEIGHTED_LEAST_CONNECTIONS,
+            'max_failover_attempts' => 1,
+            'circuit_failure_threshold' => 3,
+            'circuit_cooldown_seconds' => 30,
+        ]);
+        $entry = ModelRoutePoolEntry::query()->create([
+            'model_route_pool_id' => $pool->id,
+            'ai_model_id' => $model->id,
+            'provider_connection_revision_id' => $revision->id,
+            'enabled' => true,
+            'weight' => 100,
+            'max_concurrency' => 2,
+            'priority' => 100,
+        ]);
+
+        Http::fake([
+            'https://replacement.example/health' => Http::response(['error' => 'missing'], 404),
+            'https://replacement.example/v1/models' => Http::response(['data' => [['id' => 'private-model']]], 200),
+            'https://replacement.example/models' => Http::response(['data' => []], 200),
+            'https://replacement.example/v1/chat/completions' => Http::response([
+                'id' => 'chatcmpl_probe',
+                'choices' => [['message' => ['role' => 'assistant', 'content' => 'OK']]],
+                'usage' => ['prompt_tokens' => 2, 'completion_tokens' => 1, 'total_tokens' => 3],
+            ], 200),
+            'https://replacement.example/v1/messages' => Http::response(['error' => 'unsupported'], 400),
+            'https://replacement.example/v1/responses' => Http::response(['error' => 'unsupported'], 400),
+        ]);
+
+        $response = $this->actingAs($admin)
+            ->putJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}", [
+                'route_version' => 1,
+                'origin' => 'https://replacement.example/',
+                'connection_type' => 'omniroute',
+                'credential' => '',
+                'timeout_ms' => 45000,
+                'policy_version' => 2,
+                'resolve_until' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.route_version', 2)
+            ->assertJsonPath('data.origin', 'https://replacement.example')
+            ->assertJsonPath('data.lifecycle_status', ProviderConnectionRevision::STATUS_READY)
+            ->assertJsonPath('data.last_probe_status', 'SUCCESS')
+            ->assertJsonPath('data.replacement_created', true)
+            ->assertJsonPath('data.replaced_revision_id', $revision->id)
+            ->assertJsonPath('data.moved_pool_entries', 1);
+
+        $replacementId = $response->json('data.id');
+        $replacement = ProviderConnectionRevision::query()->findOrFail($replacementId);
+
+        $this->assertNotSame($revision->id, $replacement->id);
+        $this->assertSame('initial-secret', $replacement->credential);
+        $this->assertSame($replacement->id, $provider->refresh()->active_connection_revision_id);
+        $this->assertSame($replacement->id, $entry->refresh()->provider_connection_revision_id);
+        $this->assertSame(ProviderConnectionRevision::STATUS_READY, $revision->refresh()->lifecycle_status);
+        $this->assertDatabaseMissing('provider_connection_revisions', [
+            'provider_id' => $provider->id,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_failed_live_revision_edit_keeps_the_existing_route_and_removes_the_failed_draft(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision(ProviderConnectionRevision::STATUS_READY);
+        $provider->forceFill(['active_connection_revision_id' => $revision->id])->saveOrFail();
+        Http::fake(['*' => Http::response(['error' => 'unavailable'], 503)]);
+
+        $this->actingAs($admin)
+            ->putJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}", [
+                'route_version' => 1,
+                'origin' => 'https://broken-replacement.example',
+                'connection_type' => 'omniroute',
+                'credential' => '',
+                'timeout_ms' => 30000,
+                'policy_version' => 1,
+                'resolve_until' => null,
+            ])
+            ->assertStatus(502)
+            ->assertJsonPath('code', 'provider_connection_replacement_probe_failed');
+
+        $this->assertSame($revision->id, $provider->refresh()->active_connection_revision_id);
+        $this->assertSame(ProviderConnectionRevision::STATUS_READY, $revision->refresh()->lifecycle_status);
+        $this->assertSame(1, ProviderConnectionRevision::query()->where('provider_id', $provider->id)->count());
+        $this->assertDatabaseMissing('provider_connection_revisions', [
+            'provider_id' => $provider->id,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
+        ]);
     }
 
     public function test_admin_cannot_create_revision_with_an_ambiguous_origin_path(): void
