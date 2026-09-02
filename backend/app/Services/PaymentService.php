@@ -160,6 +160,14 @@ class PaymentService
             $evidence = $this->verifier->checkByMd5($ready->qr_md5);
         } catch (Throwable $exception) {
             $this->restoreAwaitingState($ready, $wasExpired, $lease);
+            // Keep the customer-facing message intentionally generic, but record
+            // the safe upstream reason for operators. Never log the token, QR
+            // payload, or transaction digest.
+            logger()->warning('Bakong verification request failed', [
+                'attempt_id' => (string) $ready->id,
+                'exception_class' => $exception::class,
+                'provider_error' => substr($exception->getMessage(), 0, 240),
+            ]);
             report($exception);
 
             if ($exception instanceof PaymentException) {

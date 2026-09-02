@@ -244,11 +244,11 @@ html.light .sp-r12-footer {
 }
 
 .sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):hover {
-  transform: translateY(-1px);
+  transform: translateY(-.5px);
 }
 
 .sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):active {
-  transform: translateY(0) scale(.985);
+  transform: translateY(0) scale(.99);
 }
 
 .sp-global-stage :where(button, a)[data-slot="base"]:focus-visible,
@@ -258,13 +258,31 @@ html.light .sp-r12-footer {
 }
 
 .sp-global-stage :where(button, a)[data-slot="base"][class*="bg-primary"] {
-  border-color: rgb(var(--sp-r12-cyan) / .2);
-  background-image: linear-gradient(112deg, rgb(var(--sp-r12-blue)), rgb(89 82 224) 54%, rgb(var(--sp-r12-violet))) !important;
-  box-shadow: 0 8px 26px rgb(var(--sp-r12-blue) / .19), inset 0 1px rgb(255 255 255 / .16);
+  border-color: rgb(104 125 180 / .26);
+  color: rgb(248 250 252) !important;
+  background-image: linear-gradient(180deg, rgb(55 72 120), rgb(45 59 98)) !important;
+  box-shadow: 0 5px 14px rgb(7 15 34 / .22), inset 0 1px rgb(255 255 255 / .08);
+  font-variation-settings: "wght" 620;
 }
 
 .sp-global-stage :where(button, a)[data-slot="base"][class*="bg-primary"]:hover {
-  box-shadow: 0 11px 34px rgb(var(--sp-r12-blue) / .28), 0 0 0 1px rgb(var(--sp-r12-cyan) / .18), inset 0 1px rgb(255 255 255 / .2);
+  border-color: rgb(113 134 198 / .32);
+  background-image: linear-gradient(180deg, rgb(62 80 132), rgb(50 66 109)) !important;
+  box-shadow: 0 6px 16px rgb(7 15 34 / .24), inset 0 1px rgb(255 255 255 / .10);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class*="bg-primary"]:active {
+  border-color: rgb(111 135 205 / .38);
+  background-image: linear-gradient(180deg, rgb(48 63 106), rgb(40 52 87)) !important;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / .22), 0 0 0 1px rgb(100 124 194 / .12);
+}
+
+/* The payment confirmation action is intentionally heavier than secondary
+ * controls so the next step is obvious without using a neon colour. */
+.sp-payment-check-button {
+  min-height: 2.75rem;
+  font-weight: 620 !important;
+  letter-spacing: -.012em;
 }
 
 /* Nuxt UI inputs keep their data-slot on the native control. */

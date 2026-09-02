@@ -41,11 +41,11 @@ const toneAccent = {
 
     <div class="relative z-[1] flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="text-[11px] font-medium text-muted">
+        <p class="text-xs font-medium text-muted">
           {{ label }}
         </p>
         <p
-          class="sp-numeric mt-1.5 truncate text-xl font-semibold tracking-tight sm:text-2xl"
+          class="sp-numeric mt-1.5 truncate text-2xl font-semibold tracking-tight sm:text-[1.625rem]"
           :class="toneClass[tone]"
         >
           {{ value }}
@@ -75,7 +75,7 @@ const toneAccent = {
 
       <p
         v-if="hint"
-        class="line-clamp-2 text-[10px] leading-4 text-muted"
+        class="line-clamp-2 text-[11px] leading-4 text-muted"
       >
         {{ hint }}
       </p>

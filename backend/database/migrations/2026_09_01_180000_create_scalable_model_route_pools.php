@@ -70,11 +70,13 @@ return new class extends Migration
                 ->update(['ai_model_id' => $entry->ai_model_id]);
         }
 
-        if (Schema::hasIndex('model_route_pool_entries', 'model_route_pool_revision_unique')) {
-            Schema::table('model_route_pool_entries', function (Blueprint $table): void {
-                $table->dropUnique('model_route_pool_revision_unique');
-            });
-        }
+        /*
+         * Keep the legacy unique index. MySQL can use it for the existing
+         * provider_connection_revision_id foreign key, so dropping it would
+         * fail on databases created by the first route-pool migration. The
+         * new composite index below adds the expanded target uniqueness while
+         * preserving backwards compatibility.
+         */
 
         if (! Schema::hasIndex('model_route_pool_entries', 'model_route_pool_target_unique')) {
             Schema::table('model_route_pool_entries', function (Blueprint $table): void {

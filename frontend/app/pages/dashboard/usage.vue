@@ -150,7 +150,7 @@ const displayDuration = (item: RequestActivity) => {
 }
 
 const tokenValueTone = (label: string) =>
-  label === 'Input' || label === 'Saved'
+  label === 'Input' || label === 'Saved by cache'
     ? 'text-success'
     : label === 'Output'
       ? 'text-error'
@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
   <SpDashboardPage
     title="Usage & activity"
     icon="i-lucide-chart-line"
-    description="See what you used, what smart reuse saved, and what was actually charged. All customer metering is calculated locally by SP Cambo."
+    description="See what you used, what cache reuse saved, and what was actually charged. All customer metering is calculated locally by SP Cambo."
   >
     <template #actions>
       <UBadge
@@ -253,11 +253,11 @@ onBeforeUnmount(() => {
               hint="Current spendable Token balance"
             />
             <SpMetric
-              label="Saved by reuse"
+              label="Saved by cache"
               icon="i-lucide-sparkles"
               tone="success"
               :value="formatUnits(summary.data.value.saved_tokens)"
-              :hint="`${formatSpCredits(summary.data.value.credits_saved)} Credits equivalent saved`"
+              :hint="`${formatSpCredits(summary.data.value.credits_saved)} Credits kept through cache reuse`"
             />
             <SpMetric
               label="Charged Tokens"
@@ -293,9 +293,9 @@ onBeforeUnmount(() => {
             icon="i-lucide-sparkles"
             :color="hasSmartSavings ? 'success' : 'info'"
             variant="subtle"
-            :title="hasSmartSavings ? 'Smart reuse is saving your balance' : 'Smart reuse is active'"
+            :title="hasSmartSavings ? 'Cache reuse is saving your balance' : 'Cache reuse is active'"
             :description="hasSmartSavings
-              ? `${formatUnits(summary.data.value.cached_input_tokens)} of repeated context was recognized in this period, saving ${formatUnits(summary.data.value.saved_tokens)} Tokens (${savingsRateLabel}).`
+              ? `${formatUnits(summary.data.value.cached_input_tokens)} of repeated context was reused from cache in this period, saving ${formatUnits(summary.data.value.saved_tokens)} Tokens (${savingsRateLabel}).`
               : 'When a recent request repeats a large prompt prefix, SP Cambo bills that reused context at 25% of the normal Token rate.'"
           />
 
@@ -305,12 +305,12 @@ onBeforeUnmount(() => {
                 <h2 class="text-sm font-medium text-highlighted">
                   Charged Tokens over time
                 </h2>
-                <p class="mt-1 text-[11px] text-muted">
+                <p class="mt-1 text-xs text-muted">
                   Settled customer charge only.
                 </p>
               </div>
 
-              <p class="text-[10px] text-dimmed">
+              <p class="text-[11px] text-dimmed">
                 {{ formatDateTime(summary.data.value.range.from) }} →
                 {{ formatDateTime(summary.data.value.range.to) }}
               </p>
@@ -344,14 +344,14 @@ onBeforeUnmount(() => {
                     <p class="font-medium text-highlighted">{{ bucketLabel(bucket.at) }}</p>
                     <p class="sp-numeric text-muted">
                       {{ formatUnits(bucket.billed_tokens) }} charged ·
-                      {{ formatUnits(bucket.saved_tokens) }} saved ·
+                      {{ formatUnits(bucket.saved_tokens) }} saved by cache ·
                       {{ formatCount(bucket.requests) }} req
                     </p>
                   </div>
                 </li>
               </ul>
 
-              <div class="mt-2 flex justify-between text-[10px] text-dimmed">
+              <div class="mt-2 flex justify-between text-[11px] text-dimmed">
                 <span
                   v-for="index in [...axisIndexes].sort((a, b) => a - b)"
                   :key="index"
@@ -386,28 +386,28 @@ onBeforeUnmount(() => {
                     <p class="truncate text-sm font-semibold text-highlighted">
                       {{ modelUi(entry.public_model).label }}
                     </p>
-                    <p class="truncate font-mono text-[10px] text-dimmed">
+                    <p class="truncate font-mono text-xs text-dimmed">
                       {{ entry.public_model }} · {{ formatCount(entry.requests) }} requests
                     </p>
                   </div>
                 </div>
 
-                <dl class="grid grid-cols-4 gap-4 text-[10px] sm:flex sm:items-center sm:gap-5">
+                <dl class="grid grid-cols-2 gap-x-5 gap-y-2 text-xs sm:flex sm:items-center sm:gap-6">
                   <div class="text-right">
-                    <dt class="text-dimmed">Charged</dt>
-                    <dd class="sp-numeric font-semibold text-info">{{ formatUnits(entry.billed_tokens) }}</dd>
+                    <dt class="text-[11px] leading-4 text-dimmed">Charged</dt>
+                    <dd class="sp-numeric text-sm font-semibold leading-5 text-info">{{ formatUnits(entry.billed_tokens) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">Saved</dt>
-                    <dd class="sp-numeric font-semibold text-success">{{ formatUnits(entry.saved_tokens) }}</dd>
+                    <dt class="whitespace-nowrap text-[11px] leading-4 text-dimmed">Saved by cache</dt>
+                    <dd class="sp-numeric text-sm font-semibold leading-5 text-success">{{ formatUnits(entry.saved_tokens) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">Credits</dt>
-                    <dd class="sp-numeric font-semibold text-primary">{{ formatSpCredits(entry.sp_credits_used) }}</dd>
+                    <dt class="text-[11px] leading-4 text-dimmed">Credits</dt>
+                    <dd class="sp-numeric text-sm font-semibold leading-5 text-primary">{{ formatSpCredits(entry.sp_credits_used) }}</dd>
                   </div>
                   <div class="text-right">
-                    <dt class="text-dimmed">Wallet</dt>
-                    <dd class="sp-numeric font-semibold text-warning">{{ formatMoney(entry.credit_charge) }}</dd>
+                    <dt class="text-[11px] leading-4 text-dimmed">Wallet</dt>
+                    <dd class="sp-numeric text-sm font-semibold leading-5 text-warning">{{ formatMoney(entry.credit_charge) }}</dd>
                   </div>
                 </dl>
               </li>
@@ -517,7 +517,7 @@ onBeforeUnmount(() => {
                     {{ modelUi(item.public_model).label }}
                   </p>
 
-                  <span class="font-mono text-[9px] text-dimmed">
+                  <span class="font-mono text-[11px] text-dimmed">
                     {{ item.public_model }}
                   </span>
 
@@ -543,7 +543,7 @@ onBeforeUnmount(() => {
                   </UBadge>
                 </div>
 
-                <p class="truncate text-[10px] text-muted">
+                <p class="truncate text-xs leading-5 text-muted">
                   {{ item.endpoint }} · {{ item.api_key_label }}
                   <span class="font-mono text-dimmed">{{ item.api_key_prefix }}…</span>
                   · {{ formatDateTime(item.started_at) }}
@@ -552,38 +552,38 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="grid min-w-0 shrink-0 gap-x-5 gap-y-3 sm:grid-cols-[minmax(11rem,1fr)_auto]">
-              <dl class="grid grid-cols-3 gap-x-4 gap-y-2 text-[10px]">
+              <dl class="grid grid-cols-3 gap-x-5 gap-y-2 text-xs">
                 <div
                   v-for="row in activityTokenRows(item)"
                   :key="row.label"
                 >
-                  <dt class="font-medium text-dimmed">{{ row.label }}</dt>
-                  <dd class="sp-numeric font-semibold" :class="tokenValueTone(row.label)">
+                  <dt class="text-[11px] font-medium leading-4 text-dimmed">{{ row.label }}</dt>
+                  <dd class="sp-numeric text-sm font-semibold leading-5" :class="tokenValueTone(row.label)">
                     {{ formatCompactUnits(row.value) }}
                   </dd>
                 </div>
               </dl>
 
-              <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px]">
+              <dl class="grid grid-cols-2 gap-x-5 gap-y-2 text-xs">
                 <div>
-                  <dt class="text-dimmed">Charged</dt>
-                  <dd class="sp-numeric font-semibold text-info">
+                  <dt class="text-[11px] leading-4 text-dimmed">Charged</dt>
+                  <dd class="sp-numeric text-sm font-semibold leading-5 text-info">
                     {{ item.billed_tokens !== null ? formatUnits(item.billed_tokens) : item.reserved_units !== null ? `${formatUnits(item.reserved_units)} reserved` : '—' }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">Credits</dt>
-                  <dd class="sp-numeric font-semibold text-primary">{{ formatSpCredits(item.sp_credits_used) }}</dd>
+                  <dt class="text-[11px] leading-4 text-dimmed">Credits</dt>
+                  <dd class="sp-numeric text-sm font-semibold leading-5 text-primary">{{ formatSpCredits(item.sp_credits_used) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">Wallet</dt>
-                  <dd class="sp-numeric font-semibold text-warning">
+                  <dt class="text-[11px] leading-4 text-dimmed">Wallet</dt>
+                  <dd class="sp-numeric text-sm font-semibold leading-5 text-warning">
                     {{ item.credit_charge ? formatMoney(item.credit_charge) : '—' }}
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-dimmed">Duration</dt>
-                  <dd class="sp-numeric font-semibold text-warning">{{ displayDuration(item) }}</dd>
+                  <dt class="text-[11px] leading-4 text-dimmed">Duration</dt>
+                  <dd class="sp-numeric text-sm font-semibold leading-5 text-warning">{{ displayDuration(item) }}</dd>
                 </div>
               </dl>
             </div>
@@ -591,7 +591,7 @@ onBeforeUnmount(() => {
         </ul>
       </SpAsyncSection>
 
-      <p class="text-[10px] leading-5 text-muted">
+      <p class="text-xs leading-5 text-muted">
         Input/output and reuse figures come from SP Cambo’s local meter. Charged Tokens,
         Credits and wallet charges are the authoritative customer figures.
       </p>

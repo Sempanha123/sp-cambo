@@ -38,7 +38,7 @@ describe('activityTokenRows', () => {
       { label: 'Input', value: 120 },
       { label: 'Output', value: 45 },
       { label: 'Reused input', value: 14 },
-      { label: 'Saved', value: '12' },
+      { label: 'Saved by cache', value: '12' },
       { label: 'Cache write', value: 9 },
       { label: 'Reasoning', value: 3 },
       { label: 'Total', value: 191 }
@@ -71,7 +71,7 @@ describe('activityTokenRows', () => {
       { label: 'Input', value: 100 },
       { label: 'Output', value: 20 },
       { label: 'Reused input', value: 5 },
-      { label: 'Saved', value: '4' }
+      { label: 'Saved by cache', value: '4' }
     ])
     expect(rows.some(row => row.label === 'Total')).toBe(false)
   })

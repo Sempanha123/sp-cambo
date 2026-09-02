@@ -318,7 +318,7 @@ const copyRevealed = async () => {
               <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                 <div class="rounded-lg border border-default p-3"><p class="text-xs text-muted">Requests</p><strong class="sp-numeric">{{ usage.data.value.requests.toLocaleString() }}</strong></div>
                 <div class="rounded-lg border border-default p-3"><p class="text-xs text-muted">Reused context</p><strong class="sp-numeric text-info">{{ formatUnits(usage.data.value.cached_input_tokens) }}</strong></div>
-                <div class="rounded-lg border border-success/20 bg-success/5 p-3"><p class="text-xs text-muted">Saved</p><strong class="sp-numeric text-success">{{ formatUnits(usage.data.value.saved_tokens) }}</strong></div>
+                <div class="rounded-lg border border-success/20 bg-success/5 p-3"><p class="text-xs text-muted">Saved by cache</p><strong class="sp-numeric text-success">{{ formatUnits(usage.data.value.saved_tokens) }}</strong></div>
                 <div class="rounded-lg border border-default p-3"><p class="text-xs text-muted">Charged Tokens</p><strong class="sp-numeric text-primary">{{ formatUnits(usage.data.value.billed_tokens) }}</strong></div>
                 <div class="rounded-lg border border-default p-3"><p class="text-xs text-muted">Savings rate</p><strong class="sp-numeric text-success">{{ Number(usage.data.value.savings_rate_percent).toFixed(1) }}%</strong></div>
                 <div class="rounded-lg border border-default p-3"><p class="text-xs text-muted">Wallet charge</p><strong class="text-warning">{{ formatMoney(usage.data.value.credit_charge) }}</strong></div>

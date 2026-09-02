@@ -86,6 +86,7 @@ const aliases = await useSpResource(
 const selectedAliasId = ref<string | undefined>()
 const detail = ref<PoolDetail | null>(null)
 const loading = ref(false)
+const loadError = ref<string | null>(null)
 const saving = ref(false)
 const resettingRevision = ref<string | null>(null)
 const selectedCandidate = ref<string | undefined>()
@@ -108,6 +109,10 @@ const aliasOptions = computed(() =>
   }))
 )
 
+const selectedAlias = computed(() =>
+  (aliases.data.value ?? []).find(alias => alias.id === selectedAliasId.value) ?? null
+)
+
 const candidateOptions = computed(() => {
   const used = new Set(form.entries.map(entry => `${entry.ai_model_id}:${entry.revision_id}`))
 
@@ -126,10 +131,13 @@ const candidateMap = computed(() =>
 const loadDetail = async () => {
   if (!selectedAliasId.value) {
     detail.value = null
+    loadError.value = null
     return
   }
 
   loading.value = true
+  detail.value = null
+  loadError.value = null
   try {
     const data = await api.request<PoolDetail>(`/admin/model-route-pools/${selectedAliasId.value}`)
     detail.value = data
@@ -141,11 +149,9 @@ const loadDetail = async () => {
     form.entries = data.pool.entries.map(entry => ({ ...entry }))
     selectedCandidate.value = undefined
   } catch (error) {
-    toast.add({
-      title: 'Could not load model routing',
-      description: error instanceof Error ? error.message : 'Please try again.',
-      color: 'error'
-    })
+    loadError.value = error instanceof Error
+      ? error.message
+      : 'SP Cambo could not load this model route pool.'
   } finally {
     loading.value = false
   }
@@ -294,10 +300,35 @@ const totalRouteCapacity = computed(() =>
             v-model="selectedAliasId"
             :items="aliasOptions"
             value-key="value"
+            :loading="aliases.loading.value"
+            :disabled="aliases.initialLoading.value || aliases.failed.value || aliases.unavailable.value"
             class="w-full"
             placeholder="Choose a customer-facing model"
           />
         </UFormField>
+
+        <UAlert
+          v-if="aliases.failed.value || aliases.unavailable.value"
+          class="mt-3"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-triangle-alert"
+          title="Public model aliases could not be loaded"
+          :description="aliases.error.value?.message ?? 'Check the Laravel control plane, then try again.'"
+        >
+          <template #actions>
+            <UButton
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-refresh-cw"
+              :loading="aliases.loading.value"
+              @click="aliases.refresh()"
+            >
+              Retry aliases
+            </UButton>
+          </template>
+        </UAlert>
       </UCard>
 
       <template v-if="detail">
@@ -526,8 +557,46 @@ const totalRouteCapacity = computed(() =>
         </UCard>
       </template>
 
-      <UCard v-else-if="!loading" class="sp-premium-card sp-app-card">
-        <div class="py-10 text-center">
+      <UCard v-else-if="loading" class="sp-premium-card sp-app-card">
+        <div class="py-8 text-center">
+          <UIcon name="i-lucide-loader-circle" class="mx-auto size-7 animate-spin text-primary" />
+          <p class="mt-3 text-sm font-medium text-highlighted">Loading model routing…</p>
+          <p v-if="selectedAlias" class="mt-1 text-xs text-muted">
+            {{ selectedAlias.display_name }} · {{ selectedAlias.public_alias }}
+          </p>
+        </div>
+      </UCard>
+
+      <UCard v-else-if="loadError" class="sp-premium-card sp-app-card">
+        <div class="mx-auto max-w-2xl py-7 text-center">
+          <div class="mx-auto flex size-10 items-center justify-center rounded-xl border border-error/20 bg-error/10 text-error">
+            <UIcon name="i-lucide-triangle-alert" class="size-5" />
+          </div>
+          <h2 class="mt-3 text-base font-semibold text-highlighted">Model routing could not be loaded</h2>
+          <p v-if="selectedAlias" class="mt-1 text-sm text-muted">
+            {{ selectedAlias.display_name }} · <span class="font-mono">{{ selectedAlias.public_alias }}</span>
+          </p>
+          <p class="mt-3 text-sm leading-6 text-muted">{{ loadError }}</p>
+          <p class="mt-1 text-xs leading-5 text-dimmed">
+            If this started after the route-pool update, make sure the latest Laravel database migrations have been applied.
+          </p>
+          <UButton
+            class="mt-4"
+            color="neutral"
+            variant="subtle"
+            icon="i-lucide-refresh-cw"
+            @click="loadDetail"
+          >
+            Retry model routing
+          </UButton>
+        </div>
+      </UCard>
+
+      <UCard
+        v-else-if="!aliases.failed.value && !aliases.unavailable.value"
+        class="sp-premium-card sp-app-card"
+      >
+        <div class="py-7 text-center">
           <UIcon name="i-lucide-route" class="mx-auto size-8 text-muted" />
           <p class="mt-3 text-sm text-muted">Choose a public model alias to configure scalable routing.</p>
         </div>

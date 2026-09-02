@@ -10,7 +10,7 @@ import type { RequestActivity } from '~/types/commerce'
  * decides whether to render it and never derives or repairs it from components.
  */
 export interface ActivityTokenRow {
-  label: 'Input' | 'Output' | 'Reused input' | 'Saved' | 'Cache write' | 'Reasoning' | 'Total'
+  label: 'Input' | 'Output' | 'Reused input' | 'Saved by cache' | 'Cache write' | 'Reasoning' | 'Total'
   value: string | number | null
 }
 
@@ -35,7 +35,7 @@ export function activityTokenRows(activity: ActivityTokenMetadata): ActivityToke
 
   for (const row of [
     { label: 'Reused input' as const, value: activity.cache_read_tokens },
-    { label: 'Saved' as const, value: activity.saved_tokens },
+    { label: 'Saved by cache' as const, value: activity.saved_tokens },
     { label: 'Cache write' as const, value: activity.cache_write_tokens },
     { label: 'Reasoning' as const, value: activity.reasoning_tokens },
     { label: 'Total' as const, value: activity.total_tokens }

@@ -285,6 +285,20 @@ function Ensure-PnpmDependencies {
     }
 }
 
+function Assert-SpCamboFrontendSource {
+    param([string]$AppPath)
+
+    $source = Get-Content -LiteralPath $AppPath -Raw
+
+    if ($source -match '<NuxtWelcome\b') {
+        throw "NuxtWelcome was found in $AppPath. This is not the SP Cambo frontend entrypoint."
+    }
+
+    if ($source -notmatch '<NuxtPage\b') {
+        throw "NuxtPage was not found in $AppPath. Refusing to start the wrong Nuxt application."
+    }
+}
+
 Write-Host ''
 Write-Host '====================================================' -ForegroundColor DarkCyan
 Write-Host '          SP CAMBO - LOCAL DEVELOPMENT START' -ForegroundColor Cyan
@@ -297,6 +311,26 @@ Assert-Path -Path (Join-Path $Frontend 'package.json') -Label 'Nuxt frontend'
 Assert-Path -Path (Join-Path $Frontend 'app\app.vue') -Label 'SP Cambo frontend app'
 Assert-Path -Path (Join-Path $Gateway 'package.json') -Label 'Inference gateway'
 Assert-Path -Path $BackendEnv -Label 'backend/.env'
+
+$bakongToken = Get-DotEnvValue -Path $BackendEnv -Name 'BAKONG_TOKEN'
+if ([string]::IsNullOrWhiteSpace($bakongToken)) {
+    Write-Host '[WARN] BAKONG_TOKEN is not set. KHQR can be generated, but payment verification will fail until it is configured.' -ForegroundColor Yellow
+}
+
+$FrontendApp = Join-Path $Frontend 'app\app.vue'
+Assert-SpCamboFrontendSource -AppPath $FrontendApp
+
+# The old launcher forwarded an extra `--` to Nuxt. Nuxt interpreted `--host`
+# as a project directory and generated a default welcome app under
+# frontend/--host. Remove only that generated directory and rebuild the real
+# frontend cache if an older copy is still present.
+$LegacyWrongFrontendRoot = Join-Path $Frontend '--host'
+
+if (Test-Path -LiteralPath $LegacyWrongFrontendRoot) {
+    Write-Host '[CLEAN] Removing legacy frontend/--host Nuxt workspace' -ForegroundColor Yellow
+    Remove-Item -LiteralPath $LegacyWrongFrontendRoot -Recurse -Force
+    $CleanFrontendCache = $true
+}
 
 Write-Section '[1/7] Laravel preflight'
 
@@ -312,6 +346,14 @@ try {
 
         if ($LASTEXITCODE -ne 0) {
             throw 'php artisan optimize:clear failed.'
+        }
+
+        Write-Host '[MIGRATE] Applying pending Laravel database migrations' -ForegroundColor Yellow
+
+        & php artisan migrate --force --no-interaction
+
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Laravel database migration failed. Check the database settings in backend/.env.'
         }
     }
     finally {
@@ -471,7 +513,7 @@ else {
         -WorkingDirectory $Frontend `
         -HealthUrl "$FrontendUrl/" `
         -ExpectedPort 3000 `
-        -Command 'npx pnpm@11.22.0 dev -- --host 127.0.0.1 --port 3000'
+        -Command 'npx pnpm@11.22.0 dev --host 127.0.0.1 --port 3000'
 
     $identityDeadline = (Get-Date).AddSeconds($StartupTimeoutSec)
 

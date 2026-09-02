@@ -899,7 +899,7 @@ const requestFilters = [
                 </dd>
               </div>
               <div class="sp-checker-usage">
-                <dt>Saved by reuse</dt><dd class="text-success">
+                <dt>Saved by cache</dt><dd class="text-success">
                   {{ formatUnits(keyStatus.tokens_used?.saved ?? '0') }}
                 </dd>
               </div>
@@ -963,7 +963,7 @@ const requestFilters = [
                     </th><th class="px-3 py-3 text-right font-medium">
                       Reused
                     </th><th class="px-3 py-3 text-right font-medium">
-                      Saved
+                      Saved by cache
                     </th><th class="px-3 py-3 text-right font-medium">
                       Out
                     </th><th class="px-3 py-3 text-right font-medium">

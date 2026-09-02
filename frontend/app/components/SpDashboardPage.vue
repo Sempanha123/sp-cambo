@@ -43,13 +43,13 @@ withDefaults(defineProps<{
       <div class="sp-dashboard-content sp-r9-dashboard-content sp-r10-dashboard-content sp-r12-dashboard-content mx-auto w-full min-w-0 max-w-[1440px]">
         <section
           v-if="description || eyebrow"
-          class="sp-dashboard-intro sp-page-lead sp-r12-page-lead min-w-0 overflow-hidden rounded-xl p-4 sm:p-5"
+          class="sp-dashboard-intro sp-page-lead sp-r12-page-lead min-w-0 overflow-hidden rounded-xl p-3 sm:px-4 sm:py-3"
         >
-          <div class="flex min-w-0 items-start gap-3">
-            <div class="sp-page-lead-icon flex size-9 shrink-0 items-center justify-center rounded-lg border text-primary">
+          <div class="flex min-w-0 items-center gap-2.5">
+            <div class="sp-page-lead-icon flex size-8 shrink-0 items-center justify-center rounded-lg border text-primary">
               <UIcon
                 :name="icon || 'i-lucide-sparkles'"
-                class="size-4"
+                class="size-3.5"
               />
             </div>
 
@@ -63,8 +63,8 @@ withDefaults(defineProps<{
 
               <p
                 v-if="description"
-                class="max-w-4xl text-sm leading-6 text-muted"
-                :class="{ 'mt-1': eyebrow }"
+                class="max-w-4xl text-[13px] leading-5 text-muted"
+                :class="{ 'mt-0.5': eyebrow }"
               >
                 {{ description }}
               </p>

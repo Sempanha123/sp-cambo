@@ -583,6 +583,7 @@ const countdownTone = computed(() => countdownToneClass(remaining.value))
                   <UButton
                     block
                     size="lg"
+                    class="sp-payment-check-button"
                     icon="i-lucide-search"
                     :loading="verifying"
                     @click="iHavePaid"

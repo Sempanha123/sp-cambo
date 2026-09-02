@@ -376,6 +376,29 @@
   }
 }
 
+/* FIX29 — compact dashboard typography. Keep the Manrope/Noto Sans Khmer
+ * pairing from the live dashboard while reducing visual density one step. */
+@layer components {
+  .sp-dashboard-shell {
+    font-family: var(--font-sans);
+    font-size: .9375rem;
+  }
+
+  .sp-dashboard-content {
+    font-size: .875rem;
+  }
+
+  .sp-dashboard-content :where(.text-sm:not(.sp-numeric)) {
+    font-size: .8125rem !important;
+    line-height: 1.2rem !important;
+  }
+
+  .sp-dashboard-content :where(.text-base:not(.sp-numeric)) {
+    font-size: .875rem !important;
+    line-height: 1.3rem !important;
+  }
+}
+
 /* --------------------------------------------------------------------------
  * 2026 visual refresh — Cambodian character, still product-first.
  * These motifs are CSS-only and scroll with the document. No fixed background
@@ -1222,22 +1245,24 @@
   .sp-page-lead {
     position: relative;
     overflow: hidden;
-    background:
-      linear-gradient(110deg, color-mix(in oklab, var(--sp-panel) 98%, var(--ui-primary) 2%), var(--sp-panel)) !important;
+    border-color: var(--sp-line-soft) !important;
+    background: color-mix(in oklab, var(--sp-panel) 94%, var(--ui-bg) 6%) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 3%, transparent) !important;
   }
 
   .sp-page-lead::before {
     content: '';
     position: absolute;
     inset: 0 auto 0 0;
-    width: 2px;
-    background: linear-gradient(180deg, var(--ui-primary), color-mix(in oklab, var(--ui-secondary) 70%, transparent), transparent);
-    opacity: .9;
+    width: 1px;
+    background: var(--ui-primary);
+    opacity: .42;
   }
 
   .sp-page-lead-icon {
-    background: color-mix(in oklab, var(--ui-primary) 10%, var(--sp-panel-raised)) !important;
-    box-shadow: inset 0 1px 0 color-mix(in oklab, white 6%, transparent);
+    border-color: color-mix(in oklab, var(--ui-primary) 18%, var(--sp-line-soft)) !important;
+    background: color-mix(in oklab, var(--ui-primary) 6%, var(--sp-panel-raised)) !important;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent);
   }
 
   .sp-page-eyebrow {
