@@ -134,7 +134,7 @@ const submitCreate = async () => {
 
       toast.add({
         title: verified.auto_activated ? 'Connection ready and active' : 'Connection ready',
-        description: `Revision ${verified.route_version} was created and verified successfully.`,
+        description: 'The connection was created and verified successfully.',
         color: 'success',
         icon: 'i-lucide-circle-check-big'
       })
@@ -246,8 +246,8 @@ const submitEditRevision = async () => {
     toast.add({
       title: replaced ? 'Connection replaced safely' : 'Connection updated',
       description: replaced
-        ? `Revision ${updated.route_version} passed verification and replaced Revision ${target.route_version}. Active and pooled routes were moved automatically.`
-        : `Revision ${updated.route_version} has been updated successfully.`,
+        ? 'The replacement passed verification. Active and pooled routes were moved automatically.'
+        : 'The connection has been updated successfully.',
       color: 'success',
       icon: 'i-lucide-pencil'
     })
@@ -290,8 +290,8 @@ const confirmDeleteRevision = async () => {
     toast.add({
       title: result.hidden ? 'Connection moved to hidden' : 'Connection deleted',
       description: result.hidden
-        ? `Historical Revision ${target.route_version} was hidden. Its request and audit history is preserved.`
-        : `Unused Revision ${target.route_version} was permanently deleted.`,
+        ? 'The historical connection was hidden. Its request and audit history is preserved.'
+        : 'The unused connection was permanently deleted.',
       color: 'success',
       icon: result.hidden ? 'i-lucide-archive' : 'i-lucide-trash-2'
     })
@@ -337,14 +337,14 @@ const canSetActive = (revision: ProviderConnectionRevision) =>
 
 const setActiveTitle = (revision: ProviderConnectionRevision) => {
   if (provider.data.value?.active_connection_revision_id === revision.id) {
-    return 'This revision is already active'
+    return 'This connection is already active'
   }
 
   if (revision.lifecycle_status !== 'READY') {
-    return 'Only a successfully probed READY revision can be set active'
+    return 'Only a successfully probed READY connection can be set active'
   }
 
-  return 'Set this READY revision active'
+  return 'Set this READY connection active'
 }
 
 const openSetActive = (revision: ProviderConnectionRevision) => {
@@ -459,12 +459,12 @@ const statusUpdateTitle = (revision: ProviderConnectionRevision) => {
   const transitions = statusTransitionsFor(revision)
 
   if (transitions.length === 0) {
-    return 'A REVOKED revision cannot transition to another status'
+    return 'A hidden connection cannot transition to another status'
   }
 
   return transitions.includes('DRAINING')
-    ? 'Drain or revoke this connection revision'
-    : 'Revoke this connection revision'
+    ? 'Drain or hide this connection'
+    : 'Hide this connection'
 }
 
 const openStatusUpdate = (revision: ProviderConnectionRevision) => {
@@ -1453,7 +1453,7 @@ const submitStatusUpdate = async () => {
 
     toast.add({
       title: 'Status updated',
-      description: `Status for revision ${updatedRevision.route_version} has been updated to ${updatedRevision.lifecycle_status}.`,
+      description: `Connection status has been updated to ${updatedRevision.lifecycle_status}.`,
       color: 'success',
       icon: 'i-lucide-check-circle'
     })
@@ -1491,7 +1491,7 @@ const statusBadge = (status: string) => {
 
 useSeoMeta({
   title: () => provider.data.value ? `${provider.data.value.name} — Provider` : 'Provider',
-  description: 'Manage connection revisions for this provider.',
+  description: 'Manage provider connections.',
   robots: 'noindex, nofollow'
 })
 </script>
@@ -1500,7 +1500,7 @@ useSeoMeta({
   <SpDashboardPage
     :title="provider.data.value?.name ?? 'Provider'"
     icon="i-lucide-server"
-    :description="provider.data.value ? `Manage connection revisions for ${provider.data.value.name}` : 'Provider details'"
+    :description="provider.data.value ? `Manage connections for ${provider.data.value.name}` : 'Provider details'"
   >
     <template #actions>
       <UButton
@@ -1589,7 +1589,7 @@ useSeoMeta({
           variant="subtle"
           icon="i-lucide-triangle-alert"
           title="No active provider connection"
-          description="Customer requests cannot route until a successfully probed READY revision is active. Existing READY rows created before the auto-activation fix can be repaired here."
+          description="Customer requests cannot route until a successfully probed READY connection is active. Existing READY connections can be activated here."
         >
           <template #actions>
             <UButton
@@ -1600,7 +1600,7 @@ useSeoMeta({
               icon="i-lucide-circle-check-big"
               @click="openBestReadyRevision"
             >
-              Activate READY revision
+              Activate READY connection
             </UButton>
           </template>
         </UAlert>
@@ -1609,8 +1609,8 @@ useSeoMeta({
         <section class="space-y-4">
           <SpSectionHeading
             :level="3"
-            title="Connection revisions"
-            description="Manage connection revisions for this provider."
+            title="Connections"
+            description="Manage provider connections."
           >
             <template #actions>
               <div class="flex flex-wrap items-center gap-2">
@@ -1642,10 +1642,10 @@ useSeoMeta({
             :empty="visibleRevisions.length === 0"
             :offline="revisions.error.value?.code === 'network_unreachable'"
             :error-message="revisions.error.value?.message"
-            error-title="Connection revisions could not be loaded"
-            unavailable-title="Connection revisions are not available"
-            unavailable-description="SP Cambo could not be reached, so connection revisions cannot be managed right now."
-            :empty-title="hiddenRevisionCount > 0 && !showHiddenRevisions ? 'No working connections' : 'No connection revisions'"
+            error-title="Connections could not be loaded"
+            unavailable-title="Connections are not available"
+            unavailable-description="SP Cambo could not be reached, so connections cannot be managed right now."
+            :empty-title="hiddenRevisionCount > 0 && !showHiddenRevisions ? 'No working connections' : 'No connections'"
             :empty-description="hiddenRevisionCount > 0 && !showHiddenRevisions ? 'Historical connections are hidden. Use Show hidden to review or edit them.' : 'Create a connection to configure this provider.'"
             empty-icon="i-lucide-link-off"
             loading-variant="rows"
@@ -1662,11 +1662,10 @@ useSeoMeta({
                     <div class="flex flex-wrap items-center gap-2">
                       <p class="truncate font-medium text-highlighted">
                         <template v-if="revision.lifecycle_status === 'REVOKED'">
-                          Hidden revision {{ revision.route_version }}
+                          Hidden connection
                         </template>
                         <template v-else>
                           Connection {{ connectionSlot(revision) }}
-                          <span class="ml-1 text-xs font-normal text-dimmed">Revision {{ revision.route_version }}</span>
                         </template>
                       </p>
                       <UBadge
@@ -1780,7 +1779,7 @@ useSeoMeta({
                         variant="ghost"
                         size="sm"
                         icon="i-lucide-pencil"
-                        title="Edit this connection. Live, hidden, or historical revisions are replaced safely after verification."
+                        title="Edit this connection. Live or historical connections are replaced safely after verification."
                         @click="openEditRevision(revision)"
                       >
                         Edit
@@ -2158,7 +2157,7 @@ useSeoMeta({
     <!-- Create connection revision modal -->
     <UModal
       v-model:open="createOpen"
-      title="Create new connection revision"
+      title="Create new connection"
       description="Configure and verify a connection in one step. Successful connections become READY automatically."
     >
       <template #body>
@@ -2183,8 +2182,8 @@ useSeoMeta({
             icon="i-lucide-git-branch"
             color="neutral"
             variant="subtle"
-            title="Revision number is automatic"
-            description="SP Cambo keeps immutable revision numbers for audit history. The working UI uses reusable Connection slots instead."
+            title="Connection numbering is automatic"
+            description="SP Cambo keeps technical history internally. The UI reuses simple names such as Connection 1 and Connection 2."
           />
 
           <UFormField
@@ -2302,21 +2301,6 @@ useSeoMeta({
           />
 
           <UFormField
-            label="Route version"
-            name="route_version"
-            required
-            :help="editCreatesReplacement ? 'Assigned automatically for the replacement revision.' : undefined"
-          >
-            <UInput
-              v-model="editRevisionForm.route_version"
-              type="number"
-              min="1"
-              :disabled="editCreatesReplacement"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UFormField
             label="Origin URL"
             name="origin"
             required
@@ -2421,7 +2405,7 @@ useSeoMeta({
           />
 
           <p class="text-sm text-muted">
-            Remove <strong class="text-highlighted">Revision {{ deleteRevisionTarget?.route_version }}</strong>?
+            Remove this <strong class="text-highlighted">connection</strong>?
             <template v-if="deleteRevisionTarget?.has_request_history">
               It has request history, so SP Cambo will move it to <strong class="text-highlighted">Hidden</strong> instead of deleting it.
             </template>
@@ -3508,7 +3492,7 @@ useSeoMeta({
     <UModal
       v-model:open="setActiveOpen"
       title="Set active connection"
-      description="Set this connection revision as the active one for this provider."
+      description="Set this connection as the active one for this provider."
     >
       <template #body>
         <div class="space-y-4">
@@ -3522,7 +3506,7 @@ useSeoMeta({
           />
 
           <p class="text-sm text-muted">
-            Setting this connection revision as active will make it the primary connection for this provider.
+            Setting this connection as active will make it the primary connection for this provider.
           </p>
 
           <div class="flex justify-end gap-2 pt-1">
@@ -3550,7 +3534,7 @@ useSeoMeta({
     <UModal
       v-model:open="statusOpen"
       title="Update connection status"
-      description="Update the lifecycle status of this connection revision."
+      description="Update the lifecycle status of this connection."
     >
       <template #body>
         <UForm
@@ -3574,7 +3558,7 @@ useSeoMeta({
             label="Lifecycle status"
             name="lifecycle_status"
             required
-            help="The new status for this connection revision."
+            help="The new status for this connection."
           >
             <USelectMenu
               v-model="statusForm.lifecycle_status"

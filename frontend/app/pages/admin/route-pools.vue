@@ -113,13 +113,38 @@ const selectedAlias = computed(() =>
   (aliases.data.value ?? []).find(alias => alias.id === selectedAliasId.value) ?? null
 )
 
+const connectionSlots = computed(() => {
+  const grouped = new Map<string, Map<string, { revision_id: string, route_version: number }>>()
+
+  for (const candidate of detail.value?.candidates ?? []) {
+    const revisions = grouped.get(candidate.provider_id) ?? new Map()
+    revisions.set(candidate.revision_id, {
+      revision_id: candidate.revision_id,
+      route_version: candidate.route_version
+    })
+    grouped.set(candidate.provider_id, revisions)
+  }
+
+  const slots = new Map<string, number>()
+  for (const revisions of grouped.values()) {
+    [...revisions.values()]
+      .sort((left, right) => left.route_version - right.route_version)
+      .forEach((revision, index) => slots.set(revision.revision_id, index + 1))
+  }
+
+  return slots
+})
+
+const connectionSlotForRevision = (revisionId: string) =>
+  connectionSlots.value.get(revisionId) ?? '—'
+
 const candidateOptions = computed(() => {
   const used = new Set(form.entries.map(entry => `${entry.ai_model_id}:${entry.revision_id}`))
 
   return (detail.value?.candidates ?? [])
     .filter(candidate => !used.has(candidate.candidate_key))
     .map(candidate => ({
-      label: `${candidate.provider_name ?? 'Provider'} · ${candidate.private_model} · R${candidate.route_version} · ${candidate.active_connections} active`,
+      label: `${candidate.provider_name ?? 'Provider'} · ${candidate.private_model} · Connection ${connectionSlotForRevision(candidate.revision_id)} · ${candidate.active_connections} active`,
       value: candidate.candidate_key
     }))
 })
@@ -227,7 +252,7 @@ const save = async () => {
   } catch (error) {
     toast.add({
       title: 'Could not save model routing',
-      description: error instanceof Error ? error.message : 'Check each private model and READY revision.',
+      description: error instanceof Error ? error.message : 'Check each private model and READY connection.',
       color: 'error'
     })
   } finally {
@@ -239,7 +264,7 @@ const resetCircuit = async (entry: PoolEntry) => {
   if (!selectedAliasId.value) return
 
   const confirmed = window.confirm(
-    `Reset the circuit for ${entry.provider_name ?? 'this provider'} revision ${entry.route_version ?? ''}?`
+    `Reset the circuit for ${entry.provider_name ?? 'this provider'} Connection ${connectionSlotForRevision(entry.revision_id)}?`
   )
   if (!confirmed) return
 
@@ -348,7 +373,7 @@ const totalRouteCapacity = computed(() =>
           variant="subtle"
           icon="i-lucide-shuffle"
           title="Customers never change model names"
-          :description="'model: ' + detail.model.public_alias + ' stays unchanged. Provider, revision and private model mapping stay inside SP Cambo.'"
+          :description="'model: ' + detail.model.public_alias + ' stays unchanged. Provider, connection and private model mapping stay inside SP Cambo.'"
         />
 
         <UCard class="sp-premium-card sp-app-card">
@@ -430,7 +455,7 @@ const totalRouteCapacity = computed(() =>
                   :items="candidateOptions"
                   value-key="value"
                   class="min-w-0 flex-1"
-                  placeholder="Choose READY private model + route"
+                  placeholder="Choose READY private model + connection"
                 />
                 <UButton
                   icon="i-lucide-plus"
@@ -455,8 +480,8 @@ const totalRouteCapacity = computed(() =>
                     <strong class="text-highlighted">
                       {{ entry.provider_name ?? 'Provider' }} · {{ entry.private_model ?? entry.internal_model_id }}
                     </strong>
-                    <UBadge color="neutral" variant="subtle" :title="`Internal revision ${entry.route_version ?? '—'}`">
-                      Route {{ index + 1 }}
+                    <UBadge color="neutral" variant="subtle">
+                      Connection {{ connectionSlotForRevision(entry.revision_id) }}
                     </UBadge>
                     <UBadge
                       :color="entry.health?.status === 'CIRCUIT_OPEN' ? 'warning' : 'success'"
@@ -469,7 +494,7 @@ const totalRouteCapacity = computed(() =>
                     </UBadge>
                   </div>
                   <p class="mt-1 truncate font-mono text-xs text-muted">
-                    {{ entry.internal_model_id }} · {{ entry.connection_type }} · revision {{ entry.route_version ?? '—' }}
+                    {{ entry.internal_model_id }} · {{ entry.connection_type }}
                   </p>
                   <p
                     v-if="entry.health?.last_error_code"
@@ -536,7 +561,7 @@ const totalRouteCapacity = computed(() =>
           </div>
 
           <p v-else class="py-10 text-center text-sm text-muted">
-            No pooled routes configured. Add at least one READY private model + revision.
+            No pooled routes configured. Add at least one READY private model + connection.
           </p>
 
           <template #footer>

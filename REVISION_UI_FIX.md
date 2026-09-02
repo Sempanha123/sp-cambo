@@ -12,12 +12,13 @@ This patch changes provider revision management so historical connections are ea
 - Revisions with ACTIVE requests cannot be removed until those requests finish.
 - Edit remains available for all revisions. READY/active/historical revisions use the existing safe replacement flow.
 - New connections no longer ask the admin to choose a unique revision number. The backend allocates the next immutable audit revision automatically.
-- The Providers UI uses reusable `Connection 1`, `Connection 2`, ... working slots while still showing the internal immutable revision number in smaller text.
-- Model Routing shows `Route 1`, `Route 2`, ... for the pool slot and keeps the internal revision number in the subtitle/tooltip.
+- The Providers UI uses reusable `Connection 1`, `Connection 2`, ... names. Internal revision numbers are no longer shown in normal admin UI.
+- Model Routing uses the same `Connection 1`, `Connection 2`, ... names in the selector and route cards; `R4`, `R5`, etc. are hidden from operators.
+- Technical immutable revision IDs/versions still exist only in the backend for request history, audit, and safe replacement.
 
 ## Important audit rule
 
-Database `route_version` values are intentionally NOT reused. Existing reservations and audit history may refer to them. Only the user-facing Connection/Route slot number is reusable.
+Database `route_version` values are intentionally NOT reused. Existing reservations and audit history may refer to them. Only the user-facing Connection number is reusable.
 
 ## Changed files
 
