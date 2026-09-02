@@ -10,6 +10,7 @@ use App\Models\ModelRoutePoolEntry;
 use App\Models\Permission;
 use App\Models\Provider;
 use App\Models\ProviderConnectionRevision;
+use App\Models\Reservation;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -454,6 +455,57 @@ class AdminProviderRevisionTest extends TestCase
             ->assertJsonPath('code', 'invalid_provider_revision_transition');
 
         $this->assertSame(ProviderConnectionRevision::STATUS_REVOKED, $revision->refresh()->lifecycle_status);
+    }
+
+    public function test_admin_can_create_revision_without_manually_choosing_route_version(): void
+    {
+        $admin = $this->admin();
+        [$provider] = $this->revision();
+
+        $this->actingAs($admin)
+            ->postJson("/api/v1/admin/providers/{$provider->id}/connection-revisions", [
+                'origin' => 'https://draft-two.example',
+                'connection_type' => 'omniroute',
+                'credential' => 'next-secret',
+                'timeout_ms' => 30000,
+                'policy_version' => 1,
+                'resolve_until' => null,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.route_version', 2);
+    }
+
+    public function test_removing_historical_revision_archives_it_instead_of_deleting_it(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision(ProviderConnectionRevision::STATUS_READY);
+
+        Reservation::query()->create([
+            'user_id' => User::factory()->create()->id,
+            'provider_connection_revision_id' => $revision->id,
+            'public_model_alias' => 'historical-model',
+            'billing_mode' => 'TOKEN_QUOTA',
+            'reserved_units' => 1,
+            'status' => 'RELEASED',
+            'idempotency_key' => 'historical-revision-remove-test',
+            'expires_at' => now()->addMinutes(15),
+        ]);
+
+        $this->actingAs($admin)
+            ->deleteJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}")
+            ->assertOk()
+            ->assertJsonPath('data.success', true)
+            ->assertJsonPath('data.hidden', true)
+            ->assertJsonPath('data.hard_deleted', false);
+
+        $this->assertDatabaseHas('provider_connection_revisions', [
+            'id' => $revision->id,
+            'lifecycle_status' => ProviderConnectionRevision::STATUS_REVOKED,
+        ]);
+        $this->assertDatabaseHas('reservations', [
+            'provider_connection_revision_id' => $revision->id,
+            'idempotency_key' => 'historical-revision-remove-test',
+        ]);
     }
 
     public function test_admin_can_delete_unused_non_active_revision(): void

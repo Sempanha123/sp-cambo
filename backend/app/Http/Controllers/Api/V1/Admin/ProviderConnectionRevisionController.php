@@ -29,6 +29,7 @@ class ProviderConnectionRevisionController extends Controller
 
         $revisions = ProviderConnectionRevision::query()
             ->where('provider_id', $provider->id)
+            ->withExists('reservations')
             ->orderBy('created_at', 'desc')
             ->get();
 
@@ -47,7 +48,9 @@ class ProviderConnectionRevisionController extends Controller
             ->firstOrFail();
 
         $data = $request->validate([
-            'route_version' => ['required', 'integer', 'min:1', Rule::unique('provider_connection_revisions', 'route_version')->where('provider_id', $provider->id)],
+            // Route versions are audit identifiers, not reusable UI slots. Admin UI
+            // normally omits this field and the server allocates the next version.
+            'route_version' => ['sometimes', 'integer', 'min:1', Rule::unique('provider_connection_revisions', 'route_version')->where('provider_id', $provider->id)],
             'origin' => ['required', 'string', 'max:512'],
             'connection_type' => ['required', 'string', 'max:50', Rule::in(ProviderConnectionRevision::CONNECTION_TYPES)],
             'credential' => ['required', 'string'],
@@ -59,18 +62,32 @@ class ProviderConnectionRevisionController extends Controller
         $data['origin'] = $this->normalizeOrigin($data['origin'], $data['connection_type']);
         $this->validateOrigin($data['origin']);
 
-        $revision = ProviderConnectionRevision::query()->create([
-            'provider_id' => $provider->id,
-            'route_version' => $data['route_version'],
-            'origin' => $data['origin'],
-            'connection_type' => $data['connection_type'],
-            'credential' => $data['credential'],
-            'credential_suffix' => $this->extractCredentialSuffix($data['credential']),
-            'timeout_ms' => $data['timeout_ms'],
-            'policy_version' => $data['policy_version'] ?? 1,
-            'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
-            'resolve_until' => filled($data['resolve_until'] ?? null) ? Carbon::parse($data['resolve_until']) : null,
-        ]);
+        $revision = DB::transaction(function () use ($provider, $data): ProviderConnectionRevision {
+            $lockedProvider = Provider::query()->lockForUpdate()->findOrFail($provider->id);
+            ProviderConnectionRevision::query()
+                ->where('provider_id', $lockedProvider->id)
+                ->lockForUpdate()
+                ->get(['id']);
+
+            $routeVersion = isset($data['route_version'])
+                ? (int) $data['route_version']
+                : ((int) ProviderConnectionRevision::query()
+                    ->where('provider_id', $lockedProvider->id)
+                    ->max('route_version')) + 1;
+
+            return ProviderConnectionRevision::query()->create([
+                'provider_id' => $lockedProvider->id,
+                'route_version' => $routeVersion,
+                'origin' => $data['origin'],
+                'connection_type' => $data['connection_type'],
+                'credential' => $data['credential'],
+                'credential_suffix' => $this->extractCredentialSuffix($data['credential']),
+                'timeout_ms' => $data['timeout_ms'],
+                'policy_version' => $data['policy_version'] ?? 1,
+                'lifecycle_status' => ProviderConnectionRevision::STATUS_PENDING,
+                'resolve_until' => filled($data['resolve_until'] ?? null) ? Carbon::parse($data['resolve_until']) : null,
+            ]);
+        });
 
         $audit->record(
             $request->user(),
@@ -357,7 +374,12 @@ class ProviderConnectionRevisionController extends Controller
         ]]);
     }
 
-    /** Delete an unused, non-active connection revision. */
+    /**
+     * Remove a non-active connection from the working UI. Unused revisions are
+     * deleted permanently. Revisions with request history are archived by
+     * revoking them and removing any route-pool references, preserving billing
+     * and audit history while keeping the normal Admin list clean.
+     */
     public function destroy(Request $request, string $provider, string $revision, AuditService $audit): JsonResponse
     {
         $provider = Provider::query()->findOrFail($provider);
@@ -365,20 +387,67 @@ class ProviderConnectionRevisionController extends Controller
             ->where('provider_id', $provider->id)
             ->findOrFail($revision);
 
-        if ($provider->active_connection_revision_id === $revision->id) {
-            return response()->json(['message' => 'The active connection revision cannot be deleted.', 'code' => 'provider_revision_active'], 409);
+        if ((string) $provider->active_connection_revision_id === (string) $revision->id) {
+            return response()->json(['message' => 'The active connection revision cannot be removed.', 'code' => 'provider_revision_active'], 409);
         }
-        if ($revision->reservations()->exists()) {
-            return response()->json(['message' => 'This revision has request history and cannot be deleted.', 'code' => 'provider_revision_has_history'], 409);
+
+        if ($revision->reservations()->where('status', 'ACTIVE')->exists()) {
+            return response()->json([
+                'message' => 'This connection still has active requests. Wait for them to finish before removing it.',
+                'code' => 'provider_revision_has_active_requests',
+            ], 409);
         }
 
         $id = (string) $revision->id;
         $version = (int) $revision->route_version;
+        $hasHistory = $revision->reservations()->exists();
+
+        if ($hasHistory) {
+            $removedPoolEntries = DB::transaction(function () use ($revision): int {
+                $lockedRevision = ProviderConnectionRevision::query()->lockForUpdate()->findOrFail($revision->id);
+
+                $removed = ModelRoutePoolEntry::query()
+                    ->where('provider_connection_revision_id', $lockedRevision->id)
+                    ->delete();
+
+                if ($lockedRevision->lifecycle_status !== ProviderConnectionRevision::STATUS_REVOKED) {
+                    $lockedRevision->forceFill([
+                        'lifecycle_status' => ProviderConnectionRevision::STATUS_REVOKED,
+                    ])->saveOrFail();
+                }
+
+                return $removed;
+            });
+
+            $audit->record(
+                $request->user(),
+                'provider_connection_revision.archived',
+                'provider_connection_revision',
+                $id,
+                'Archived a historical provider connection revision from the working UI.',
+                [
+                    'provider_id' => $provider->id,
+                    'route_version' => $version,
+                    'removed_pool_entries' => $removedPoolEntries,
+                ]
+            );
+
+            return response()->json(['data' => [
+                'success' => true,
+                'hidden' => true,
+                'hard_deleted' => false,
+            ]]);
+        }
+
         $revision->delete();
         $audit->record($request->user(), 'provider_connection_revision.deleted', 'provider_connection_revision', $id,
             'Deleted unused provider connection revision.', ['provider_id' => $provider->id, 'route_version' => $version]);
 
-        return response()->json(['data' => ['success' => true]]);
+        return response()->json(['data' => [
+            'success' => true,
+            'hidden' => false,
+            'hard_deleted' => true,
+        ]]);
     }
 
     /**
@@ -815,6 +884,10 @@ class ProviderConnectionRevisionController extends Controller
             'resolve_until' => $revision->resolve_until?->toAtomString(),
             'created_at' => $revision->created_at->toAtomString(),
             'updated_at' => $revision->updated_at->toAtomString(),
+            'has_request_history' => array_key_exists('reservations_exists', $revision->getAttributes())
+                ? (bool) $revision->getAttribute('reservations_exists')
+                : $revision->reservations()->exists(),
+            'hidden' => $revision->lifecycle_status === ProviderConnectionRevision::STATUS_REVOKED,
         ];
     }
 

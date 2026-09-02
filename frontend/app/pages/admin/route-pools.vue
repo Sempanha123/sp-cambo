@@ -455,8 +455,8 @@ const totalRouteCapacity = computed(() =>
                     <strong class="text-highlighted">
                       {{ entry.provider_name ?? 'Provider' }} · {{ entry.private_model ?? entry.internal_model_id }}
                     </strong>
-                    <UBadge color="neutral" variant="subtle">
-                      R{{ entry.route_version ?? '—' }}
+                    <UBadge color="neutral" variant="subtle" :title="`Internal revision ${entry.route_version ?? '—'}`">
+                      Route {{ index + 1 }}
                     </UBadge>
                     <UBadge
                       :color="entry.health?.status === 'CIRCUIT_OPEN' ? 'warning' : 'success'"
@@ -469,7 +469,7 @@ const totalRouteCapacity = computed(() =>
                     </UBadge>
                   </div>
                   <p class="mt-1 truncate font-mono text-xs text-muted">
-                    {{ entry.internal_model_id }} · {{ entry.connection_type }}
+                    {{ entry.internal_model_id }} · {{ entry.connection_type }} · revision {{ entry.route_version ?? '—' }}
                   </p>
                   <p
                     v-if="entry.health?.last_error_code"

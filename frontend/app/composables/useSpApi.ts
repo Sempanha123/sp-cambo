@@ -695,7 +695,7 @@ export function useSpApi() {
       updateProviderConnectionRevision: (providerId: string, revisionId: string, input: ProviderConnectionRevisionUpdateInput) =>
         request<ProviderConnectionRevision>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}`, { method: 'PUT', body: { ...input } }),
       deleteProviderConnectionRevision: (providerId: string, revisionId: string) =>
-        request<{ success: boolean }>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}`, { method: 'DELETE' }),
+        request<{ success: boolean, hidden?: boolean, hard_deleted?: boolean }>(`/admin/providers/${apiSegment(providerId)}/connection-revisions/${apiSegment(revisionId)}`, { method: 'DELETE' }),
       /** Update the active connection revision for a provider */
       updateProviderActiveConnection: (providerId: string, input: ProviderActiveConnectionUpdateInput) =>
         request<AdminProvider>(`/admin/providers/${apiSegment(providerId)}/active-connection-revision`, { method: 'PUT', body: { ...input } }),

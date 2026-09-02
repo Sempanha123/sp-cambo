@@ -1,0 +1,444 @@
+<?php
+
+namespace App\Http\Controllers\Api\V1\Internal;
+
+use App\Enums\AccountStatus;
+use App\Events\CustomerStateChanged;
+use App\Exceptions\InferenceAccessException;
+use App\Exceptions\InferenceIdempotencyException;
+use App\Http\Controllers\Controller;
+use App\Models\ApiKey;
+use App\Models\ApiRequestLog;
+use App\Models\CreditLedger;
+use App\Models\EntitlementLot;
+use App\Models\ModelAlias;
+use App\Models\ProviderConnectionRevision;
+use App\Models\PlaygroundCredential;
+use App\Models\Reservation;
+use App\Models\UsageRecord;
+use App\Services\ApiKeySecretService;
+use App\Services\InferenceBillingService;
+use App\Services\ReservationService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class GatewayBillingController extends Controller
+{
+    public function inspect(Request $request, ApiKeySecretService $secrets): JsonResponse
+    {
+        $input = $request->validate(['customer_key' => ['required', 'string', 'max:128']]);
+        $key = $this->activeKey($input['customer_key'], $secrets);
+        $key->load(['modelAliases' => fn ($query) => $query->published()->orderBy('public_alias')]);
+        $isPlaygroundKey = PlaygroundCredential::query()
+            ->where('user_id', $key->user_id)
+            ->where('api_key_id', $key->id)
+            ->exists();
+        $allowedAliases = $key->modelAliases->pluck('public_alias')->filter()->values();
+        $lotsQuery = EntitlementLot::query()
+            ->where('user_id', $key->user_id)
+            ->where('status', 'ACTIVE')
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()));
+
+        if ($isPlaygroundKey) {
+            $lotsQuery->where('source_type', 'PLAYGROUND_DAILY')
+                ->where(function ($scope): void {
+                    $scope->whereNull('access_scope')->orWhere('access_scope', 'PLAYGROUND');
+                });
+        } else {
+            $lotsQuery->where('source_type', '!=', 'PLAYGROUND_DAILY')
+                ->where(function ($access) use ($key): void {
+                    $access->whereNull('access_scope')
+                        ->orWhere('access_scope', 'ACCOUNT')
+                        ->orWhere(function ($dedicated) use ($key): void {
+                            $dedicated->where('access_scope', 'API_KEY')
+                                ->where('bound_api_key_id', $key->id);
+                        });
+                });
+        }
+
+        if ($allowedAliases->isEmpty()) {
+            $lotsQuery->whereRaw('1 = 0');
+        } else {
+            $lotsQuery->where(function ($query) use ($allowedAliases): void {
+                foreach ($allowedAliases as $alias) {
+                    $query->orWhereJsonContains('allowed_model_aliases', $alias);
+                }
+            });
+        }
+
+        $lots = $lotsQuery->get();
+
+        return response()->json(['data' => [
+            'key_id' => $key->id,
+            'status' => 'ACTIVE',
+            'expires_at' => $key->expires_at?->toAtomString(),
+            'allowed_models' => $key->modelAliases->map(fn (ModelAlias $alias): array => [
+                'id' => $alias->public_alias,
+                'display_name' => $alias->display_name,
+                'capabilities' => $alias->capabilities,
+                'limits' => $alias->limits,
+            ])->values(),
+            'limits' => $this->limits($key),
+            'balances' => [
+                'token_quota_remaining' => (string) $lots->where('billing_mode', 'TOKEN_QUOTA')->sum(fn (EntitlementLot $lot): int => max(0, $lot->remaining_units - $lot->reserved_units)),
+                'credit_remaining' => (string) $lots->where('billing_mode', 'CREDIT_BALANCE')->sum(fn (EntitlementLot $lot): int => max(0, $lot->remaining_units - $lot->reserved_units)),
+                'version' => (int) CreditLedger::query()->where('user_id', $key->user_id)->max('id'),
+            ],
+            'service_status' => 'operational',
+        ]]);
+    }
+
+    public function preflight(Request $request, ApiKeySecretService $secrets, InferenceBillingService $billing): JsonResponse
+    {
+        $input = $request->validate([
+            'customer_key' => ['required', 'string', 'max:128'],
+            'public_model' => ['required', 'string', 'max:100'],
+            'estimated_input_tokens' => ['required', 'integer', 'min:0'],
+            'estimated_cache_read_tokens' => ['sometimes', 'integer', 'min:0'],
+            'requested_max_output_tokens' => ['required', 'integer', 'min:0'],
+            'request_bytes' => ['required', 'integer', 'min:1'],
+            'request_id' => ['required', 'string', 'max:191'],
+            'request_fingerprint' => ['required', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
+            'endpoint' => ['required', 'string', 'in:/v1/messages,/v1/messages/count_tokens,/v1/responses,/v1/chat/completions'],
+            'playground_funding_scope' => ['nullable', 'string', 'in:DAILY,BALANCE'],
+        ]);
+        $key = $this->activeKey($input['customer_key'], $secrets);
+        if ($key->max_request_bytes !== null && (int) $input['request_bytes'] > (int) $key->max_request_bytes) {
+            return $this->error('request_too_large', 'The request exceeds the API key size limit.', 413);
+        }
+        $alias = $key->modelAliases->firstWhere('public_alias', $input['public_model']);
+        if (! $alias || ! ModelAlias::query()->published()->whereKey($alias->id)->exists()) {
+            return $this->error('model_not_allowed', 'The model is not allowed for this key.', 403);
+        }
+        if (! $this->supports($alias, $input['endpoint'])) {
+            return $this->error('model_unavailable', 'The model does not support this inference protocol.', 400);
+        }
+        $result = DB::transaction(function () use ($billing, $key, $alias, $input): array {
+            $result = $billing->preflight(
+                $key->user,
+                $key,
+                $alias->loadMissing('pricing'),
+                (int) $input['estimated_input_tokens'],
+                (int) ($input['estimated_cache_read_tokens'] ?? 0),
+                $input['endpoint'] === '/v1/messages/count_tokens' ? 0 : (int) $input['requested_max_output_tokens'],
+                $input['request_id'],
+                $input['request_fingerprint'],
+                $input['playground_funding_scope'] ?? null,
+            );
+            $reservation = $result['reservation'];
+            ApiRequestLog::query()->firstOrCreate(['reservation_id' => $reservation->id], [
+                'user_id' => $key->user_id,
+                'api_key_id' => $key->id,
+                'public_model' => $alias->public_alias,
+                'endpoint' => $input['endpoint'],
+                'state' => 'RESERVED',
+                'estimated_units' => $reservation->reserved_units,
+                'started_at' => now(),
+            ]);
+
+            return $result;
+        });
+        $reservation = $result['reservation'];
+        $key->forceFill(['last_used_at' => now()])->save();
+        CustomerStateChanged::dispatch((int) $key->user_id, 'api_request.reserved', [
+            'reservation_id' => $reservation->id,
+            'public_model' => $alias->public_alias,
+            'state' => 'reserved',
+            'estimated_units' => (string) $reservation->reserved_units,
+        ]);
+
+        $routeRevision = ProviderConnectionRevision::query()
+            ->whereKey($result['route_revision_id'])
+            ->where('lifecycle_status', ProviderConnectionRevision::STATUS_READY)
+            ->firstOrFail();
+
+        return response()->json(['data' => [
+            'reservation_id' => $reservation->id,
+            'public_model' => $alias->public_alias,
+            'internal_model' => $result['internal_model_id'],
+            'reserved_units' => (string) $reservation->reserved_units,
+            'billing_mode' => $result['billing_mode'],
+            'max_output_tokens' => $result['hard_max_output_tokens'],
+            'correlation_id' => $input['request_id'],
+            'route_revision_id' => $result['route_revision_id'],
+            'route_version' => $result['route_version'],
+            // Private routing material is returned only to the authenticated
+            // gateway sidecar. It is never exposed by customer/browser APIs.
+            'upstream_origin' => rtrim((string) $routeRevision->origin, '/'),
+            'upstream_credential' => (string) $routeRevision->credential,
+            'upstream_timeout_ms' => (int) $routeRevision->timeout_ms,
+        ]]);
+    }
+
+    public function state(Request $request, Reservation $reservation): JsonResponse
+    {
+        $input = $request->validate(['state' => ['required', 'in:CONNECTING,STREAMING']]);
+        $target = (string) $input['state'];
+        $rank = ['RESERVED' => 0, 'CONNECTING' => 1, 'STREAMING' => 2];
+
+        $log = ApiRequestLog::query()->where('reservation_id', $reservation->id)->firstOrFail();
+        if (array_key_exists($log->state, $rank) && $rank[$target] > $rank[$log->state]) {
+            $log->forceFill(['state' => $target])->save();
+            CustomerStateChanged::dispatch((int) $reservation->user_id, 'api_request.state_changed', [
+                'reservation_id' => $reservation->id,
+                'public_model' => $reservation->public_model_alias,
+                'state' => strtolower($target),
+            ]);
+        }
+
+        return response()->json(['data' => ['reservation_id' => $reservation->id, 'state' => strtolower($log->fresh()->state)]]);
+    }
+
+    public function settle(Request $request, Reservation $reservation, InferenceBillingService $billing): JsonResponse
+    {
+        $input = $request->validate($this->usageRules());
+        $usage = $this->usage($input);
+        $settled = $this->settleLocalUsage($reservation, $usage, $input['duration_ms'] ?? null, $billing);
+
+        CustomerStateChanged::dispatch((int) $settled->user_id, 'usage.settled', [
+            'reservation_id' => $settled->id,
+            'public_model' => $settled->public_model_alias,
+            'metered_units' => (string) $settled->settled_units,
+        ]);
+
+        return response()->json(['data' => [
+            'reservation_id' => $settled->id,
+            'status' => $settled->status,
+            'settled_units' => (string) $settled->settled_units,
+        ]]);
+    }
+
+    public function release(Reservation $reservation, ReservationService $reservations): JsonResponse
+    {
+        $released = $reservations->release($reservation);
+        $finishedAt = now();
+        $log = ApiRequestLog::query()->where('reservation_id', $released->id)->first();
+        if ($log && in_array($log->state, ['RESERVED', 'CONNECTING', 'STREAMING', 'RECONCILING'], true)) {
+            $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
+            $log->forceFill([
+                'state' => 'RELEASED',
+                'estimated_units' => null,
+                'duration_ms' => $log->duration_ms ?? $durationMs,
+                'finished_at' => $finishedAt,
+                'error_code' => null,
+            ])->save();
+        }
+        CustomerStateChanged::dispatch((int) $released->user_id, 'api_request.failed', [
+            'reservation_id' => $released->id,
+            'public_model' => $released->public_model_alias,
+            'state' => 'released',
+        ]);
+
+        return response()->json(['data' => [
+            'reservation_id' => $released->id,
+            'status' => $released->status,
+            'settled_units' => '0',
+        ]]);
+    }
+
+    public function reconcile(
+        Request $request,
+        Reservation $reservation,
+        ReservationService $reservations,
+        InferenceBillingService $billing,
+    ): JsonResponse {
+        $rules = [
+            'reason' => ['required', 'in:upstream_timeout,upstream_disconnect,client_disconnect,usage_unavailable,settlement_failed'],
+            'local_usage' => ['nullable', 'array'],
+            'local_usage.input_tokens' => ['required_with:local_usage', 'integer', 'min:0'],
+            'local_usage.output_tokens' => ['required_with:local_usage', 'integer', 'min:0'],
+            'local_usage.cache_read_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.cache_write_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.reasoning_tokens' => ['sometimes', 'integer', 'min:0'],
+            'local_usage.duration_ms' => ['nullable', 'integer', 'min:0'],
+        ];
+        $input = $request->validate($rules);
+
+        // R42 has no provider-authoritative billing state to wait for. If the
+        // gateway already measured delivered output locally, settle from that
+        // local usage. Otherwise the failed request delivered no billable output,
+        // so release the reservation immediately.
+        if (is_array($input['local_usage'] ?? null)) {
+            $usage = $this->usage($input['local_usage']);
+            $settled = $this->settleLocalUsage(
+                $reservation,
+                $usage,
+                $input['local_usage']['duration_ms'] ?? null,
+                $billing,
+            );
+            CustomerStateChanged::dispatch((int) $settled->user_id, 'usage.settled', [
+                'reservation_id' => $settled->id,
+                'public_model' => $settled->public_model_alias,
+                'metered_units' => (string) $settled->settled_units,
+                'recovered_locally' => true,
+            ]);
+
+            return response()->json(['data' => [
+                'reservation_id' => $settled->id,
+                'status' => $settled->status,
+                'settled_units' => (string) $settled->settled_units,
+                'recovered_locally' => true,
+            ]]);
+        }
+
+        $released = $reservations->release($reservation);
+        $finishedAt = now();
+        $log = ApiRequestLog::query()->where('reservation_id', $released->id)->first();
+        if ($log) {
+            $durationMs = $log->started_at ? max(0, $log->started_at->diffInMilliseconds($finishedAt)) : null;
+            $log->forceFill([
+                'state' => 'RELEASED',
+                'estimated_units' => null,
+                'duration_ms' => $log->duration_ms ?? $durationMs,
+                'finished_at' => $finishedAt,
+                'error_code' => null,
+            ])->save();
+        }
+
+        return response()->json(['data' => [
+            'reservation_id' => $released->id,
+            'status' => $released->status,
+            'settled_units' => '0',
+        ]]);
+    }
+
+    /** @param array<string, int> $usage */
+    private function settleLocalUsage(
+        Reservation $reservation,
+        array $usage,
+        ?int $durationMs,
+        InferenceBillingService $billing,
+    ): Reservation {
+        return DB::transaction(function () use ($reservation, $usage, $durationMs, $billing): Reservation {
+            $settled = $billing->settle($reservation, $usage);
+            $log = ApiRequestLog::query()->where('reservation_id', $settled->id)->lockForUpdate()->firstOrFail();
+            $creditCharge = $settled->billing_mode === 'CREDIT_BALANCE' ? (int) $settled->settled_units : null;
+
+            // Private admin reference cost is computed only from SP Cambo's local
+            // meter and a static local pricing snapshot. No OmniRoute/provider
+            // usage or cost field is accepted by this endpoint.
+            $referenceCost = $billing->upstreamCost($settled->billing_snapshot, [
+                'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
+                'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
+                'cache_read_tokens' => (int) ($usage['cache_read_tokens'] ?? 0),
+                'cache_write_tokens' => 0,
+                'reasoning_tokens' => 0,
+            ]);
+
+            $record = [
+                'user_id' => $settled->user_id,
+                'api_key_id' => $settled->api_key_id,
+                'public_model' => $settled->public_model_alias,
+                'provider_family' => $settled->billing_snapshot['provider_family'] ?? null,
+                'endpoint' => $log->endpoint,
+                'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
+                'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
+                'cache_read_tokens' => (int) ($usage['cache_read_tokens'] ?? 0),
+                'cache_write_tokens' => 0,
+                'reasoning_tokens' => 0,
+                'total_tokens' => (int) ($usage['input_tokens'] ?? 0) + (int) ($usage['cache_read_tokens'] ?? 0) + (int) ($usage['output_tokens'] ?? 0),
+                'metered_units' => $settled->settled_units,
+                'credit_charge_minor' => $creditCharge,
+                'upstream_cost_minor' => $referenceCost,
+                'currency' => $creditCharge === null && $referenceCost === null ? null : $settled->billing_snapshot['currency'],
+                'currency_exponent' => $creditCharge === null && $referenceCost === null ? null : $settled->billing_snapshot['currency_exponent'],
+                'settled_at' => now(),
+            ];
+            $existing = UsageRecord::query()->where('reservation_id', $settled->id)->first();
+            if ($existing && $this->usageConflict($existing, $record)) {
+                throw new InferenceIdempotencyException('Usage was already recorded with different values.');
+            }
+            UsageRecord::query()->firstOrCreate(['reservation_id' => $settled->id], $record);
+            $log->update([
+                'state' => 'SETTLED',
+                'estimated_units' => null,
+                'duration_ms' => $durationMs,
+                'finished_at' => now(),
+                'error_code' => null,
+            ]);
+
+            return $settled;
+        });
+    }
+
+    private function activeKey(string $customerKey, ApiKeySecretService $secrets): ApiKey
+    {
+        $key = ApiKey::query()->with(['user', 'modelAliases'])->where('lookup_digest', $secrets->digest($customerKey))->first();
+        if (! $key) {
+            throw new InferenceAccessException('invalid_api_key', 'The API key is invalid.', 401);
+        }
+        $status = $key->expires_at?->isPast() ? 'EXPIRED' : $key->status;
+        if ($status !== 'ACTIVE') {
+            throw new InferenceAccessException('api_key_'.strtolower($status), 'The API key is not active.', 403);
+        }
+        if ($key->user->status !== AccountStatus::Active) {
+            throw new InferenceAccessException('account_suspended', 'The account is not active.', 403);
+        }
+
+        return $key;
+    }
+
+    /** @return array<string, array<int, string>> */
+    private function usageRules(): array
+    {
+        return [
+            'input_tokens' => ['required', 'integer', 'min:0'],
+            'output_tokens' => ['required', 'integer', 'min:0'],
+            'cache_read_tokens' => ['sometimes', 'integer', 'min:0'],
+            'cache_write_tokens' => ['sometimes', 'integer', 'min:0'],
+            'reasoning_tokens' => ['sometimes', 'integer', 'min:0'],
+            'duration_ms' => ['nullable', 'integer', 'min:0'],
+        ];
+    }
+
+    /** @return array<string, int> */
+    private function usage(array $input): array
+    {
+        return [
+            'input_tokens' => (int) $input['input_tokens'],
+            'output_tokens' => (int) $input['output_tokens'],
+            'cache_read_tokens' => (int) ($input['cache_read_tokens'] ?? 0),
+            'cache_write_tokens' => (int) ($input['cache_write_tokens'] ?? 0),
+            'reasoning_tokens' => (int) ($input['reasoning_tokens'] ?? 0),
+        ];
+    }
+
+    private function usageConflict(UsageRecord $existing, array $record): bool
+    {
+        foreach (['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'metered_units'] as $field) {
+            if ((int) $existing->{$field} !== (int) $record[$field]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function supports(ModelAlias $alias, string $endpoint): bool
+    {
+        $capability = match ($endpoint) {
+            '/v1/messages', '/v1/messages/count_tokens' => 'messages_api',
+            '/v1/responses' => 'responses_api',
+            '/v1/chat/completions' => 'chat_completions_api',
+        };
+
+        return (bool) ($alias->capabilities[$capability] ?? false);
+    }
+
+    private function limits(ApiKey $key): array
+    {
+        return [
+            'requests_per_minute' => $key->requests_per_minute,
+            'tokens_per_minute' => $key->tokens_per_minute,
+            'concurrency' => $key->concurrency_limit,
+            'max_request_bytes' => $key->max_request_bytes,
+            'max_output_tokens' => $key->max_output_tokens,
+        ];
+    }
+
+    private function error(string $code, string $message, int $status): JsonResponse
+    {
+        return response()->json(['message' => $message, 'code' => $code], $status);
+    }
+}

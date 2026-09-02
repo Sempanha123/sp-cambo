@@ -41,11 +41,31 @@ const revisions = await useSpResource(
   { server: false }
 )
 
+// REVOKED revisions are preserved for request/billing audit, but they do not
+// need to clutter the normal working view. Operators can reveal them on demand.
+const showHiddenRevisions = ref(false)
+const hiddenRevisionCount = computed(() =>
+  (revisions.data.value ?? []).filter(revision => revision.lifecycle_status === 'REVOKED').length
+)
+const visibleRevisions = computed(() =>
+  (revisions.data.value ?? []).filter(revision =>
+    showHiddenRevisions.value || revision.lifecycle_status !== 'REVOKED'
+  )
+)
+const workingRevisionSlots = computed(() =>
+  [...(revisions.data.value ?? [])]
+    .filter(revision => revision.lifecycle_status !== 'REVOKED')
+    .sort((left, right) => left.route_version - right.route_version)
+)
+const connectionSlot = (revision: ProviderConnectionRevision) => {
+  const index = workingRevisionSlots.value.findIndex(item => item.id === revision.id)
+  return index >= 0 ? index + 1 : null
+}
+
 // Create connection revision form
 const createOpen = ref(false)
 const creating = ref(false)
 const createForm = ref<ProviderConnectionRevisionInput>({
-  route_version: 1,
   origin: '',
   connection_type: 'omniroute',
   credential: '',
@@ -62,7 +82,6 @@ const nextRouteVersion = () => Math.max(
 
 const resetCreateForm = () => {
   createForm.value = {
-    route_version: nextRouteVersion(),
     origin: '',
     connection_type: 'omniroute',
     credential: '',
@@ -98,8 +117,10 @@ const submitCreate = async () => {
   createError.value = null
 
   try {
+    const createPayload = { ...createForm.value }
+    delete createPayload.route_version
     const revision = await api.admin.createProviderConnectionRevision(providerId.value, {
-      ...createForm.value,
+      ...createPayload,
       origin: createForm.value.origin.trim(),
       credential: createForm.value.credential.trim()
     })
@@ -262,21 +283,38 @@ const confirmDeleteRevision = async () => {
   const target = deleteRevisionTarget.value
 
   try {
-    await api.admin.deleteProviderConnectionRevision(providerId.value, target.id)
+    const result = await api.admin.deleteProviderConnectionRevision(providerId.value, target.id)
     deleteRevisionTarget.value = null
     await revisions.refresh()
 
     toast.add({
-      title: 'Connection revision deleted',
-      description: `Revision ${target.route_version} was deleted.`,
+      title: result.hidden ? 'Connection moved to hidden' : 'Connection deleted',
+      description: result.hidden
+        ? `Historical Revision ${target.route_version} was hidden. Its request and audit history is preserved.`
+        : `Unused Revision ${target.route_version} was permanently deleted.`,
       color: 'success',
-      icon: 'i-lucide-trash-2'
+      icon: result.hidden ? 'i-lucide-archive' : 'i-lucide-trash-2'
     })
   } catch (cause) {
     deleteRevisionError.value = toSpApiError(cause).message
   } finally {
     deletingRevision.value = false
   }
+}
+
+const removeRevisionLabel = (revision: ProviderConnectionRevision) =>
+  revision.has_request_history ? 'Hide' : 'Delete'
+
+const removeRevisionTitle = (revision: ProviderConnectionRevision) => {
+  if (provider.data.value?.active_connection_revision_id === revision.id) {
+    return 'The active connection cannot be removed'
+  }
+  if (revision.lifecycle_status === 'REVOKED') {
+    return 'This historical connection is already hidden'
+  }
+  return revision.has_request_history
+    ? 'Move this historical connection to Hidden; request and audit history will be preserved'
+    : 'Permanently delete this unused connection'
 }
 
 // Set active connection
@@ -1575,13 +1613,25 @@ useSeoMeta({
             description="Manage connection revisions for this provider."
           >
             <template #actions>
-              <UButton
-                icon="i-lucide-plus"
-                size="sm"
-                @click="resetCreateForm(); createOpen = true"
-              >
-                New revision
-              </UButton>
+              <div class="flex flex-wrap items-center gap-2">
+                <UButton
+                  v-if="hiddenRevisionCount > 0"
+                  color="neutral"
+                  variant="ghost"
+                  :icon="showHiddenRevisions ? 'i-lucide-eye-off' : 'i-lucide-archive'"
+                  size="sm"
+                  @click="showHiddenRevisions = !showHiddenRevisions"
+                >
+                  {{ showHiddenRevisions ? 'Hide archived' : `Show hidden (${hiddenRevisionCount})` }}
+                </UButton>
+                <UButton
+                  icon="i-lucide-plus"
+                  size="sm"
+                  @click="resetCreateForm(); createOpen = true"
+                >
+                  New connection
+                </UButton>
+              </div>
             </template>
           </SpSectionHeading>
 
@@ -1589,21 +1639,21 @@ useSeoMeta({
             :loading="revisions.initialLoading.value"
             :unavailable="revisions.unavailable.value"
             :failed="revisions.failed.value"
-            :empty="revisions.isEmpty.value"
+            :empty="visibleRevisions.length === 0"
             :offline="revisions.error.value?.code === 'network_unreachable'"
             :error-message="revisions.error.value?.message"
             error-title="Connection revisions could not be loaded"
             unavailable-title="Connection revisions are not available"
             unavailable-description="SP Cambo could not be reached, so connection revisions cannot be managed right now."
-            empty-title="No connection revisions"
-            empty-description="Create a connection revision to configure this provider's connection settings."
+            :empty-title="hiddenRevisionCount > 0 && !showHiddenRevisions ? 'No working connections' : 'No connection revisions'"
+            :empty-description="hiddenRevisionCount > 0 && !showHiddenRevisions ? 'Historical connections are hidden. Use Show hidden to review or edit them.' : 'Create a connection to configure this provider.'"
             empty-icon="i-lucide-link-off"
             loading-variant="rows"
             @retry="revisions.refresh()"
           >
             <ul class="space-y-3">
               <li
-                v-for="revision in revisions.data.value"
+                v-for="revision in visibleRevisions"
                 :key="revision.id"
                 class="rounded-lg border border-default bg-elevated/30 p-4"
               >
@@ -1611,14 +1661,20 @@ useSeoMeta({
                   <div class="min-w-0 space-y-2">
                     <div class="flex flex-wrap items-center gap-2">
                       <p class="truncate font-medium text-highlighted">
-                        Revision {{ revision.route_version }}
+                        <template v-if="revision.lifecycle_status === 'REVOKED'">
+                          Hidden revision {{ revision.route_version }}
+                        </template>
+                        <template v-else>
+                          Connection {{ connectionSlot(revision) }}
+                          <span class="ml-1 text-xs font-normal text-dimmed">Revision {{ revision.route_version }}</span>
+                        </template>
                       </p>
                       <UBadge
                         :color="statusBadge(revision.lifecycle_status as any).color as any"
                         variant="subtle"
                         size="sm"
                       >
-                        {{ statusBadge(revision.lifecycle_status as any).label }}
+                        {{ revision.lifecycle_status === 'REVOKED' ? 'Hidden' : statusBadge(revision.lifecycle_status as any).label }}
                       </UBadge>
                       <UBadge
                         v-if="provider.data.value?.active_connection_revision_id === revision.id"
@@ -1724,21 +1780,22 @@ useSeoMeta({
                         variant="ghost"
                         size="sm"
                         icon="i-lucide-pencil"
-                        title="Edit this connection. Live revisions are replaced safely after verification."
+                        title="Edit this connection. Live, hidden, or historical revisions are replaced safely after verification."
                         @click="openEditRevision(revision)"
                       >
                         Edit
                       </UButton>
                       <UButton
+                        v-if="revision.lifecycle_status !== 'REVOKED'"
                         color="error"
                         variant="ghost"
                         size="sm"
-                        icon="i-lucide-trash-2"
+                        :icon="revision.has_request_history ? 'i-lucide-archive' : 'i-lucide-trash-2'"
                         :disabled="provider.data.value?.active_connection_revision_id === revision.id"
-                        :title="provider.data.value?.active_connection_revision_id === revision.id ? 'The active revision cannot be deleted' : 'Delete this unused revision'"
+                        :title="removeRevisionTitle(revision)"
                         @click="openDeleteRevision(revision)"
                       >
-                        Delete
+                        {{ removeRevisionLabel(revision) }}
                       </UButton>
                     </div>
                   </div>
@@ -2122,19 +2179,13 @@ useSeoMeta({
             :description="createError"
           />
 
-          <UFormField
-            label="Route version"
-            name="route_version"
-            required
-            help="The version of the routing configuration."
-          >
-            <UInput
-              v-model="createForm.route_version"
-              type="number"
-              min="1"
-              class="w-full"
-            />
-          </UFormField>
+          <UAlert
+            icon="i-lucide-git-branch"
+            color="neutral"
+            variant="subtle"
+            title="Revision number is automatic"
+            description="SP Cambo keeps immutable revision numbers for audit history. The working UI uses reusable Connection slots instead."
+          />
 
           <UFormField
             label="Origin URL"
@@ -2354,8 +2405,8 @@ useSeoMeta({
     <!-- Delete connection revision confirmation -->
     <UModal
       :open="deleteRevisionTarget !== null"
-      title="Delete connection revision?"
-      description="Only non-active revisions without request history can be deleted."
+      title="Remove connection?"
+      description="Unused connections are deleted. Historical connections are moved to Hidden so request and audit history stays intact."
       @update:open="(open) => { if (!open && !deletingRevision) deleteRevisionTarget = null }"
     >
       <template #body>
@@ -2370,8 +2421,13 @@ useSeoMeta({
           />
 
           <p class="text-sm text-muted">
-            Delete <strong class="text-highlighted">Revision {{ deleteRevisionTarget?.route_version }}</strong>?
-            SP Cambo will refuse this operation if the revision is active or has request history.
+            Remove <strong class="text-highlighted">Revision {{ deleteRevisionTarget?.route_version }}</strong>?
+            <template v-if="deleteRevisionTarget?.has_request_history">
+              It has request history, so SP Cambo will move it to <strong class="text-highlighted">Hidden</strong> instead of deleting it.
+            </template>
+            <template v-else>
+              It has no request history, so it can be permanently deleted.
+            </template>
           </p>
 
           <div class="flex justify-end gap-2">
@@ -2385,11 +2441,11 @@ useSeoMeta({
             </UButton>
             <UButton
               color="error"
-              icon="i-lucide-trash-2"
+              :icon="deleteRevisionTarget?.has_request_history ? 'i-lucide-archive' : 'i-lucide-trash-2'"
               :loading="deletingRevision"
               @click="confirmDeleteRevision"
             >
-              Delete revision
+              {{ deleteRevisionTarget?.has_request_history ? 'Move to hidden' : 'Delete connection' }}
             </UButton>
           </div>
         </div>

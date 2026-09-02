@@ -447,10 +447,12 @@ export interface ProviderConnectionRevision {
   resolve_until: string | null
   created_at: string
   updated_at: string
+  has_request_history?: boolean
+  hidden?: boolean
 }
 
 export interface ProviderConnectionRevisionInput {
-  route_version: number
+  route_version?: number
   origin: string
   connection_type: 'omniroute' | 'openai_compatible'
   credential: string
