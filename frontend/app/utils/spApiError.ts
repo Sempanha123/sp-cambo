@@ -127,6 +127,11 @@ const KNOWN_CODES = new Set<string>([
  * perfectly clear 402 to `unknown_error` over a naming difference.
  */
 const CODE_ALIASES: Record<string, SpErrorCode> = {
+  // ProviderConnectionRevisionController uses this more specific spelling.
+  // Treat it as the canonical probe failure so the Admin UI can preserve the
+  // safe per-model/status explanation instead of degrading every 502 to the
+  // generic server-error message.
+  provider_connection_probe_failed: 'provider_probe_failed',
   token_quota_exhausted: 'insufficient_tokens',
   credit_balance_exhausted: 'insufficient_credits',
   unauthorized: 'unauthenticated',

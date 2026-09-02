@@ -15,6 +15,7 @@ useSeoMeta({
 
 const api = useSpApi()
 const auth = useAuthStore()
+const cookieMode = useCookieSessionMode()
 const route = useRoute()
 const toast = useToast()
 
@@ -25,6 +26,8 @@ const sessionsLoading = ref(true)
 const actionBusy = ref(false)
 const passwordBusy = ref(false)
 const pageError = ref<string | null>(typeof route.query.google_error === 'string' ? route.query.google_error : null)
+const identitiesError = ref<string | null>(null)
+const sessionsError = ref<string | null>(null)
 
 const passwordForm = reactive({
   current_password: '',
@@ -36,10 +39,11 @@ const googleIdentity = computed(() => identities.value.find(identity => identity
 
 const fetchIdentities = async () => {
   identitiesLoading.value = true
+  identitiesError.value = null
   try {
     identities.value = await api.account.identities()
   } catch (err) {
-    pageError.value = toSpApiError(err).message
+    identitiesError.value = toSpApiError(err).message
   } finally {
     identitiesLoading.value = false
   }
@@ -47,10 +51,11 @@ const fetchIdentities = async () => {
 
 const fetchSessions = async () => {
   sessionsLoading.value = true
+  sessionsError.value = null
   try {
     sessions.value = await api.account.sessions()
   } catch (err) {
-    pageError.value = toSpApiError(err).message
+    sessionsError.value = toSpApiError(err).message
   } finally {
     sessionsLoading.value = false
   }
@@ -183,6 +188,17 @@ onMounted(async () => {
         >
           <USkeleton class="h-16 w-full" />
         </div>
+
+        <UAlert
+          v-else-if="identitiesError"
+          role="alert"
+          color="error"
+          variant="subtle"
+          icon="i-lucide-circle-alert"
+          title="Sign-in methods are temporarily unavailable"
+          :description="identitiesError"
+          :actions="[{ label: 'Try again', color: 'neutral', variant: 'subtle', onClick: fetchIdentities }]"
+        />
 
         <div
           v-else-if="googleIdentity"
@@ -394,11 +410,24 @@ onMounted(async () => {
         <USkeleton class="h-14 w-full" />
       </div>
 
+      <UAlert
+        v-else-if="sessionsError"
+        role="alert"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-circle-alert"
+        title="Active sessions are temporarily unavailable"
+        :description="sessionsError"
+        :actions="[{ label: 'Try again', color: 'neutral', variant: 'subtle', onClick: fetchSessions }]"
+      />
+
       <div
         v-else-if="sessions.length === 0"
         class="py-4 text-sm text-muted"
       >
-        No bearer sessions were returned for this account.
+        {{ cookieMode
+          ? 'This browser uses a secure cookie session. No additional API sessions are active.'
+          : 'No additional bearer sessions are active for this account.' }}
       </div>
 
       <ul

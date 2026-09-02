@@ -51,6 +51,18 @@ describe('toSpApiError — backend code', () => {
     expect(toSpApiError(fetchError(429, { message: 'x', code: 'too_many_requests' })).code)
       .toBe('rate_limit_exceeded')
   })
+
+  it('preserves the safe provider probe explanation returned by the backend', () => {
+    const message = 'Provider connection probe failed (OpenAI Codex / responses HTTP 404). Verify the local upstream, origin, and credential.'
+    const error = toSpApiError(fetchError(502, {
+      message,
+      code: 'provider_connection_probe_failed'
+    }))
+
+    expect(error.code).toBe('provider_probe_failed')
+    expect(error.status).toBe(502)
+    expect(error.message).toBe(message)
+  })
 })
 
 describe('toSpApiError — status classification', () => {
