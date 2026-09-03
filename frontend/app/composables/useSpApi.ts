@@ -173,6 +173,12 @@ export function useSpApi() {
       ...options.headers
     }
 
+    // Snapshot the exact bearer credential used by this request. During Google
+    // OAuth an older in-flight request can finish with 401 after the callback has
+    // already installed a fresh token. That stale 401 must never expire the new
+    // session.
+    const bearerAtRequest = !cookieMode.value && !options.anonymous ? token.value : null
+
     if (cookieMode.value) {
       if (method !== 'GET') {
         await ensureCsrfCookie()
@@ -183,8 +189,8 @@ export function useSpApi() {
       if (xsrf) {
         headers['X-XSRF-TOKEN'] = xsrf
       }
-    } else if (!options.anonymous && token.value) {
-      headers.Authorization = `Bearer ${token.value}`
+    } else if (bearerAtRequest) {
+      headers.Authorization = `Bearer ${bearerAtRequest}`
     }
 
     try {
@@ -210,9 +216,14 @@ export function useSpApi() {
         csrfReady.value = false
       }
 
-      // Only treat a rejection as an expired session when a credential was sent.
-      if (spError.isSessionExpired && !options.anonymous && (cookieMode.value || token.value)) {
-        sessionExpiredAt.value = Date.now()
+      // Only expire the session that actually made this request. A stale 401
+      // from a pre-OAuth bearer token must not clear a fresh Google session.
+      if (spError.isSessionExpired && !options.anonymous) {
+        if (cookieMode.value) {
+          sessionExpiredAt.value = Date.now()
+        } else if (bearerAtRequest && token.value === bearerAtRequest) {
+          sessionExpiredAt.value = Date.now()
+        }
       }
 
       throw spError
@@ -242,13 +253,14 @@ export function useSpApi() {
       Accept: 'text/event-stream',
       'Content-Type': 'application/json'
     }
+    const bearerAtRequest = !cookieMode.value ? token.value : null
 
     if (cookieMode.value) {
       await ensureCsrfCookie()
       const xsrf = useCookie<string | null>('XSRF-TOKEN', { default: () => null }).value
       if (xsrf) headers['X-XSRF-TOKEN'] = xsrf
-    } else if (token.value) {
-      headers.Authorization = `Bearer ${token.value}`
+    } else if (bearerAtRequest) {
+      headers.Authorization = `Bearer ${bearerAtRequest}`
     }
 
     const url = `${String(baseURL).replace(/\/+$/, '')}/me/playground/stream`
@@ -271,7 +283,10 @@ export function useSpApi() {
       try { payload = await response.json() as Record<string, unknown> } catch { /* non-JSON failure */ }
       const spError = toSpApiError({ status: response.status, data: payload })
       if (cookieMode.value && spError.code === 'csrf_token_mismatch') csrfReady.value = false
-      if (spError.isSessionExpired && (cookieMode.value || token.value)) sessionExpiredAt.value = Date.now()
+      if (spError.isSessionExpired) {
+        if (cookieMode.value) sessionExpiredAt.value = Date.now()
+        else if (bearerAtRequest && token.value === bearerAtRequest) sessionExpiredAt.value = Date.now()
+      }
       throw spError
     }
 

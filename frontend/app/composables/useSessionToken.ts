@@ -14,12 +14,25 @@ const SESSION_COOKIE = 'sp-cambo.session'
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 
 export function useSessionToken() {
-  return useCookie<string | null>(SESSION_COOKIE, {
+  const cookie = useCookie<string | null>(SESSION_COOKIE, {
     default: () => null,
     sameSite: 'strict',
     secure: !import.meta.dev,
     path: '/',
     maxAge: SESSION_MAX_AGE_SECONDS
+  })
+
+  // `useCookie()` refs created in separate composables are not a good place to
+  // coordinate an OAuth hand-off. Keep one Nuxt state value as the live source
+  // of truth and mirror writes to the persistent cookie.
+  const live = useState<string | null>('sp.session-token', () => cookie.value)
+
+  return computed<string | null>({
+    get: () => live.value,
+    set: (value) => {
+      live.value = value
+      cookie.value = value
+    }
   })
 }
 

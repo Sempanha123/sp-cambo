@@ -228,6 +228,7 @@ export const useAuthStore = defineStore('auth', () => {
   /** Called when the control plane rejects the credential mid-session. */
   const handleSessionExpired = () => {
     clearSession()
+    sessionExpiredAt.value = 0
     initialized.value = true
   }
 
