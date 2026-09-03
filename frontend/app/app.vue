@@ -5,6 +5,7 @@ import '@fontsource-variable/noto-sans-khmer/wght.css'
 import '~/assets/css/sp-global-r4.css'
 import '~/assets/css/sp-technology-r12.css'
 import '~/assets/css/sp-performance-r13.css'
+import '~/assets/css/sp-button-google.css'
 import { spCamboLocale } from '~/utils/uiLocale'
 
 const auth = useAuthStore()

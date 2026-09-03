@@ -32,6 +32,7 @@ const redeemCode = ref('')
 const redeeming = ref(false)
 const useBalanceFallback = ref(false)
 const showInspector = ref(true)
+const compactViewport = ref(false)
 const historyOpen = ref(false)
 const historyLoading = ref(false)
 const historySaving = ref(false)
@@ -57,6 +58,15 @@ const recentActivity = ref<RequestActivity[]>([])
 const liveClock = ref(Date.now())
 let activityTimer: ReturnType<typeof setInterval> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
+let resizeHandler: (() => void) | undefined
+
+const syncResponsivePanels = () => {
+  if (!import.meta.client) return
+  const compact = window.innerWidth < 1280
+  const changed = compact !== compactViewport.value
+  compactViewport.value = compact
+  if (changed) showInspector.value = !compact
+}
 
 const starters = [
   { label: 'Analyze data', icon: 'i-lucide-chart-no-axes-column', prompt: 'Help me analyze this data and explain the important patterns:\n' },
@@ -795,7 +805,9 @@ const redeem = async () => {
 
 onMounted(() => {
   ensureClientChatKey()
-  if (window.matchMedia('(max-width: 1023px)').matches) showInspector.value = false
+  syncResponsivePanels()
+  resizeHandler = () => syncResponsivePanels()
+  window.addEventListener('resize', resizeHandler, { passive: true })
   void refreshActivity()
   void (async () => {
     await refreshHistory()
@@ -810,6 +822,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // Do not abort the Playground stream here. Route navigation is not a Stop action;
   // the browser keeps the request alive until it finishes or the customer presses Stop.
+  if (resizeHandler && import.meta.client) window.removeEventListener('resize', resizeHandler)
   if (activityTimer) clearInterval(activityTimer)
   if (clockTimer) clearInterval(clockTimer)
 })
@@ -841,7 +854,7 @@ onBeforeUnmount(() => {
     >
       <div v-if="quota.data.value" class="sp-playground-shell relative overflow-hidden rounded-none border-y border-default bg-default/20 shadow-sm sm:rounded-2xl sm:border">
         <div v-if="historyOpen" class="absolute inset-0 z-40 bg-black/35 lg:bg-black/15" @click.self="historyOpen = false">
-          <aside class="absolute inset-y-0 left-0 flex w-full max-w-[20rem] max-sm:max-w-none flex-col border-r border-default bg-elevated/95 shadow-2xl backdrop-blur-xl">
+          <aside class="sp-playground-panel absolute inset-y-0 left-0 flex w-full max-w-[20rem] max-sm:max-w-none flex-col border-r border-default bg-elevated/95 shadow-2xl backdrop-blur-xl">
             <div class="flex min-h-14 items-center justify-between gap-2 border-b border-default px-3.5">
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
@@ -975,7 +988,7 @@ onBeforeUnmount(() => {
                   title="No published chat protocol"
                   description="Enable Responses API, Anthropic Messages or Chat Completions for this alias."
                 />
-                <div class="rounded-[1.35rem] border border-default/90 bg-elevated/92 p-2 shadow-[0_14px_42px_-24px_rgba(0,0,0,.85)] backdrop-blur-xl transition focus-within:border-primary/45 focus-within:shadow-[0_18px_50px_-26px_rgba(49,105,255,.48)] focus-within:ring-2 focus-within:ring-primary/10">
+                <div class="sp-playground-composer rounded-[1.35rem] border border-default/90 bg-elevated/92 p-2 shadow-[0_14px_42px_-24px_rgba(0,0,0,.85)] backdrop-blur-xl transition focus-within:border-primary/45 focus-within:shadow-[0_18px_50px_-26px_rgba(49,105,255,.48)] focus-within:ring-2 focus-within:ring-primary/10">
                   <UTextarea
                     v-model="composer"
                     data-playground-composer
@@ -1020,14 +1033,16 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
+          <div v-if="showInspector && compactViewport" class="absolute inset-0 z-20 bg-black/30 xl:hidden" @click="showInspector = false" />
+
           <aside
             v-if="showInspector"
-            class="z-30 flex w-[21rem] shrink-0 flex-col border-l border-default bg-elevated/45 backdrop-blur-xl max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:w-[min(21rem,94vw)] max-sm:w-full max-xl:shadow-2xl"
+            class="sp-playground-inspector z-30 flex w-[21rem] shrink-0 flex-col border-l border-default bg-elevated/45 backdrop-blur-xl max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:w-[min(21rem,94vw)] max-sm:w-full max-xl:shadow-2xl"
           >
             <div class="flex min-h-14 items-center justify-between gap-2 border-b border-default px-3 py-2.5">
-              <div class="flex items-center gap-1 rounded-lg bg-muted/55 p-1">
-                <UButton size="xs" :color="inspectorTab === 'setup' ? 'primary' : 'neutral'" :variant="inspectorTab === 'setup' ? 'soft' : 'ghost'" icon="i-lucide-sliders-horizontal" @click="inspectorTab = 'setup'">Setup</UButton>
-                <UButton size="xs" :color="inspectorTab === 'usage' ? 'primary' : 'neutral'" :variant="inspectorTab === 'usage' ? 'soft' : 'ghost'" icon="i-lucide-activity" @click="inspectorTab = 'usage'">Usage</UButton>
+              <div class="sp-playground-tabs flex items-center gap-1 rounded-lg bg-muted/55 p-1">
+                <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-sliders-horizontal" class="sp-playground-tab" :class="{ 'sp-playground-tab--active': inspectorTab === 'setup' }" @click="inspectorTab = 'setup'">Setup</UButton>
+                <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-activity" class="sp-playground-tab" :class="{ 'sp-playground-tab--active': inspectorTab === 'usage' }" @click="inspectorTab = 'usage'">Usage</UButton>
               </div>
               <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-x" aria-label="Close controls" @click="showInspector = false" />
             </div>
@@ -1148,3 +1163,61 @@ onBeforeUnmount(() => {
     </SpAsyncSection>
   </SpDashboardPage>
 </template>
+
+
+<style scoped>
+.sp-playground-shell {
+  --sp-playground-surface: color-mix(in oklab, var(--ui-bg-elevated) 98%, transparent);
+}
+
+.sp-playground-panel,
+.sp-playground-inspector,
+.sp-playground-composer {
+  background: var(--sp-playground-surface) !important;
+}
+
+.sp-playground-inspector {
+  border-left-color: color-mix(in oklab, var(--ui-border) 82%, transparent);
+}
+
+.sp-playground-tabs {
+  border: 1px solid color-mix(in oklab, var(--ui-border) 82%, transparent);
+  background: color-mix(in oklab, var(--ui-bg-muted) 82%, transparent);
+}
+
+.sp-playground-tab {
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.sp-playground-tab--active {
+  border: 1px solid color-mix(in oklab, var(--ui-border) 86%, transparent) !important;
+  background: color-mix(in oklab, var(--ui-bg-elevated) 96%, transparent) !important;
+  color: var(--ui-text-highlighted) !important;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 6%, transparent), 0 10px 24px -18px color-mix(in oklab, var(--ui-bg) 72%, transparent);
+}
+
+:global(html.light) .sp-playground-shell {
+  --sp-playground-surface: color-mix(in oklab, white 98%, var(--ui-primary) 2%);
+}
+
+:global(html.light) .sp-playground-tabs {
+  background: color-mix(in oklab, white 94%, var(--ui-primary) 2%);
+}
+
+@media (max-width: 1279px) {
+  .sp-playground-inspector {
+    width: min(22rem, 96vw);
+  }
+}
+
+@media (max-width: 639px) {
+  .sp-playground-inspector {
+    width: 100%;
+  }
+
+  .sp-playground-composer {
+    padding: .55rem;
+    border-radius: 1.05rem;
+  }
+}
+</style>

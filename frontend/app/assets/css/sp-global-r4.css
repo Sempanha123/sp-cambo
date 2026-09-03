@@ -284,7 +284,7 @@
   width: min(100%, 34rem);
 }
 
-.sp-r4-auth-main :where(form, .sp-auth-card, [class*="rounded-2xl"][class*="border"]) {
+.sp-r4-auth-main :where(.sp-auth-card, [class*="rounded-2xl"][class*="border"]) {
   position: relative;
   border-color: var(--sp-r4-line) !important;
   background-color: color-mix(in oklab, var(--ui-bg-elevated) 76%, transparent) !important;
@@ -292,6 +292,16 @@
     inset 0 1px 0 color-mix(in oklab, white 5%, transparent),
     0 28px 70px -38px color-mix(in oklab, var(--ui-primary) 30%, transparent);
   backdrop-filter: blur(20px);
+}
+
+/* Keep the original auth form layout. The outer auth card owns the background. */
+.sp-r4-auth-main form {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* -------- DASHBOARD / ADMIN / RESELLER -------- */

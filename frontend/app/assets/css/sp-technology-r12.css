@@ -448,8 +448,9 @@ html.light .sp-r12-footer {
   overflow: hidden;
   border: 1px solid var(--sp-r12-line) !important;
   border-radius: .9rem !important;
-  background: rgb(3 8 22 / .9) !important;
-  box-shadow: 0 20px 50px rgb(1 4 15 / .28), inset 0 1px rgb(255 255 255 / .025);
+  background: rgb(3 8 22 / .98) !important;
+  color: rgb(226 232 240) !important;
+  box-shadow: 0 20px 50px rgb(1 4 15 / .24), inset 0 1px rgb(255 255 255 / .035);
 }
 
 .sp-code-block__header,
@@ -464,6 +465,22 @@ html.light .sp-r12-footer {
 .sp-console-json {
   tab-size: 2;
   letter-spacing: -.018em;
+}
+
+/* Code/terminal text keeps explicit contrast in both themes. */
+.sp-code-block__content,
+.sp-code-block pre,
+.sp-code-block code,
+.sp-playground-code pre,
+.sp-playground-code code,
+.sp-console-json,
+.sp-live-request-console code {
+  color: rgb(226 232 240) !important;
+}
+
+html.light .sp-code-block__header,
+html.light .sp-console-titlebar {
+  color: rgb(203 213 225) !important;
 }
 
 /* ── Page hierarchy ──────────────────────────────────────────────────────── */

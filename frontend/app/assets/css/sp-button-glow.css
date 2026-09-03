@@ -1,0 +1,189 @@
+/*
+ * SP Cambo — global Google-style UButton skin
+ * Clean white / near-white surfaces, dark text, rounded corners and a soft glow.
+ * Loaded after the existing app CSS so old navy/blue button fills are replaced.
+ */
+
+/* Shared shape + interaction for Nuxt UI buttons. */
+.sp-global-stage :where(button, a)[data-slot="base"] {
+  border-radius: .9rem !important;
+  font-variation-settings: "wght" 680;
+  letter-spacing: -.015em;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 150ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):not([aria-disabled="true"]):hover {
+  transform: translateY(-1px);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:not(:disabled):not([aria-disabled="true"]):active {
+  transform: translateY(0) scale(.985);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"]:focus-visible {
+  outline: 2px solid rgb(56 189 248 / .52) !important;
+  outline-offset: 2px;
+}
+
+/*
+ * Main filled buttons — intentionally close to the Continue with Google button:
+ * white surface, dark label, subtle border, soft modern glow.
+ */
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-primary"],
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-secondary"],
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-inverted"] {
+  color: #0f172a !important;
+  border: 1px solid rgb(255 255 255 / .86) !important;
+  background-color: rgb(255 255 255 / .98) !important;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+  box-shadow:
+    0 12px 28px -17px rgb(2 6 23 / .72),
+    0 0 0 1px rgb(255 255 255 / .07),
+    0 0 24px rgb(56 189 248 / .08),
+    inset 0 1px 0 #fff !important;
+  text-shadow: none !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-primary"]:not(:disabled):hover,
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-secondary"]:not(:disabled):hover,
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-inverted"]:not(:disabled):hover {
+  color: #020617 !important;
+  border-color: rgb(186 230 253 / .95) !important;
+  background-color: #fff !important;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%) !important;
+  box-shadow:
+    0 15px 32px -17px rgb(2 6 23 / .78),
+    0 0 0 1px rgb(125 211 252 / .12),
+    0 0 30px rgb(56 189 248 / .14),
+    inset 0 1px 0 #fff !important;
+}
+
+/* Semantic solid actions keep meaning through border/icon/text accents, not heavy fills. */
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-success"] {
+  color: #065f46 !important;
+  border: 1px solid rgb(110 231 183 / .78) !important;
+  background-color: rgb(255 255 255 / .98) !important;
+  background-image: linear-gradient(180deg, #fff, #ecfdf5) !important;
+  box-shadow: 0 12px 28px -18px rgb(5 150 105 / .42), inset 0 1px 0 #fff !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-info"] {
+  color: #075985 !important;
+  border: 1px solid rgb(125 211 252 / .80) !important;
+  background-color: rgb(255 255 255 / .98) !important;
+  background-image: linear-gradient(180deg, #fff, #f0f9ff) !important;
+  box-shadow: 0 12px 28px -18px rgb(14 165 233 / .38), inset 0 1px 0 #fff !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-warning"] {
+  color: #92400e !important;
+  border: 1px solid rgb(252 211 77 / .80) !important;
+  background-color: rgb(255 255 255 / .98) !important;
+  background-image: linear-gradient(180deg, #fff, #fffbeb) !important;
+  box-shadow: 0 12px 28px -18px rgb(245 158 11 / .38), inset 0 1px 0 #fff !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-error"] {
+  color: #be123c !important;
+  border: 1px solid rgb(253 164 175 / .82) !important;
+  background-color: rgb(255 255 255 / .98) !important;
+  background-image: linear-gradient(180deg, #fff, #fff1f2) !important;
+  box-shadow: 0 12px 28px -18px rgb(244 63 94 / .36), inset 0 1px 0 #fff !important;
+}
+
+/* Soft / subtle / neutral controls: quieter frosted version of the same language. */
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-default"],
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-elevated"] {
+  color: var(--ui-text-highlighted) !important;
+  border: 1px solid color-mix(in oklab, var(--ui-border) 82%, white 18%) !important;
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 94%, white 6%) !important;
+  background-image: linear-gradient(180deg, rgb(255 255 255 / .055), rgb(255 255 255 / .015)) !important;
+  box-shadow:
+    0 10px 24px -20px rgb(2 6 23 / .65),
+    inset 0 1px 0 rgb(255 255 255 / .07) !important;
+  backdrop-filter: blur(14px);
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-default"]:not(:disabled):hover,
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-elevated"]:not(:disabled):hover {
+  border-color: color-mix(in oklab, rgb(125 211 252) 34%, var(--ui-border)) !important;
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 96%, white 4%) !important;
+  box-shadow:
+    0 12px 26px -20px rgb(2 6 23 / .7),
+    0 0 22px rgb(56 189 248 / .07),
+    inset 0 1px 0 rgb(255 255 255 / .08) !important;
+}
+
+/* Soft semantic buttons stay light and clean. */
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-primary/10"] {
+  color: color-mix(in oklab, var(--ui-text-highlighted) 90%, #0ea5e9) !important;
+  border: 1px solid rgb(125 211 252 / .22) !important;
+  background: color-mix(in oklab, var(--ui-bg-elevated) 94%, rgb(56 189 248 / .06)) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .05) !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-success/10"] {
+  border-color: rgb(110 231 183 / .22) !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-warning/10"] {
+  border-color: rgb(252 211 77 / .24) !important;
+}
+
+.sp-global-stage :where(button, a)[data-slot="base"][class~="bg-error/10"] {
+  border-color: rgb(253 164 175 / .24) !important;
+}
+
+/* Ghost/icon buttons remain lightweight instead of becoming white pills everywhere. */
+.sp-global-stage :where(button, a)[data-slot="base"]:not([class~="bg-primary"]):not([class~="bg-secondary"]):not([class~="bg-success"]):not([class~="bg-info"]):not([class~="bg-warning"]):not([class~="bg-error"]):not([class~="bg-inverted"]):not([class~="bg-default"]):not([class~="bg-elevated"]):not(:disabled):hover {
+  background-color: color-mix(in oklab, var(--ui-bg-elevated) 74%, transparent) !important;
+  box-shadow: 0 0 20px rgb(56 189 248 / .055);
+}
+
+/* Light mode: same Google-like white button with a visible quiet edge. */
+html.light .sp-global-stage :where(button, a)[data-slot="base"][class~="bg-primary"],
+html.light .sp-global-stage :where(button, a)[data-slot="base"][class~="bg-secondary"],
+html.light .sp-global-stage :where(button, a)[data-slot="base"][class~="bg-inverted"] {
+  color: #0f172a !important;
+  border-color: rgb(203 213 225 / .92) !important;
+  background-color: #fff !important;
+  background-image: linear-gradient(180deg, #fff, #f8fafc) !important;
+  box-shadow:
+    0 10px 24px -18px rgb(15 23 42 / .30),
+    0 0 0 1px rgb(15 23 42 / .015),
+    inset 0 1px 0 #fff !important;
+}
+
+html.light .sp-global-stage :where(button, a)[data-slot="base"][class~="bg-default"],
+html.light .sp-global-stage :where(button, a)[data-slot="base"][class~="bg-elevated"] {
+  color: #1e293b !important;
+  border-color: rgb(203 213 225 / .82) !important;
+  background-color: rgb(255 255 255 / .94) !important;
+  background-image: linear-gradient(180deg, #fff, #f8fafc) !important;
+  box-shadow: 0 9px 22px -18px rgb(15 23 42 / .22), inset 0 1px 0 #fff !important;
+}
+
+/* Disabled stays calm and readable. */
+.sp-global-stage :where(button, a)[data-slot="base"]:disabled,
+.sp-global-stage :where(button, a)[data-slot="base"][aria-disabled="true"] {
+  opacity: .48 !important;
+  box-shadow: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-global-stage :where(button, a)[data-slot="base"] {
+    transition: none !important;
+  }
+
+  .sp-global-stage :where(button, a)[data-slot="base"]:hover,
+  .sp-global-stage :where(button, a)[data-slot="base"]:active {
+    transform: none !important;
+  }
+}

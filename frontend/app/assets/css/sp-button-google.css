@@ -1,0 +1,224 @@
+/*
+ * SP Cambo — cute semantic button skin (V4).
+ * Compact sizes from V3 are kept. This pass removes the gray-heavy feel and
+ * gives every semantic action a soft, useful colour while staying clean.
+ */
+
+.sp-google-button {
+  --sp-btn-rgb: 14 165 233;
+  --sp-btn-rgb-hover: 2 132 199;
+  --sp-btn-soft: 56 189 248;
+  --sp-btn-soft-2: 34 211 238;
+  --sp-btn-text: 255 255 255;
+  border-radius: .72rem !important;
+  letter-spacing: -.01em;
+  -webkit-tap-highlight-color: transparent;
+  transform: translateZ(0);
+  transition:
+    transform 150ms ease,
+    box-shadow 170ms ease,
+    border-color 170ms ease,
+    background-color 170ms ease,
+    color 170ms ease,
+    opacity 170ms ease !important;
+}
+
+/* Cute semantic palette. */
+.sp-google-button.sp-button-color-primary {
+  --sp-btn-rgb: 14 165 233;
+  --sp-btn-rgb-hover: 2 132 199;
+  --sp-btn-soft: 56 189 248;
+  --sp-btn-soft-2: 34 211 238;
+  --sp-btn-text: 255 255 255;
+}
+
+.sp-google-button.sp-button-color-secondary {
+  --sp-btn-rgb: 139 92 246;
+  --sp-btn-rgb-hover: 124 58 237;
+  --sp-btn-soft: 167 139 250;
+  --sp-btn-soft-2: 192 132 252;
+  --sp-btn-text: 255 255 255;
+}
+
+.sp-google-button.sp-button-color-success {
+  --sp-btn-rgb: 16 185 129;
+  --sp-btn-rgb-hover: 5 150 105;
+  --sp-btn-soft: 52 211 153;
+  --sp-btn-soft-2: 45 212 191;
+  --sp-btn-text: 255 255 255;
+}
+
+.sp-google-button.sp-button-color-info {
+  --sp-btn-rgb: 6 182 212;
+  --sp-btn-rgb-hover: 8 145 178;
+  --sp-btn-soft: 34 211 238;
+  --sp-btn-soft-2: 56 189 248;
+  --sp-btn-text: 255 255 255;
+}
+
+.sp-google-button.sp-button-color-warning {
+  --sp-btn-rgb: 245 158 11;
+  --sp-btn-rgb-hover: 217 119 6;
+  --sp-btn-soft: 251 191 36;
+  --sp-btn-soft-2: 251 146 60;
+  --sp-btn-text: 255 255 255;
+}
+
+.sp-google-button.sp-button-color-error {
+  --sp-btn-rgb: 244 63 94;
+  --sp-btn-rgb-hover: 225 29 72;
+  --sp-btn-soft: 251 113 133;
+  --sp-btn-soft-2: 244 114 182;
+  --sp-btn-text: 255 255 255;
+}
+
+/* Neutral is intentionally blue-lilac, not gray. */
+.sp-google-button.sp-button-color-neutral {
+  --sp-btn-rgb: 99 102 241;
+  --sp-btn-rgb-hover: 79 70 229;
+  --sp-btn-soft: 129 140 248;
+  --sp-btn-soft-2: 167 139 250;
+  --sp-btn-text: 255 255 255;
+}
+
+/* Solid = gentle same-family gradient + small glow. */
+.sp-google-button.sp-button-variant-solid {
+  color: rgb(var(--sp-btn-text)) !important;
+  border: 1px solid rgb(255 255 255 / .18) !important;
+  background-color: rgb(var(--sp-btn-rgb)) !important;
+  background-image: linear-gradient(135deg,
+    rgb(var(--sp-btn-soft) / .98),
+    rgb(var(--sp-btn-rgb) / 1) 56%,
+    rgb(var(--sp-btn-soft-2) / .90)
+  ) !important;
+  box-shadow:
+    0 7px 17px -11px rgb(var(--sp-btn-rgb) / .74),
+    0 0 16px rgb(var(--sp-btn-soft) / .10),
+    inset 0 1px 0 rgb(255 255 255 / .22) !important;
+  text-shadow: none !important;
+}
+
+.sp-google-button.sp-button-variant-solid:not(:disabled):not([aria-disabled="true"]):hover {
+  background-color: rgb(var(--sp-btn-rgb-hover)) !important;
+  background-image: linear-gradient(135deg,
+    rgb(var(--sp-btn-soft) / 1),
+    rgb(var(--sp-btn-rgb-hover) / 1) 56%,
+    rgb(var(--sp-btn-soft-2) / .96)
+  ) !important;
+  border-color: rgb(255 255 255 / .28) !important;
+  box-shadow:
+    0 10px 22px -11px rgb(var(--sp-btn-rgb) / .80),
+    0 0 22px rgb(var(--sp-btn-soft) / .16),
+    inset 0 1px 0 rgb(255 255 255 / .28) !important;
+  transform: translateY(-1px);
+}
+
+/* Soft / outline / subtle = tinted colour glass, not gray blocks. */
+.sp-google-button.sp-button-variant-outline,
+.sp-google-button.sp-button-variant-soft,
+.sp-google-button.sp-button-variant-subtle {
+  color: color-mix(in oklab, rgb(var(--sp-btn-rgb)) 76%, white 24%) !important;
+  border: 1px solid rgb(var(--sp-btn-soft) / .24) !important;
+  background-color: rgb(var(--sp-btn-rgb) / .09) !important;
+  background-image: linear-gradient(180deg,
+    rgb(var(--sp-btn-soft) / .10),
+    rgb(var(--sp-btn-rgb) / .055)
+  ) !important;
+  box-shadow:
+    0 6px 16px -15px rgb(var(--sp-btn-rgb) / .40),
+    inset 0 1px 0 rgb(255 255 255 / .07) !important;
+  backdrop-filter: blur(12px);
+}
+
+.sp-google-button.sp-button-variant-outline:not(:disabled):not([aria-disabled="true"]):hover,
+.sp-google-button.sp-button-variant-soft:not(:disabled):not([aria-disabled="true"]):hover,
+.sp-google-button.sp-button-variant-subtle:not(:disabled):not([aria-disabled="true"]):hover {
+  color: color-mix(in oklab, rgb(var(--sp-btn-soft)) 82%, white 18%) !important;
+  border-color: rgb(var(--sp-btn-soft) / .42) !important;
+  background-color: rgb(var(--sp-btn-rgb) / .14) !important;
+  background-image: linear-gradient(180deg,
+    rgb(var(--sp-btn-soft) / .16),
+    rgb(var(--sp-btn-rgb) / .09)
+  ) !important;
+  box-shadow:
+    0 8px 18px -14px rgb(var(--sp-btn-rgb) / .46),
+    0 0 15px rgb(var(--sp-btn-soft) / .08) !important;
+  transform: translateY(-1px);
+}
+
+/* Ghost/icon controls get a tiny semantic tint instead of gray hover. */
+.sp-google-button.sp-button-variant-ghost {
+  color: color-mix(in oklab, rgb(var(--sp-btn-soft)) 72%, var(--ui-text) 28%) !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.sp-google-button.sp-button-variant-ghost:not(:disabled):not([aria-disabled="true"]):hover {
+  color: color-mix(in oklab, rgb(var(--sp-btn-soft)) 84%, white 16%) !important;
+  border-color: rgb(var(--sp-btn-soft) / .20) !important;
+  background-color: rgb(var(--sp-btn-rgb) / .085) !important;
+  box-shadow: 0 0 14px rgb(var(--sp-btn-soft) / .055) !important;
+}
+
+.sp-google-button.sp-button-variant-link {
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+  color: rgb(var(--sp-btn-soft)) !important;
+}
+
+.sp-google-button:not(:disabled):not([aria-disabled="true"]):active {
+  transform: translateY(0) scale(.985);
+}
+
+.sp-google-button:focus-visible {
+  outline: 2px solid rgb(var(--sp-btn-soft) / .46) !important;
+  outline-offset: 2px;
+}
+
+.sp-google-button:disabled,
+.sp-google-button[aria-disabled="true"] {
+  opacity: .48 !important;
+  box-shadow: none !important;
+}
+
+/* Light theme: pastel tint, still colourful and readable. */
+html.light .sp-google-button.sp-button-variant-outline,
+html.light .sp-google-button.sp-button-variant-soft,
+html.light .sp-google-button.sp-button-variant-subtle {
+  color: color-mix(in oklab, rgb(var(--sp-btn-rgb)) 84%, #172033 16%) !important;
+  border-color: rgb(var(--sp-btn-soft) / .28) !important;
+  background-color: color-mix(in oklab, white 89%, rgb(var(--sp-btn-soft)) 11%) !important;
+  background-image: linear-gradient(180deg,
+    color-mix(in oklab, white 86%, rgb(var(--sp-btn-soft)) 14%),
+    color-mix(in oklab, white 93%, rgb(var(--sp-btn-rgb)) 7%)
+  ) !important;
+  box-shadow:
+    0 7px 17px -15px rgb(var(--sp-btn-rgb) / .28),
+    inset 0 1px 0 rgb(255 255 255 / .92) !important;
+}
+
+html.light .sp-google-button.sp-button-variant-ghost {
+  color: color-mix(in oklab, rgb(var(--sp-btn-rgb)) 76%, #334155 24%) !important;
+}
+
+html.light .sp-google-button.sp-button-variant-ghost:not(:disabled):not([aria-disabled="true"]):hover {
+  color: rgb(var(--sp-btn-rgb-hover)) !important;
+  border-color: rgb(var(--sp-btn-soft) / .22) !important;
+  background-color: rgb(var(--sp-btn-rgb) / .07) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-google-button {
+    transition: none !important;
+  }
+
+  .sp-google-button:hover,
+  .sp-google-button:active {
+    transform: none !important;
+  }
+}

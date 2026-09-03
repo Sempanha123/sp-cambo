@@ -100,6 +100,7 @@ const performCheck = async (secret: string, mode: 'manual' | 'refresh') => {
 
     keyStatus.value = response
     sessionSecret.value = secret
+    autoRefresh.value = true
     lastRefreshedAt.value = new Date()
     refreshWarning.value = ''
 
@@ -303,6 +304,22 @@ const requestFilters = [
   { value: 'completed' as const, label: 'Completed' },
   { value: 'failed' as const, label: 'Failed' }
 ]
+
+const requestStatusCode = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
+  if (request.status === 'success') return '200'
+  if (request.status === 'error') return request.error_code && request.error_code.toLowerCase().includes('timeout') ? '504' : '500'
+  if (request.state === 'streaming') return '102'
+  if (request.state === 'reconciling') return '202'
+  if (request.state === 'reserved' || request.state === 'connecting') return '102'
+  return '200'
+}
+
+const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
+  if (request.status === 'success') return 'success'
+  if (request.status === 'error') return 'error'
+  if (request.state === 'reconciling') return 'warning'
+  return 'info'
+}
 </script>
 
 <template>
@@ -452,7 +469,7 @@ const requestFilters = [
                   name="i-lucide-lock-keyhole"
                   class="mt-0.5 size-4 shrink-0 text-primary"
                 />
-                <span>After a successful check, the field is cleared. The full key remains only in this tab's memory for Refresh or Live 15s, until you clear or close the page.</span>
+                <span>After a successful check, the field is cleared. The full key remains only in this tab's memory for secure auto refresh while this tab stays open, until you clear or close the page.</span>
               </div>
 
               <div class="flex flex-col gap-2 sm:flex-row">
@@ -632,11 +649,13 @@ const requestFilters = [
                   >
                     Refresh
                   </UButton>
-                  <USwitch
-                    v-model="autoRefresh"
-                    :disabled="!sessionSecret"
-                    label="Live 15s"
-                  />
+                  <div
+                    v-if="sessionSecret"
+                    class="sp-checker-auto-refresh"
+                  >
+                    <span class="sp-checker-auto-refresh__dot" aria-hidden="true" />
+                    Auto refresh · 15s
+                  </div>
                 </div>
               </div>
             </div>
@@ -661,7 +680,7 @@ const requestFilters = [
                 Exact values from the latest successful check
               </p>
             </div>
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <SpMetric
                 label="Time remaining"
                 icon="i-lucide-clock"
@@ -882,7 +901,7 @@ const requestFilters = [
                 </UBadge>
               </div>
             </template>
-            <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <dl class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <div class="sp-checker-usage">
                 <dt>Input</dt><dd class="text-success">
                   {{ formatUnits(keyStatus.tokens_used?.input ?? '0') }}
@@ -979,7 +998,7 @@ const requestFilters = [
                   <tr
                     v-for="request in filteredRequests"
                     :key="request.request_id"
-                    class="border-b border-default/60 transition-colors last:border-0 hover:bg-elevated/20"
+                    class="sp-checker-request-row border-b border-default/60 last:border-0"
                   >
                     <td class="px-5 py-3">
                       <div class="flex items-center gap-1">
@@ -992,10 +1011,10 @@ const requestFilters = [
                       </p>
                     </td>
                     <td class="px-3 py-3">
-                      <SpStatusBadge
-                        :status="request.state"
-                        size="sm"
-                      />
+                      <div class="sp-request-status" :class="`sp-request-status--${requestStatusTone(request)}`">
+                        <strong class="sp-request-status__code">{{ requestStatusCode(request) }}</strong>
+                        <span class="sp-request-status__label">{{ stateLabel(request.state) }}</span>
+                      </div>
                     </td>
                     <td class="px-3 py-3">
                       <p class="font-mono text-default">
@@ -1135,4 +1154,73 @@ const requestFilters = [
   .sp-checker-model-card { transition: none; }
   .sp-checker-model-card:hover { transform: none; }
 }
+
+.sp-checker-auto-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  border: 1px solid color-mix(in oklab, var(--ui-success) 20%, var(--ui-border));
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--ui-success) 8%, var(--ui-bg-elevated));
+  padding: .55rem .85rem;
+  font-size: .74rem;
+  font-weight: 600;
+  color: color-mix(in oklab, var(--ui-success) 72%, var(--ui-text));
+}
+
+.sp-checker-auto-refresh__dot {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 9999px;
+  background: var(--ui-success);
+  box-shadow: 0 0 0 6px color-mix(in oklab, var(--ui-success) 12%, transparent);
+}
+
+.sp-checker-request-row {
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.sp-checker-request-row:hover {
+  background: color-mix(in oklab, var(--ui-bg-elevated) 45%, transparent);
+}
+
+.sp-request-status {
+  display: inline-flex;
+  min-width: 4.45rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .12rem;
+  border: 1px solid color-mix(in oklab, var(--ui-border) 86%, transparent);
+  border-radius: .8rem;
+  background: color-mix(in oklab, var(--ui-bg-elevated) 74%, transparent);
+  padding: .42rem .62rem;
+}
+
+.sp-request-status__code {
+  font-variant-numeric: tabular-nums;
+  font-size: .92rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+
+.sp-request-status__label {
+  font-size: .64rem;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
+}
+
+.sp-request-status--success .sp-request-status__code { color: var(--ui-success); }
+.sp-request-status--error .sp-request-status__code { color: var(--ui-error); }
+.sp-request-status--warning .sp-request-status__code { color: var(--ui-warning); }
+.sp-request-status--info .sp-request-status__code { color: var(--ui-primary); }
+
+@media (max-width: 639px) {
+  .sp-checker-auto-refresh {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 </style>

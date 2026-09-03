@@ -471,8 +471,8 @@ const resetHeroPointer = () => {
 
               <h2 class="max-w-xl text-3xl font-semibold tracking-tight text-highlighted text-balance sm:text-4xl">
                 See the gateway
-                <span class="sp-live-gradient-text">working</span>,
-                not just described.
+                <span class="sp-live-gradient-text">working</span>
+                <span class="sp-gateway-heading-tail">— not just described.</span>
               </h2>
 
               <p class="max-w-xl text-sm leading-7 text-muted sm:text-base">
@@ -2278,4 +2278,62 @@ const resetHeroPointer = () => {
     transition-duration: 0.001ms !important;
   }
 }
+
+
+/* R14: light-mode index correction.
+   Keep the page itself fully opaque; only code/terminal surfaces stay dark. */
+:global(html.light) .sp-motion-page {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+:global(html.light) .sp-public-hero :deep(.sp-code-block),
+:global(html.light) .sp-live-request-console {
+  opacity: 1 !important;
+  background: rgb(7 17 31 / .98) !important;
+  color: rgb(226 232 240) !important;
+  border-color: rgb(100 116 139 / .30) !important;
+  box-shadow: 0 16px 38px rgb(15 23 42 / .14), inset 0 1px rgb(255 255 255 / .04) !important;
+}
+
+:global(html.light) .sp-public-hero :deep(.sp-code-block__header),
+:global(html.light) .sp-console-titlebar {
+  background: rgb(15 27 47 / .98) !important;
+  color: rgb(203 213 225) !important;
+  border-bottom-color: rgb(100 116 139 / .24) !important;
+}
+
+:global(html.light) .sp-public-hero :deep(.sp-code-block__content),
+:global(html.light) .sp-public-hero :deep(.sp-code-block pre),
+:global(html.light) .sp-public-hero :deep(.sp-code-block code),
+:global(html.light) .sp-live-request-console :is(code, .sp-console-json, .sp-console-request-line, .sp-console-route-head, .sp-route-labels, .sp-console-footer) {
+  color: rgb(226 232 240) !important;
+}
+
+.sp-gateway-heading-tail {
+  white-space: normal;
+}
+
+@media (max-width: 639px) {
+  .sp-public-hero :deep(.sp-code-block) {
+    border-radius: 1rem !important;
+  }
+
+  .sp-public-hero :deep(.sp-code-block__header) {
+    min-height: 3rem;
+    padding-inline: .85rem;
+  }
+
+  .sp-public-hero :deep(.sp-code-block__content pre) {
+    min-width: max-content;
+    padding: 1rem;
+    font-size: .75rem;
+    line-height: 1.7;
+  }
+
+  .sp-gateway-showcase {
+    border-radius: 1.25rem;
+  }
+}
+
 </style>

@@ -45,7 +45,7 @@ const toneAccent = {
           {{ label }}
         </p>
         <p
-          class="sp-numeric mt-1.5 truncate text-2xl font-semibold tracking-tight sm:text-[1.625rem]"
+          class="sp-numeric mt-1.5 break-words text-2xl font-semibold leading-tight tracking-tight sm:text-[1.625rem]"
           :class="toneClass[tone]"
         >
           {{ value }}
