@@ -12,7 +12,7 @@ COPY . .
 ARG NUXT_PUBLIC_API_BASE_URL=https://api.spcambo.com/api/v1
 ARG NUXT_PUBLIC_INFERENCE_ROOT_URL=https://api.spcambo.com
 ARG NUXT_PUBLIC_SITE_URL=https://spcambo.com
-ARG NUXT_PUBLIC_SESSION_MODE=cookie
+ARG NUXT_PUBLIC_SESSION_MODE=bearer
 # Optional support channel: an email address or an http(s) URL. Empty by default, and
 # empty is a valid deployment — the surfaces that mention support simply show no
 # link. A value that is neither is rejected by the strict check below rather than

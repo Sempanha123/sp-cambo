@@ -29,7 +29,7 @@ services:
         NUXT_PUBLIC_API_BASE_URL: ${NUXT_PUBLIC_API_BASE_URL:-https://api.spcambo.com/api/v1}
         NUXT_PUBLIC_INFERENCE_ROOT_URL: ${NUXT_PUBLIC_INFERENCE_ROOT_URL:-https://api.spcambo.com}
         NUXT_PUBLIC_SITE_URL: ${NUXT_PUBLIC_SITE_URL:-https://spcambo.com}
-        NUXT_PUBLIC_SESSION_MODE: ${NUXT_PUBLIC_SESSION_MODE:-cookie}
+        NUXT_PUBLIC_SESSION_MODE: ${NUXT_PUBLIC_SESSION_MODE:-bearer}
         # Optional. Empty means the surfaces that mention support show no link
         # rather than an invented address. Also readable at runtime, below.
         NUXT_PUBLIC_SUPPORT_URL: ${NUXT_PUBLIC_SUPPORT_URL:-}
