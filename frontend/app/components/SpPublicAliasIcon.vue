@@ -16,6 +16,7 @@ const artwork = computed(() => {
   const value = identity.value
   if (value.includes('claude') || value.includes('anthropic') || value.includes('opus') || value.includes('sonnet') || value.includes('haiku')) return 'claude'
   if (value.includes('gemini') || value.includes('google ai')) return 'gemini'
+  if (value.includes('deepseek') || value.includes('deepsek')) return 'deepseek'
   if (value.includes('gpt') || value.includes('openai') || value.includes('codex') || value.includes('chatgpt')) return 'codex'
   return null
 })
@@ -24,6 +25,7 @@ const src = computed(() => {
   if (artwork.value === 'claude') return '/model-alias-icons/claude_small_icon.gif'
   if (artwork.value === 'gemini') return '/model-alias-icons/gemini_small_icon.gif'
   if (artwork.value === 'codex') return '/model-alias-icons/codex_small_icon.gif'
+  if (artwork.value === 'deepseek') return '/model-alias-icons/deepseek_small_icon.gif'
   return null
 })
 
@@ -78,4 +80,5 @@ const fallbackClass = computed(() => ({
 .sp-r9-alias-icon--claude { box-shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 5px 12px -9px rgb(237 126 69 / .5); }
 .sp-r9-alias-icon--gemini { box-shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 5px 12px -9px rgb(84 114 255 / .52); }
 .sp-r9-alias-icon--codex { box-shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 5px 12px -9px rgb(20 187 144 / .48); }
+.sp-r9-alias-icon--deepseek { box-shadow: inset 0 1px 0 rgb(255 255 255 / .04), 0 5px 12px -9px rgb(56 189 248 / .55); }
 </style>

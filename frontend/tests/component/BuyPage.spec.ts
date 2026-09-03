@@ -258,7 +258,7 @@ describe('buy page package selection', () => {
         family_label: 'Claude Credits',
         package_kind: 'SP_CREDITS',
         display_units: '100',
-        display_unit_label: 'SP Credits',
+        display_unit_label: 'Credits',
         advertised_units: '10000000'
       })
     ]

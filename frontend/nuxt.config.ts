@@ -16,20 +16,6 @@ export default defineNuxtConfig({
     fallback: 'dark'
   },
 
-  vite: {
-    build: {
-      target: 'es2022'
-    }
-  },
-
-  nitro: {
-    esbuild: {
-      options: {
-        target: 'es2022'
-      }
-    }
-  },
-
   runtimeConfig: {
     // Server-only control-plane origin used during SSR, e.g. http://nginx/api/v1.
     // Set by NUXT_INTERNAL_API_BASE_URL. Public pages are server-rendered from
@@ -155,6 +141,7 @@ export default defineNuxtConfig({
         'simple-icons:anthropic',
         'simple-icons:openai',
         'simple-icons:googlegemini',
+        'simple-icons:deepseek',
         'lucide:activity',
         'lucide:arrow-left',
         'lucide:arrow-right',

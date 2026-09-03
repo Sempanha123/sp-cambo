@@ -27,7 +27,7 @@ class PackageCatalogSeederTest extends TestCase
         ]);
     }
 
-    public function test_migrate_fresh_seed_bootstraps_three_combo_catalog_without_provider_env_credentials(): void
+    public function test_migrate_fresh_seed_bootstraps_four_combo_catalog_without_provider_env_credentials(): void
     {
         $this->seed(DatabaseSeeder::class);
 
@@ -37,11 +37,11 @@ class PackageCatalogSeederTest extends TestCase
         $this->assertDatabaseCount('provider_connection_revisions', 0);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
-        $this->assertSame(9, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
-        $this->assertSame(43, Package::query()->where('enabled', true)->where('customer_visible', true)->count());
+        $this->assertSame(10, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
+        $this->assertSame(57, Package::query()->where('enabled', true)->where('customer_visible', true)->count());
 
         // Nothing is publicly sellable until the Admin-managed route is READY.
         $this->assertSame(0, ModelAlias::query()->published()->count());
@@ -68,9 +68,9 @@ class PackageCatalogSeederTest extends TestCase
         ]);
         $provider->activateConnectionRevision($revision);
 
-        $this->assertSame(9, ModelAlias::query()->published()->count());
-        $this->assertSame(43, Package::query()->published()->count());
-        $this->assertSame(43, Package::query()->published()->where('billing_mode', 'TOKEN_QUOTA')->count());
+        $this->assertSame(10, ModelAlias::query()->published()->count());
+        $this->assertSame(57, Package::query()->published()->count());
+        $this->assertSame(57, Package::query()->published()->where('billing_mode', 'TOKEN_QUOTA')->count());
     }
 
     public function test_sell_catalog_keeps_exact_private_combo_ids(): void
@@ -78,7 +78,7 @@ class PackageCatalogSeederTest extends TestCase
         $this->seed(SellCatalogSeeder::class);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
     }

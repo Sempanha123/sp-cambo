@@ -43,7 +43,7 @@ const submitRedeemCode = async () => {
       code,
       idempotency_key: `web:${Date.now()}:${Math.random().toString(36).slice(2)}`
     })
-    redeemSuccess.value = `${result.package_name} was added to your account.`
+    redeemSuccess.value = `${customerUnitLabel(result.package_name)} was added to your account.`
     redeemCode.value = ''
     await Promise.all([balance.refresh(), lots.refresh()])
   } catch (error) {
@@ -292,7 +292,7 @@ const refreshAll = () => {
               <div class="min-w-0 space-y-1">
                 <div class="flex flex-wrap items-center gap-2">
                   <h3 class="truncate font-medium text-highlighted">
-                    {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
+                    {{ customerUnitLabel(lot.package_name) }}
                   </h3>
                   <SpStatusBadge :status="lot.status.toLowerCase()" />
                   <UBadge :color="accessTone(lot)" variant="subtle" size="sm">{{ accessLabel(lot) }}</UBadge>
@@ -340,7 +340,7 @@ const refreshAll = () => {
               size="sm"
               class="mt-4"
               :color="expiringSoon(lot) ? 'warning' : 'primary'"
-              :aria-label="`${lotPercentRemaining(lot)}% of ${lot.package_name} remaining`"
+              :aria-label="`${lotPercentRemaining(lot)}% of ${customerUnitLabel(lot.package_name)} remaining`"
             />
 
             <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-4">
@@ -425,7 +425,7 @@ const refreshAll = () => {
         >
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-highlighted">
-              {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
+              {{ customerUnitLabel(lot.package_name) }}
             </p>
             <p class="text-xs text-muted">
               {{ formatUnits(lot.original_units) }} {{ customerUnitLabel(lot.unit_label) }} · {{ lot.family_label }}
@@ -479,7 +479,7 @@ const refreshAll = () => {
         >
           <div class="min-w-0">
             <p class="truncate text-sm text-default">
-              {{ lot.package_name.replaceAll('SP Tokens', 'Tokens').replaceAll('SP Credits', 'Credits') }}
+              {{ customerUnitLabel(lot.package_name) }}
             </p>
             <p class="text-xs text-muted">
               {{ formatUnits(lot.original_units) }} {{ customerUnitLabel(lot.unit_label) }} purchased ·

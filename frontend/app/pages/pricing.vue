@@ -45,18 +45,29 @@ const filtered = computed(() => sorted.value.filter(item =>
 const billingModeLabel = (item: PublicPackage) =>
   packageKind(item) === 'SP_CREDITS' ? 'Credits' : 'Tokens'
 
+// Customer-facing wording never exposes the old "SP Tokens / SP Credits" labels.
+// Keep the replacements so already-seeded production rows render cleanly before reseeding.
+const customerLabel = (value: string | null | undefined) => (value ?? '')
+  .replaceAll('SP Tokens', 'Tokens')
+  .replaceAll('SP Credits', 'Credits')
+  .replaceAll('SP Credit', 'Credit')
+  .replaceAll('SP billable tokens', 'Tokens')
+  .replaceAll('SP billable units', 'Tokens')
+
 const includedLabel = (item: PublicPackage): string => {
   if (item.display_units && item.display_unit_label) {
-    return ['Credits', 'SP Credits'].includes(item.display_unit_label)
-      ? `$${formatUnits(item.display_units)} Credits`
-      : `${formatUnits(item.display_units)} ${item.display_unit_label}`
+    const label = customerLabel(item.display_unit_label)
+    const creditLabel = BigInt(item.display_units) === 1n ? 'Credit' : 'Credits'
+    return label === 'Credits'
+      ? `$${formatUnits(item.display_units)} ${creditLabel}`
+      : `${formatUnits(item.display_units)} ${label}`
   }
 
   if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
     return `${formatMoney(item.credit_amount)} credit`
   }
 
-  return `${formatUnits(item.advertised_units)} ${item.unit_label}`
+  return `${formatUnits(item.advertised_units)} ${customerLabel(item.unit_label)}`
 }
 
 const primaryModel = (item: PublicPackage) => item.allowed_model_aliases[0] || item.family_label
@@ -225,7 +236,7 @@ const faqs = [
                 <div class="min-w-0">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                     <h2 class="truncate text-base font-semibold text-highlighted">
-                      {{ item.name }}
+                      {{ customerLabel(item.name) }}
                     </h2>
                     <UBadge
                       v-if="item.featured"
@@ -241,7 +252,7 @@ const faqs = [
                     v-if="item.subtitle"
                     class="mt-1 line-clamp-2 text-xs leading-5 text-muted"
                   >
-                    {{ item.subtitle }}
+                    {{ customerLabel(item.subtitle) }}
                   </p>
                 </div>
               </div>

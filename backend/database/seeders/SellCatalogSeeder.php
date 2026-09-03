@@ -79,6 +79,21 @@ class SellCatalogSeeder extends Seeder
                 1000 => 7_250,
             ],
         ],
+        'deepseek' => [
+            'label' => 'DeepSeek',
+            'sort_order' => 60,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 149,
+            'multipliers_bps' => [
+                10 => 16_000,
+                50 => 11_000,
+                100 => 10_000,
+                200 => 9_200,
+                300 => 8_800,
+                500 => 8_500,
+                1000 => 7_500,
+            ],
+        ],
     ];
 
     /** @var array<string,array{label:string,sort_order:int,anchor_units:int,anchor_price_minor:int,multipliers_bps:array<int,int>}> */
@@ -126,6 +141,21 @@ class SellCatalogSeeder extends Seeder
                 1000 => 7_350,
                 2000 => 6_680,
                 3000 => 6_250,
+            ],
+        ],
+        'deepseek' => [
+            'label' => 'DeepSeek',
+            'sort_order' => 130,
+            'anchor_units' => 100,
+            'anchor_price_minor' => 99,
+            'multipliers_bps' => [
+                50 => 11_000,
+                100 => 10_000,
+                200 => 9_200,
+                500 => 8_500,
+                1000 => 7_400,
+                2000 => 6_700,
+                3000 => 6_200,
             ],
         ],
     ];
@@ -306,6 +336,60 @@ class SellCatalogSeeder extends Seeder
                 'cache_read' => 1,
                 'cache_write' => 8,
                 'reasoning' => 40,
+            ],
+            'weights' => [
+                'input' => 1_000_000,
+                'output' => 1_000_000,
+                'cache_read' => 250_000,
+                'cache_write' => 1_000_000,
+                'reasoning' => 1_000_000,
+            ],
+            'billing_multipliers_bps' => [
+                'input' => 10_000,
+                'output' => 10_000,
+                'cache_read' => 10_000,
+                'cache_write' => 10_000,
+                'reasoning' => 10_000,
+            ],
+        ],
+        'deepseek' => [
+            // Operator-provided OmniRoute internal model id. Keep this exact spelling.
+            'internal_model_id' => 'Deepsek',
+            'internal_display_name' => 'DeepSeek Combo',
+            'family' => 'deepseek',
+            'vision' => false,
+            'reasoning' => true,
+            'context_tokens' => 128_000,
+            'max_output_tokens' => 65_536,
+            'minimum_request_units' => 0,
+            'local_cache_read_billing_bps' => 2_500,
+            'aliases' => [
+                'deepseek-v4-flash' => [
+                    'display_name' => 'DeepSeek V4 Flash',
+                    'context_tokens' => 128_000,
+                    'max_output_tokens' => 65_536,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
+                'deepseek-v4-pro' => [
+                    'display_name' => 'DeepSeek V4 Pro',
+                    'context_tokens' => 128_000,
+                    'max_output_tokens' => 65_536,
+                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
+                ],
+            ],
+            'sell' => [
+                'input' => 10,        // $0.010
+                'output' => 50,       // $0.050
+                'cache_read' => 3,    // $0.003 local cached input
+                'cache_write' => 12,  // $0.012
+                'reasoning' => 50,    // $0.050
+            ],
+            'reference' => [
+                'input' => 4,
+                'output' => 10,
+                'cache_read' => 1,
+                'cache_write' => 4,
+                'reasoning' => 10,
             ],
             'weights' => [
                 'input' => 1_000_000,
@@ -514,9 +598,9 @@ class SellCatalogSeeder extends Seeder
             $this->command->line($bootstrapRevision
                 ? 'OmniRoute bootstrap revision exists; probe/activate it in Admin > Providers.'
                 : 'Configure OmniRoute in Admin > Providers, then Probe and Activate.');
-            $this->command->line('Private combo IDs: AgentRouter-claude-opus-5, OpenAI Codex, Gemini Google AI Studio.');
+            $this->command->line('Private combo IDs: AgentRouter-claude-opus-5, OpenAI Codex, Gemini Google AI Studio, Deepsek.');
             $this->command->line('Public aliases: '.implode(', ', $allPublicAliases).'.');
-            $this->command->line('Calculated volume-priced 1-day Token lines + long-life SP Credit lines seeded for Claude, Codex and Gemini.');
+            $this->command->line('Calculated volume-priced 1-day Token lines + long-life Credit lines seeded for Claude, Codex, Gemini and DeepSeek.');
             $this->command->line('Customer billing: local 1:1 new input/output; locally reused context bills at 0.25x; OmniRoute/provider usage and cost metadata are ignored.');
             $this->command->line('Provider route: '.($routeReady ? 'READY' : 'NOT READY - Probe/activate Admin > Providers > OmniRoute'));
         }
@@ -618,7 +702,7 @@ class SellCatalogSeeder extends Seeder
             }
         }
 
-        // SP Credits are quota-backed platform units, not USD, withdrawable cash,
+        // Credits are quota-backed platform units, not USD, withdrawable cash,
         // raw provider tokens or an official provider price. One displayed Credit
         // settles as exactly 100,000 SP Cambo billable Tokens.
         foreach (self::CREDIT_PRICE_PROFILES as $routeKey => $profile) {
@@ -630,7 +714,7 @@ class SellCatalogSeeder extends Seeder
                 $label = $profile['label'];
                 $packages[] = $this->creditQuotaPackage(
                     "{$routeKey}-credit-{$credits}",
-                    "{$label} $".number_format($credits)." SP Credits",
+                    "{$label} $".number_format($credits)." ".($credits === 1 ? "Credit" : "Credits"),
                     $label,
                     $credits,
                     $prices[$credits],
@@ -769,7 +853,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => number_format($units).' SP Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day. SP Cambo package price; not provider API list pricing.',
+            'subtitle' => number_format($units).' Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day. SP Cambo package price; not provider API list pricing.',
             'badge' => $featured ? 'Popular' : ($units >= 500_000_000 ? 'Best bulk value' : ($units >= 100_000_000 ? 'Volume value' : 'Starter value')),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
@@ -817,7 +901,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => '$'.number_format($credits).' SP Credits. $1 SP Credit = '.number_format(self::SP_CREDIT_UNITS).' billable SP Tokens. Locally reused context uses 0.25x. Platform usage credit only; not USD, provider credit, or withdrawable cash.',
+            'subtitle' => '$'.number_format($credits).' '.($credits === 1 ? 'Credit' : 'Credits').'. $1 Credit = '.number_format(self::SP_CREDIT_UNITS).' billable Tokens. Locally reused context uses 0.25x. Platform usage credit only; not USD, provider credit, or withdrawable cash.',
             'badge' => $featured ? 'Popular credits' : ($credits >= 1000 ? 'Best bulk value' : 'Long-life value'),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
@@ -843,7 +927,7 @@ class SellCatalogSeeder extends Seeder
                 'metering_method' => 'LOCAL_CACHE_AWARE_V1',
                 'pricing_basis' => 'SP_CAMBO_VOLUME_CURVE_R44',
                 'display_units' => $credits,
-                'display_unit_label' => 'SP Credits',
+                'display_unit_label' => 'Credits',
                 'sp_credit_billable_units' => self::SP_CREDIT_UNITS,
                 'package_kind' => 'SP_CREDITS',
             ],

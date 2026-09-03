@@ -1,4 +1,4 @@
-export type ModelBrandKey = 'anthropic' | 'openai' | 'gemini' | 'generic'
+export type ModelBrandKey = 'anthropic' | 'openai' | 'gemini' | 'deepseek' | 'generic'
 
 export interface ModelPresentation {
   brand: ModelBrandKey
@@ -18,6 +18,7 @@ export const modelBrand = (value?: string | null): ModelBrandKey => {
 
   if (/claude|anthropic|opus|sonnet|haiku|agentr(outer)?/.test(haystack)) return 'anthropic'
   if (/gemini|google ai|germini/.test(haystack)) return 'gemini'
+  if (/deepseek|deepsek/.test(haystack)) return 'deepseek'
   if (/openai|codex|gpt|sol/.test(haystack)) return 'openai'
   return 'generic'
 }
@@ -45,7 +46,10 @@ export const friendlyModelName = (alias?: string | null, fallback?: string | nul
     'openai-codex': 'OpenAI Codex',
     'gemini-3.6-flash': 'Gemini 3.6 Flash',
     'gemini-3.6-pro': 'Gemini 3.6 Pro',
-    'gemini-google-ai-studio': 'Gemini Google AI Studio'
+    'gemini-google-ai-studio': 'Gemini Google AI Studio',
+    'deepseek-v4-flash': 'DeepSeek V4 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
+    'deepseek': 'DeepSeek'
   }
 
   if (known[lower]) return known[lower]
@@ -57,6 +61,7 @@ export const friendlyModelName = (alias?: string | null, fallback?: string | nul
   if (brand === 'anthropic' && !/^claude\b/i.test(readable)) return `Claude ${readable}`.trim()
   if (brand === 'gemini' && !/^gemini\b/i.test(readable)) return `Gemini ${readable}`.trim()
   if (brand === 'openai' && !/^(gpt|openai)\b/i.test(readable)) return readable || 'OpenAI model'
+  if (brand === 'deepseek' && !/^deepseek\b/i.test(readable)) return `DeepSeek ${readable}`.trim()
 
   return readable || raw
 }
@@ -101,6 +106,19 @@ export const modelPresentation = (input?: string | null, fallback?: string | nul
       surfaceClass: 'bg-violet-500/10',
       iconClass: 'text-violet-400',
       ringClass: 'border-violet-400/20'
+    }
+  }
+
+  if (brand === 'deepseek') {
+    return {
+      brand,
+      provider: 'DeepSeek',
+      icon: 'i-simple-icons-deepseek',
+      label,
+      shortLabel: label.replace(/^DeepSeek\s+/i, ''),
+      surfaceClass: 'bg-sky-500/10',
+      iconClass: 'text-sky-400',
+      ringClass: 'border-sky-400/20'
     }
   }
 

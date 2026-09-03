@@ -21,7 +21,7 @@ const identity = computed(() => [
   presentation.value.brand
 ].filter(Boolean).join(' ').toLowerCase())
 
-type ModelArtwork = 'claude' | 'gemini' | 'codex' | null
+type ModelArtwork = 'claude' | 'gemini' | 'codex' | 'deepseek' | null
 
 const artwork = computed<ModelArtwork>(() => {
   const value = identity.value
@@ -43,6 +43,12 @@ const artwork = computed<ModelArtwork>(() => {
   ) return 'gemini'
 
   if (
+    brand === 'deepseek'
+    || value.includes('deepseek')
+    || value.includes('deepsek')
+  ) return 'deepseek'
+
+  if (
     brand === 'openai'
     || value.includes('openai')
     || value.includes('chatgpt')
@@ -58,6 +64,7 @@ const imageSrc = computed(() => {
   if (artwork.value === 'claude') return '/model-icons/claude_icon.gif'
   if (artwork.value === 'gemini') return '/model-icons/gemini_icon.gif'
   if (artwork.value === 'codex') return '/model-icons/codex_icon.gif'
+  if (artwork.value === 'deepseek') return '/model-icons/deepseek_icon.gif'
   return null
 })
 
@@ -89,6 +96,7 @@ const brandClass = computed(() => {
   if (artwork.value === 'claude') return 'sp-model-art--claude'
   if (artwork.value === 'gemini') return 'sp-model-art--gemini'
   if (artwork.value === 'codex') return 'sp-model-art--codex'
+  if (artwork.value === 'deepseek') return 'sp-model-art--deepseek'
   return 'sp-model-art--fallback'
 })
 </script>
@@ -207,6 +215,18 @@ const brandClass = computed(() => {
   opacity: 0;
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / .25), transparent);
   transform: rotate(18deg);
+}
+
+/* User-provided DeepSeek artwork */
+.sp-model-art--deepseek .sp-model-art__glow {
+  background: radial-gradient(circle, rgb(56 189 248 / .55), transparent 68%);
+}
+
+.sp-model-art--deepseek .sp-model-art__frame {
+  border-color: rgb(56 189 248 / .24);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / .16),
+    0 9px 24px -13px rgb(14 165 233 / .58);
 }
 
 /* User-provided Claude artwork */

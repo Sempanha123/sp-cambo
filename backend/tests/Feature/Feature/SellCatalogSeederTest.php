@@ -30,19 +30,21 @@ class SellCatalogSeederTest extends TestCase
         config(['services.spcambo.omniroute_bootstrap_file' => $bootstrap]);
     }
 
-    public function test_r44_seed_builds_three_stable_combos_nine_public_aliases_and_calculated_volume_packages(): void
+    public function test_r44_seed_builds_four_stable_combos_eleven_public_aliases_and_calculated_volume_packages(): void
     {
         $this->seed(SellCatalogSeeder::class);
         $this->seed(SellCatalogSeeder::class);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
 
         $expectedAliases = [
             '4.8-sol',
             '5.6-sol',
+            'deepseek-v4-flash',
+            'deepseek-v4-pro',
             'gemini-3.6-flash',
             'gemini-3.6-pro',
             'gemini-google-ai-studio',
@@ -66,6 +68,12 @@ class SellCatalogSeederTest extends TestCase
             'AgentRouter-claude-opus-5',
             ModelAlias::query()->where('public_alias', 'opus-5')->firstOrFail()->model()->value('internal_model_id'),
         );
+        foreach (['deepseek-v4-flash', 'deepseek-v4-pro'] as $deepseekAlias) {
+            $this->assertSame(
+                'Deepsek',
+                ModelAlias::query()->where('public_alias', $deepseekAlias)->firstOrFail()->model()->value('internal_model_id'),
+            );
+        }
         $this->assertSame(
             'OpenAI Codex',
             ModelAlias::query()->where('public_alias', '5.6-sol')->firstOrFail()->model()->value('internal_model_id'),
@@ -130,8 +138,17 @@ class SellCatalogSeederTest extends TestCase
             $this->assertSame('SP_CAMBO_ROUTE_PROFILE', $geminiProfile->capabilities['capability_basis'] ?? null);
         }
 
+        foreach (['deepseek-v4-flash', 'deepseek-v4-pro'] as $deepseekAlias) {
+            $deepseek = ModelAlias::query()->where('public_alias', $deepseekAlias)->firstOrFail();
+            $this->assertSame(128_000, (int) ($deepseek->capabilities['context_tokens'] ?? 0));
+            $this->assertSame(65_536, (int) ($deepseek->capabilities['max_output_tokens'] ?? 0));
+            $this->assertFalse((bool) ($deepseek->capabilities['vision'] ?? true));
+            $this->assertTrue((bool) ($deepseek->capabilities['reasoning'] ?? false));
+            $this->assertSame('SP_CAMBO_ROUTE_PROFILE', $deepseek->capabilities['capability_basis'] ?? null);
+        }
+
         $this->assertSame(
-            43,
+            57,
             Package::query()->where('enabled', true)->where('customer_visible', true)->count(),
         );
         $this->assertSame(0, Package::query()->published()->count());
@@ -163,13 +180,21 @@ class SellCatalogSeederTest extends TestCase
             $gemini100->modelAliases()->orderBy('public_alias')->pluck('public_alias')->all(),
         );
 
+        $deepseek100 = Package::query()->where('slug', 'deepseek-token-100m')->firstOrFail();
+        $this->assertSame(149, (int) $deepseek100->price_minor);
+        $this->assertSame(65_536, (int) ($deepseek100->limits['max_output_tokens'] ?? 0));
+        $this->assertSame(
+            ['deepseek-v4-flash', 'deepseek-v4-pro'],
+            $deepseek100->modelAliases()->orderBy('public_alias')->pluck('public_alias')->all(),
+        );
+
         $credit = Package::query()->where('slug', 'claude-credit-50')->firstOrFail();
         $this->assertSame('TOKEN_QUOTA', $credit->billing_mode);
-        $this->assertSame('Claude $50 SP Credits', $credit->name);
+        $this->assertSame('Claude $50 Credits', $credit->name);
         $this->assertSame(149, (int) $credit->price_minor);
         $this->assertSame(5_000_000, (int) $credit->advertised_units);
         $this->assertSame(50, (int) ($credit->billing_rules['display_units'] ?? 0));
-        $this->assertSame('SP Credits', $credit->billing_rules['display_unit_label'] ?? null);
+        $this->assertSame('Credits', $credit->billing_rules['display_unit_label'] ?? null);
         $this->assertSame(100_000, (int) ($credit->billing_rules['sp_credit_billable_units'] ?? 0));
         $this->assertSame('SP_CAMBO_VOLUME_CURVE_R44', $credit->billing_rules['pricing_basis'] ?? null);
         $this->assertSame('SP_CREDITS', $credit->billing_rules['package_kind'] ?? null);
@@ -177,7 +202,7 @@ class SellCatalogSeederTest extends TestCase
         $token = Package::query()->where('slug', 'claude-token-10m')->firstOrFail();
         $this->assertSame('SP_TOKENS', $token->billing_rules['package_kind'] ?? null);
 
-        foreach (['claude', 'codex', 'gemini'] as $family) {
+        foreach (['claude', 'codex', 'gemini', 'deepseek'] as $family) {
             foreach (['SP_TOKENS', 'SP_CREDITS'] as $kind) {
                 $line = Package::query()->where('enabled', true)->get()
                     ->filter(fn (Package $package): bool => str_starts_with($package->slug, $family.'-')

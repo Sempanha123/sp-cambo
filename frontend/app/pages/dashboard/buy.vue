@@ -21,7 +21,7 @@ const packages = await useSpResource('catalog:packages', () => api.catalog.packa
 
 const selectedSlug = ref<string | null>(null)
 const quantity = ref(1)
-const familyFilter = ref<'all' | 'claude' | 'codex' | 'gemini'>('all')
+const familyFilter = ref<'all' | 'claude' | 'codex' | 'gemini' | 'deepseek'>('all')
 const modeFilter = ref<'all' | 'SP_TOKENS' | 'SP_CREDITS'>('all')
 
 /** `?package=<slug>` deep-links from the public pricing page. */
@@ -46,12 +46,14 @@ const familyFilters = [
   { value: 'all' as const, label: 'All models' },
   { value: 'claude' as const, label: 'Claude' },
   { value: 'codex' as const, label: 'GPT / Codex' },
-  { value: 'gemini' as const, label: 'Gemini' }
+  { value: 'gemini' as const, label: 'Gemini' },
+  { value: 'deepseek' as const, label: 'DeepSeek' }
 ]
-function packageFamily(item: PublicPackage): 'claude' | 'codex' | 'gemini' {
+function packageFamily(item: PublicPackage): 'claude' | 'codex' | 'gemini' | 'deepseek' {
   const value = `${item.family} ${item.family_label} ${item.allowed_model_aliases.join(' ')}`.toLowerCase()
   if (value.includes('claude') || value.includes('opus') || value.includes('sonnet') || value.includes('haiku')) return 'claude'
   if (value.includes('gemini')) return 'gemini'
+  if (value.includes('deepseek') || value.includes('deepsek')) return 'deepseek'
   return 'codex'
 }
 function packageKind(item: PublicPackage): 'SP_TOKENS' | 'SP_CREDITS' {
@@ -218,7 +220,8 @@ const customerLabel = (value: string | null | undefined) => (value ?? '')
 const packageGrantLabel = (item: PublicPackage): string => {
   if (item.display_units && item.display_unit_label) {
     const label = customerLabel(item.display_unit_label)
-    return label === 'Credits' ? `$${formatUnits(item.display_units)} Credits` : `${formatUnits(item.display_units)} ${label}`
+    const creditLabel = BigInt(item.display_units) === 1n ? 'Credit' : 'Credits'
+    return label === 'Credits' ? `$${formatUnits(item.display_units)} ${creditLabel}` : `${formatUnits(item.display_units)} ${label}`
   }
 
   if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {

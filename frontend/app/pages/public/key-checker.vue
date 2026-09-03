@@ -389,7 +389,7 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
           <UCard class="sp-key-checker-card sp-app-card overflow-hidden">
             <template #header>
               <div class="flex items-start justify-between gap-4">
-                <div class="flex items-start gap-3">
+                <div class="flex items-center gap-3">
                   <div class="sp-checker-icon flex size-11 shrink-0 items-center justify-center rounded-xl text-primary">
                     <UIcon
                       name="i-lucide-key-round"
@@ -463,13 +463,15 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 
               <div
                 id="checker-privacy-hint"
-                class="flex items-start gap-2 rounded-xl border border-default/70 bg-elevated/35 px-3.5 py-3 text-xs leading-5 text-muted"
+                class="flex items-center gap-3 rounded-xl border border-default/70 bg-elevated/35 px-3.5 py-3 text-xs leading-5 text-muted"
               >
-                <UIcon
-                  name="i-lucide-lock-keyhole"
-                  class="mt-0.5 size-4 shrink-0 text-primary"
-                />
-                <span>After a successful check, the field is cleared. The full key remains only in this tab's memory for secure auto refresh while this tab stays open, until you clear or close the page.</span>
+                <div class="flex size-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/8 text-primary">
+                  <UIcon
+                    name="i-lucide-lock-keyhole"
+                    class="size-4"
+                  />
+                </div>
+                <span class="min-w-0 flex-1 self-center">After a successful check, the field is cleared. The full key remains only in this tab's memory for secure auto refresh while this tab stays open, until you clear or close the page.</span>
               </div>
 
               <div class="flex flex-col gap-2 sm:flex-row">
@@ -512,15 +514,15 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
                     { icon: 'i-lucide-activity', title: 'Local metering', text: 'Usage, reuse savings and recent request states.' }
                   ]"
                   :key="item.title"
-                  class="flex gap-3"
+                  class="flex items-center gap-3"
                 >
-                  <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary">
+                  <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary">
                     <UIcon
                       :name="item.icon"
                       class="size-4"
                     />
                   </div>
-                  <div>
+                  <div class="min-w-0 flex-1 self-center">
                     <p class="text-sm font-medium text-highlighted">
                       {{ item.title }}
                     </p><p class="mt-0.5 text-xs leading-5 text-muted">
@@ -594,14 +596,14 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
               aria-hidden="true"
             />
             <div class="relative grid gap-6 p-5 sm:p-7 lg:grid-cols-[1fr_auto] lg:items-center">
-              <div class="flex min-w-0 items-start gap-4">
+              <div class="flex min-w-0 items-center gap-4">
                 <div class="sp-checker-status-icon flex size-12 shrink-0 items-center justify-center rounded-2xl">
                   <UIcon
                     :name="statusUi.icon"
                     class="size-6"
                   />
                 </div>
-                <div class="min-w-0">
+                <div class="min-w-0 flex-1 self-center">
                   <div class="flex flex-wrap items-center gap-2">
                     <p class="text-xs font-semibold tracking-[0.15em] uppercase opacity-75">
                       Verification result
@@ -1068,11 +1070,13 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
           </UCard>
 
           <div class="flex flex-col gap-3 rounded-2xl border border-default bg-elevated/25 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div class="flex items-start gap-3">
-              <UIcon
-                name="i-lucide-life-buoy"
-                class="mt-0.5 size-5 shrink-0 text-primary"
-              /><div>
+            <div class="flex items-center gap-3">
+              <div class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/8 text-primary">
+                <UIcon
+                  name="i-lucide-life-buoy"
+                  class="size-5"
+                />
+              </div><div class="min-w-0 flex-1 self-center">
                 <p class="font-medium text-highlighted">
                   Need to change this key?
                 </p><p class="mt-1 text-sm text-muted">
@@ -1102,78 +1106,255 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 </template>
 
 <style scoped>
+/*
+ * SP Cambo Key Checker — cool control-panel skin (V6)
+ * Inspired by the compact navy/cyan Telegram control UI.
+ * Scoped to this page only: no global dashboard or button changes.
+ */
 .sp-checker-page {
+  --kc-bg: rgb(4 13 24);
+  --kc-panel: rgb(8 22 38 / .94);
+  --kc-panel-soft: rgb(11 28 47 / .88);
+  --kc-panel-hover: rgb(13 34 55 / .94);
+  --kc-line: rgb(81 189 242 / .16);
+  --kc-line-strong: rgb(71 210 255 / .30);
+  --kc-cyan: rgb(78 211 255);
+  --kc-blue: rgb(91 141 255);
+  --kc-green: rgb(48 215 160);
+  --kc-amber: rgb(246 184 79);
+  --kc-rose: rgb(249 101 126);
+  --kc-text: rgb(235 247 255);
+  --kc-muted: rgb(139 168 190);
+  --kc-shadow: 0 16px 44px rgb(0 0 0 / .22);
+
   min-height: 100svh;
-  background: radial-gradient(circle at 50% 22%, color-mix(in oklab, var(--ui-primary) 5%, transparent), transparent 30%), var(--ui-bg);
+  color: var(--kc-text);
+  background:
+    radial-gradient(circle at 14% 8%, rgb(26 136 205 / .11), transparent 28rem),
+    radial-gradient(circle at 88% 20%, rgb(83 104 255 / .10), transparent 34rem),
+    linear-gradient(180deg, rgb(5 17 31), var(--kc-bg) 44rem);
 }
 
 .sp-checker-hero {
-  border-bottom: 1px solid color-mix(in oklab, var(--ui-border) 65%, transparent);
-  background: linear-gradient(180deg, color-mix(in oklab, var(--ui-bg-elevated) 58%, transparent), transparent);
+  border-bottom: 1px solid var(--kc-line);
+  background:
+    linear-gradient(180deg, rgb(10 29 49 / .72), rgb(5 17 31 / .22) 78%, transparent),
+    radial-gradient(circle at 50% -20%, rgb(56 189 248 / .08), transparent 40%);
+}
+
+.sp-checker-page :deep(.sp-app-card),
+.sp-checker-page :deep(.sp-metric-tile) {
+  border-color: var(--kc-line) !important;
+  background: linear-gradient(180deg, rgb(10 25 42 / .94), rgb(7 20 35 / .94)) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .025), var(--kc-shadow) !important;
+}
+
+.sp-checker-page :deep(.sp-app-card:hover),
+.sp-checker-page :deep(.sp-metric-tile:hover) {
+  border-color: rgb(78 211 255 / .24) !important;
+}
+
+.sp-checker-page :deep(.sp-metric-tile) {
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.sp-checker-page :deep(.sp-metric-tile:hover) {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px rgb(255 255 255 / .035), 0 16px 36px rgb(0 0 0 / .22) !important;
+}
+
+.sp-checker-page :deep(.text-muted),
+.sp-checker-page :deep(.text-dimmed) {
+  color: var(--kc-muted) !important;
+}
+
+.sp-checker-page :deep(.text-highlighted) {
+  color: var(--kc-text) !important;
+}
+
+.sp-checker-page :deep(.text-primary) {
+  color: var(--kc-cyan) !important;
+}
+
+.sp-checker-page :deep(.text-info) {
+  color: rgb(83 190 255) !important;
+}
+
+.sp-checker-page :deep(.text-success) {
+  color: var(--kc-green) !important;
+}
+
+.sp-checker-page :deep(.text-warning) {
+  color: var(--kc-amber) !important;
+}
+
+.sp-checker-page :deep(.text-error) {
+  color: var(--kc-rose) !important;
+}
+
+.sp-checker-page :deep(input),
+.sp-checker-page :deep(textarea),
+.sp-checker-page :deep(select) {
+  border-color: rgb(83 170 220 / .17) !important;
+  background: rgb(13 34 56 / .90) !important;
+  color: var(--kc-text) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .025) !important;
+}
+
+.sp-checker-page :deep(input:focus),
+.sp-checker-page :deep(textarea:focus),
+.sp-checker-page :deep(select:focus) {
+  border-color: rgb(78 211 255 / .42) !important;
+  box-shadow: 0 0 0 3px rgb(78 211 255 / .08) !important;
 }
 
 .sp-checker-proof,
 .sp-checker-side-card,
 .sp-checker-result,
 .sp-checker-model-card {
-  border: 1px solid color-mix(in oklab, var(--ui-border) 82%, transparent);
-  background: color-mix(in oklab, var(--ui-bg-elevated) 78%, transparent);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / .035);
+  border: 1px solid var(--kc-line);
+  background: linear-gradient(180deg, var(--kc-panel-soft), var(--kc-panel));
+  box-shadow: inset 0 1px rgb(255 255 255 / .025), 0 12px 30px rgb(0 0 0 / .12);
 }
 
-.sp-checker-proof { display: flex; align-items: center; gap: .6rem; border-radius: .8rem; padding: .75rem .9rem; font-size: .75rem; color: var(--ui-text-muted); backdrop-filter: blur(12px); }
-.sp-checker-side-card { border-radius: 1rem; padding: 1.25rem; }
-.sp-checker-icon { border: 1px solid color-mix(in oklab, var(--ui-primary) 24%, transparent); background: color-mix(in oklab, var(--ui-primary) 10%, var(--ui-bg-elevated)); box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent), 0 10px 28px color-mix(in oklab, var(--ui-primary) 9%, transparent); }
+.sp-checker-proof {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  border-radius: .72rem;
+  padding: .7rem .85rem;
+  font-size: .75rem;
+  color: var(--kc-muted);
+  backdrop-filter: blur(12px);
+}
+
+.sp-checker-proof:hover {
+  border-color: rgb(78 211 255 / .25);
+  background: rgb(12 31 50 / .96);
+}
+
+.sp-checker-side-card {
+  border-radius: .9rem;
+  padding: 1.2rem;
+}
+
+.sp-checker-icon {
+  border: 1px solid rgb(78 211 255 / .24);
+  background: linear-gradient(145deg, rgb(31 111 150 / .24), rgb(52 82 180 / .14));
+  box-shadow: inset 0 1px rgb(255 255 255 / .05), 0 10px 28px rgb(19 152 215 / .10);
+  color: var(--kc-cyan) !important;
+}
+
+.sp-checker-page :deep(.sp-khmer-chip) {
+  border-color: rgb(78 211 255 / .18) !important;
+  background: rgb(11 32 48 / .82) !important;
+  color: rgb(178 224 245) !important;
+}
+
+.sp-checker-page :deep(.sp-gradient-text) {
+  background-image: linear-gradient(90deg, rgb(91 141 255), rgb(78 211 255), rgb(48 215 160)) !important;
+}
+
+.sp-checker-page :deep(.sp-khmer-rule) {
+  background: linear-gradient(90deg, var(--kc-cyan), var(--kc-blue), transparent) !important;
+}
 
 .sp-checker-result {
-  --checker-tone: var(--ui-primary);
+  --checker-tone: var(--kc-cyan);
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  border-radius: 1.1rem;
-  border-color: color-mix(in oklab, var(--checker-tone) 34%, var(--ui-border));
-  background: linear-gradient(120deg, color-mix(in oklab, var(--checker-tone) 8%, var(--ui-bg-elevated)), var(--ui-bg-elevated) 64%);
-  box-shadow: 0 20px 60px color-mix(in oklab, var(--ui-bg) 65%, transparent), inset 0 1px 0 color-mix(in oklab, white 5%, transparent);
+  border-radius: .95rem;
+  border-color: color-mix(in oklab, var(--checker-tone) 32%, var(--kc-line));
+  background:
+    linear-gradient(120deg, color-mix(in oklab, var(--checker-tone) 7%, rgb(9 24 41)), rgb(7 20 35) 64%);
+  box-shadow: 0 18px 46px rgb(0 0 0 / .18), inset 0 1px rgb(255 255 255 / .035);
 }
 
-.sp-checker-result--active { --checker-tone: var(--ui-success); }
-.sp-checker-result--warning { --checker-tone: var(--ui-warning); }
-.sp-checker-result--danger { --checker-tone: var(--ui-error); }
-.sp-checker-result--neutral { --checker-tone: var(--ui-text-muted); }
-.sp-checker-result__glow { position: absolute; right: -7rem; top: -9rem; width: 22rem; height: 22rem; border-radius: 9999px; opacity: .12; filter: blur(22px); background: var(--checker-tone); }
-.sp-checker-status-icon { color: var(--checker-tone); border: 1px solid color-mix(in oklab, var(--checker-tone) 24%, transparent); background: color-mix(in oklab, var(--checker-tone) 10%, transparent); }
+.sp-checker-result--active { --checker-tone: var(--kc-green); }
+.sp-checker-result--warning { --checker-tone: var(--kc-amber); }
+.sp-checker-result--danger { --checker-tone: var(--kc-rose); }
+.sp-checker-result--neutral { --checker-tone: var(--kc-muted); }
 
-.sp-checker-model-card { border-radius: .9rem; padding: 1rem; transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease; }
-.sp-checker-model-card:hover { transform: translateY(-1px); border-color: color-mix(in oklab, var(--ui-primary) 32%, var(--ui-border)); background: color-mix(in oklab, var(--ui-primary) 4%, var(--ui-bg-elevated)); }
-.sp-checker-limit, .sp-checker-usage { border-radius: .75rem; background: color-mix(in oklab, var(--ui-bg-elevated) 72%, transparent); padding: .75rem; }
-.sp-checker-limit dt, .sp-checker-usage dt { font-size: .68rem; color: var(--ui-text-muted); }
-.sp-checker-limit dd { margin-top: .25rem; font-size: .78rem; font-weight: 600; color: var(--ui-text-highlighted); }
-.sp-checker-usage dd { margin-top: .35rem; font-size: 1.15rem; font-weight: 650; letter-spacing: -.02em; }
+.sp-checker-result__glow {
+  position: absolute;
+  right: -7rem;
+  top: -9rem;
+  width: 22rem;
+  height: 22rem;
+  border-radius: 9999px;
+  opacity: .10;
+  filter: blur(24px);
+  background: var(--checker-tone);
+}
 
-@media (prefers-reduced-motion: reduce) {
-  .sp-checker-model-card { transition: none; }
-  .sp-checker-model-card:hover { transform: none; }
+.sp-checker-status-icon {
+  color: var(--checker-tone);
+  border: 1px solid color-mix(in oklab, var(--checker-tone) 30%, transparent);
+  background: color-mix(in oklab, var(--checker-tone) 10%, rgb(7 20 35));
+  box-shadow: inset 0 1px rgb(255 255 255 / .035);
+}
+
+.sp-checker-model-card {
+  border-radius: .82rem;
+  padding: 1rem;
+  transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.sp-checker-model-card:hover {
+  transform: translateY(-1px);
+  border-color: rgb(78 211 255 / .28);
+  background: var(--kc-panel-hover);
+  box-shadow: 0 12px 26px rgb(0 0 0 / .16);
+}
+
+.sp-checker-limit,
+.sp-checker-usage {
+  border: 1px solid rgb(82 170 218 / .10);
+  border-radius: .72rem;
+  background: rgb(12 30 49 / .76);
+  padding: .75rem;
+}
+
+.sp-checker-limit dt,
+.sp-checker-usage dt {
+  font-size: .68rem;
+  color: var(--kc-muted);
+}
+
+.sp-checker-limit dd {
+  margin-top: .25rem;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--kc-text);
+}
+
+.sp-checker-usage dd {
+  margin-top: .35rem;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -.02em;
 }
 
 .sp-checker-auto-refresh {
   display: inline-flex;
   align-items: center;
   gap: .45rem;
-  border: 1px solid color-mix(in oklab, var(--ui-success) 20%, var(--ui-border));
+  border: 1px solid rgb(48 215 160 / .22);
   border-radius: 9999px;
-  background: color-mix(in oklab, var(--ui-success) 8%, var(--ui-bg-elevated));
-  padding: .55rem .85rem;
-  font-size: .74rem;
+  background: rgb(15 63 52 / .44);
+  padding: .48rem .76rem;
+  font-size: .72rem;
   font-weight: 600;
-  color: color-mix(in oklab, var(--ui-success) 72%, var(--ui-text));
+  color: rgb(123 237 199);
 }
 
 .sp-checker-auto-refresh__dot {
-  width: .5rem;
-  height: .5rem;
+  width: .45rem;
+  height: .45rem;
   border-radius: 9999px;
-  background: var(--ui-success);
-  box-shadow: 0 0 0 6px color-mix(in oklab, var(--ui-success) 12%, transparent);
+  background: var(--kc-green);
+  box-shadow: 0 0 0 5px rgb(48 215 160 / .10), 0 0 12px rgb(48 215 160 / .32);
 }
 
 .sp-checker-request-row {
@@ -1181,46 +1362,123 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 }
 
 .sp-checker-request-row:hover {
-  background: color-mix(in oklab, var(--ui-bg-elevated) 45%, transparent);
+  background: rgb(15 36 58 / .62);
+  box-shadow: inset 2px 0 var(--kc-cyan);
 }
 
 .sp-request-status {
   display: inline-flex;
-  min-width: 4.45rem;
+  min-width: 4.2rem;
   flex-direction: column;
   align-items: flex-start;
-  gap: .12rem;
-  border: 1px solid color-mix(in oklab, var(--ui-border) 86%, transparent);
-  border-radius: .8rem;
-  background: color-mix(in oklab, var(--ui-bg-elevated) 74%, transparent);
-  padding: .42rem .62rem;
+  gap: .1rem;
+  border: 1px solid rgb(84 180 226 / .16);
+  border-radius: .68rem;
+  background: rgb(11 29 48 / .86);
+  padding: .38rem .58rem;
 }
 
 .sp-request-status__code {
   font-variant-numeric: tabular-nums;
-  font-size: .92rem;
+  font-size: .9rem;
   font-weight: 700;
   letter-spacing: -.02em;
 }
 
 .sp-request-status__label {
-  font-size: .64rem;
-  font-weight: 600;
-  letter-spacing: .05em;
+  font-size: .61rem;
+  font-weight: 650;
+  letter-spacing: .055em;
   text-transform: uppercase;
-  color: var(--ui-text-muted);
+  color: var(--kc-muted);
 }
 
-.sp-request-status--success .sp-request-status__code { color: var(--ui-success); }
-.sp-request-status--error .sp-request-status__code { color: var(--ui-error); }
-.sp-request-status--warning .sp-request-status__code { color: var(--ui-warning); }
-.sp-request-status--info .sp-request-status__code { color: var(--ui-primary); }
+.sp-request-status--success .sp-request-status__code { color: var(--kc-green); }
+.sp-request-status--error .sp-request-status__code { color: var(--kc-rose); }
+.sp-request-status--warning .sp-request-status__code { color: var(--kc-amber); }
+.sp-request-status--info .sp-request-status__code { color: var(--kc-cyan); }
+
+/* Make the Nuxt UI card/header separators match the control panel. */
+.sp-checker-page :deep([data-slot="header"]) {
+  border-color: var(--kc-line) !important;
+}
+
+.sp-checker-page :deep(table thead tr) {
+  border-color: var(--kc-line) !important;
+  background: rgb(10 27 45 / .92) !important;
+}
+
+.sp-checker-page :deep(table tbody tr) {
+  border-color: rgb(77 160 205 / .10) !important;
+}
+
+.sp-checker-page :deep(code) {
+  color: rgb(191 226 244);
+}
+
+/* A little brighter in light mode without changing the cool/cyan identity. */
+:global(html.light) .sp-checker-page {
+  --kc-bg: rgb(239 247 252);
+  --kc-panel: rgb(255 255 255 / .94);
+  --kc-panel-soft: rgb(248 253 255 / .96);
+  --kc-panel-hover: rgb(241 250 255 / .98);
+  --kc-line: rgb(14 116 144 / .15);
+  --kc-line-strong: rgb(14 165 233 / .26);
+  --kc-text: rgb(13 35 52);
+  --kc-muted: rgb(82 111 132);
+  --kc-shadow: 0 14px 34px rgb(27 78 103 / .08);
+
+  background:
+    radial-gradient(circle at 14% 8%, rgb(14 165 233 / .08), transparent 28rem),
+    radial-gradient(circle at 88% 20%, rgb(91 141 255 / .07), transparent 34rem),
+    rgb(240 248 252);
+}
+
+:global(html.light) .sp-checker-hero {
+  background: linear-gradient(180deg, rgb(248 253 255 / .96), rgb(240 248 252 / .62));
+}
+
+:global(html.light) .sp-checker-page :deep(.sp-app-card),
+:global(html.light) .sp-checker-page :deep(.sp-metric-tile),
+:global(html.light) .sp-checker-proof,
+:global(html.light) .sp-checker-side-card,
+:global(html.light) .sp-checker-model-card {
+  background: rgb(255 255 255 / .90) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .8), var(--kc-shadow) !important;
+}
+
+:global(html.light) .sp-checker-page :deep(input),
+:global(html.light) .sp-checker-page :deep(textarea),
+:global(html.light) .sp-checker-page :deep(select) {
+  background: rgb(247 252 255 / .98) !important;
+  color: var(--kc-text) !important;
+}
+
+:global(html.light) .sp-checker-limit,
+:global(html.light) .sp-checker-usage,
+:global(html.light) .sp-request-status {
+  background: rgb(246 251 254 / .96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-checker-model-card,
+  .sp-checker-page :deep(.sp-metric-tile) {
+    transition: none;
+  }
+  .sp-checker-model-card:hover,
+  .sp-checker-page :deep(.sp-metric-tile:hover) {
+    transform: none;
+  }
+}
 
 @media (max-width: 639px) {
   .sp-checker-auto-refresh {
     width: 100%;
     justify-content: center;
   }
-}
 
+  .sp-checker-proof {
+    padding: .65rem .75rem;
+  }
+}
 </style>
