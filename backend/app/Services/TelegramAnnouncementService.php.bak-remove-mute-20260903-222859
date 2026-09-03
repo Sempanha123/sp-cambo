@@ -32,11 +32,11 @@ class TelegramAnnouncementService
             'body' => implode("\n", array_filter([
                 $package->name,
                 $package->subtitle,
-                '💵 Price: '.$this->packagePrice($package),
-                '🪙 Includes: '.number_format((int) $package->advertised_units).' '.$package->unit_label,
-                '⏳ Validity: '.$duration,
-                $package->stock_quantity === null ? '📦 Stock: Unlimited' : '📦 Stock: '.number_format((int) $package->stock_quantity),
-                $models !== '' ? '🧠 Models: '.$models : null,
+                'Price: '.$this->packagePrice($package),
+                'Includes: '.number_format((int) $package->advertised_units).' '.$package->unit_label,
+                'Validity: '.$duration,
+                $package->stock_quantity === null ? 'Stock: Unlimited' : 'Stock: '.number_format((int) $package->stock_quantity),
+                $models !== '' ? 'Models: '.$models : null,
             ])),
             'package_id' => $package->id,
         ]);
@@ -56,10 +56,10 @@ class TelegramAnnouncementService
 ", array_filter([
                 $package->name,
                 $package->subtitle,
-                '➕ Added: '.number_format($added),
-                '📦 Available: '.number_format($after),
-                '💵 Price: '.$this->packagePrice($package),
-                '🛒✨ Tap Buy Now below while stock is available!',
+                'Added: '.number_format($added),
+                'Available: '.number_format($after),
+                'Price: '.$this->packagePrice($package),
+                'Tap Buy now below while stock is available.',
             ])),
             'package_id' => $package->id,
             'metadata' => ['before_stock' => $before, 'after_stock' => $after, 'added_stock' => $added],
@@ -86,10 +86,10 @@ class TelegramAnnouncementService
             'body' => implode("
 ", array_filter([
                 $promotion->label,
-                '🎟️ Code: '.$promotion->code,
-                '🎁 Offer: '.$offer,
-                $promotion->ends_at ? '⏰ Ends: '.$promotion->ends_at->toAtomString() : null,
-                '🛒💫 Tap Buy Now to grab an eligible package!',
+                'Code: '.$promotion->code,
+                'Offer: '.$offer,
+                $promotion->ends_at ? 'Ends: '.$promotion->ends_at->toAtomString() : null,
+                'Tap Buy now to shop eligible packages.',
             ])),
             'package_id' => $package?->id,
         ]);
@@ -113,10 +113,10 @@ class TelegramAnnouncementService
             'title' => 'New model available',
             'body' => implode("\n", array_filter([
                 $alias->display_name,
-                '🏷️ Alias: '.$alias->public_alias,
-                $provider ? '🔌 Provider: '.$provider : null,
+                'Alias: '.$alias->public_alias,
+                $provider ? 'Provider: '.$provider : null,
                 $alias->description,
-                '🛍️✨ Open the Store to see packages for this model!',
+                'Open the store to see packages that include this model.',
             ])),
             'model_alias_id' => $alias->id,
             'package_id' => $package?->id,
@@ -473,23 +473,23 @@ class TelegramAnnouncementService
     {
         $km = $account->locale === 'km';
         $icon = match ($announcement->kind) {
-            'NEW_MODEL' => '🧠✨',
-            'NEW_PACKAGE' => '📦💫',
-            'PACKAGE_UPDATE' => '✨🛠️',
-            'STOCK_ADDED' => '📥📦',
-            'RESTOCK' => '✅🔥',
-            'PROMOTION' => '🏷️🎁',
-            'PURCHASE_ACTIVITY' => '🎉🛍️',
-            default => '📣✨',
+            'NEW_MODEL' => '🧠',
+            'NEW_PACKAGE' => '📦',
+            'PACKAGE_UPDATE' => '✨',
+            'STOCK_ADDED' => '📥',
+            'RESTOCK' => '✅',
+            'PROMOTION' => '🏷️',
+            'PURCHASE_ACTIVITY' => '🎉',
+            default => '📣',
         };
         $heading = match ($announcement->kind) {
-            'NEW_MODEL' => $km ? 'មានម៉ូដែលថ្មីហើយ!' : 'NEW MODEL IS HERE!',
-            'NEW_PACKAGE' => $km ? 'មានកញ្ចប់ថ្មីហើយ!' : 'NEW PACKAGE JUST LANDED!',
-            'PACKAGE_UPDATE' => $km ? 'កញ្ចប់បានអាប់ដេតហើយ!' : 'PACKAGE JUST GOT AN UPDATE!',
-            'STOCK_ADDED' => $km ? 'បានបន្ថែមស្តុកថ្មី!' : 'MORE STOCK JUST ARRIVED!',
-            'RESTOCK' => $km ? 'មានស្តុកវិញហើយ!' : 'BACK IN STOCK!',
-            'PROMOTION' => $km ? 'ប្រូម៉ូសិនពិសេសមកដល់ហើយ!' : 'SPECIAL DEAL IS LIVE!',
-            'PURCHASE_ACTIVITY' => $km ? 'មានការបញ្ជាទិញថ្មី!' : 'NEW ORDER JUST LANDED!',
+            'NEW_MODEL' => $km ? 'ម៉ូដែលថ្មីនៅ SP Cambo' : 'New model on SP Cambo',
+            'NEW_PACKAGE' => $km ? 'កញ្ចប់ថ្មីនៅ SP Cambo' : 'New package on SP Cambo',
+            'PACKAGE_UPDATE' => $km ? 'កញ្ចប់បានធ្វើបច្ចុប្បន្នភាព' : 'Package updated',
+            'STOCK_ADDED' => $km ? 'បានបន្ថែមស្តុក' : 'Stock added',
+            'RESTOCK' => $km ? 'មានស្តុកវិញហើយ' : 'Back in stock',
+            'PROMOTION' => $km ? 'ប្រូម៉ូសិនថ្មី' : 'Special offer',
+            'PURCHASE_ACTIVITY' => $km ? 'ការបញ្ជាទិញថ្មី!' : 'NEW ORDER!',
             default => $announcement->title,
         };
 
@@ -505,29 +505,35 @@ class TelegramAnnouncementService
             $keyboard = [];
             if ($username !== '') {
                 $keyboard[] = [[
-                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'text' => $km ? '🛒 ទិញឥឡូវ' : '🛒 Buy Now',
                     'url' => 'https://t.me/'.$username.'?start='.$start,
                 ]];
             } else {
                 $keyboard[] = [[
-                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'text' => $km ? '🛒 ទិញឥឡូវ' : '🛒 Buy Now',
                     'callback_data' => 'store:1',
                 ]];
             }
-
+            $keyboard[] = [[
+                'text' => $km ? '🔕 បិទព័ត៌មានថ្មី' : '🔕 Mute updates',
+                'callback_data' => 'updates:off',
+            ]];
         } else {
             $keyboard = [];
             if ($announcement->package_id !== null) {
                 $keyboard[] = [[
-                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'text' => $km ? '🛒 ទិញឥឡូវ' : '🛒 Buy Now',
                     'callback_data' => 'buy:'.$announcement->package_id,
                 ]];
             }
             $keyboard[] = [[
-                'text' => $km ? '🛍️✨ បើកហាង' : '🛍️✨ Open Store',
+                'text' => $km ? '🛍 បើកហាង' : '🛍 Open Store',
                 'callback_data' => 'store:1',
             ]];
-
+            $keyboard[] = [[
+                'text' => $km ? '🔕 បិទព័ត៌មានថ្មី' : '🔕 Mute updates',
+                'callback_data' => 'updates:off',
+            ]];
         }
 
         $body = $announcement->kind === 'PURCHASE_ACTIVITY'
@@ -557,8 +563,8 @@ class TelegramAnnouncementService
         $template = $configured !== ''
             ? $configured
             : ($km
-                ? "👤✨ {masked_customer} ទើបបានទិញ!\n📦🎁 {package_name}\n🪙💫 {quota}\n⏳🕒 {validity}\n💵💳 {price} {currency}\n✅🚀 បានប្រគល់ជូនដោយស្វ័យប្រវត្តិ\n\n🛒✨ ចង់បានដែរ? ចុច Buy Now ខាងក្រោម!"
-                : "👤✨ {masked_customer} just grabbed a package!\n📦🎁 {package_name}\n🪙💫 {quota}\n⏳🕒 {validity}\n💵💳 {price} {currency}\n✅🚀 Delivered automatically\n\n🛒✨ Want one too? Tap Buy Now below!");
+                ? "👤 {masked_customer} ទើបបានទិញ\n📦 {package_name}\n🪙 {quota}\n⏱ {validity}\n💰 {price} {currency}\n✅ បានប្រគល់ជូនដោយស្វ័យប្រវត្តិ\n\n🛒 ចង់បានដែរ? ចុច Buy Now ខាងក្រោម"
+                : "👤 {masked_customer} just purchased\n📦 {package_name}\n🪙 {quota}\n⏱ {validity}\n💰 {price} {currency}\n✅ Successfully delivered\n\n🛒 Get yours below");
 
         return strtr($template, $values);
     }

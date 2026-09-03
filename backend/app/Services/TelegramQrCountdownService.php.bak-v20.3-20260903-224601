@@ -266,95 +266,10 @@ class TelegramQrCountdownService
         ]);
     }
 
-    /**
-     * Rebuild the original KHQR inline keyboard on every caption edit.
-     * Telegram caption edits can otherwise replace the message while dropping
-     * its inline buttons, which makes Copy / Check / Wallet / Home disappear.
-     *
-     * @return array<string,mixed>|null
-     */
-    private function qrReplyMarkup(string $chatId, int $messageId): ?array
-    {
-        $purchase = TelegramPurchase::query()
-            ->with('order.paymentAttempts')
-            ->where('telegram_qr_message_id', $messageId)
-            ->whereNull('telegram_qr_deleted_at')
-            ->whereHas('account', fn ($query) => $query->where('chat_id', $chatId))
-            ->first();
-
-        if ($purchase) {
-            $attempt = $purchase->order?->paymentAttempts?->sortByDesc('created_at')->first();
-            $qrPayload = trim((string) ($attempt?->qr_payload ?? ''));
-            $firstRow = [];
-
-            if ($qrPayload !== '') {
-                $firstRow[] = [
-                    'text' => '📋 Copy KHQR',
-                    'copy_text' => ['text' => $qrPayload],
-                ];
-            }
-
-            $firstRow[] = [
-                'text' => '✅ Check',
-                'callback_data' => 'check:'.$purchase->id,
-            ];
-
-            return [
-                'inline_keyboard' => [
-                    $firstRow,
-                    [
-                        ['text' => '👛 Wallet', 'callback_data' => 'wallet'],
-                        ['text' => '🏠 Home', 'callback_data' => 'home'],
-                    ],
-                ],
-            ];
-        }
-
-        $topup = StoreWalletTopup::query()
-            ->where('telegram_qr_message_id', $messageId)
-            ->whereNull('telegram_qr_deleted_at')
-            ->whereHas('telegramAccount', fn ($query) => $query->where('chat_id', $chatId))
-            ->first();
-
-        if ($topup) {
-            $qrPayload = trim((string) ($topup->qr_payload ?? ''));
-            $firstRow = [];
-
-            if ($qrPayload !== '') {
-                $firstRow[] = [
-                    'text' => '📋 Copy KHQR',
-                    'copy_text' => ['text' => $qrPayload],
-                ];
-            }
-
-            $firstRow[] = [
-                'text' => '✅ Check',
-                'callback_data' => 'checktopup:'.$topup->id,
-            ];
-
-            return [
-                'inline_keyboard' => [
-                    $firstRow,
-                    [
-                        ['text' => '👛 Wallet', 'callback_data' => 'wallet'],
-                        ['text' => '🏠 Home', 'callback_data' => 'home'],
-                    ],
-                ],
-            ];
-        }
-
-        return null;
-    }
-
     private function safeEditCaption(string $chatId, int $messageId, string $caption): void
     {
         try {
-            $this->bot->editMessageCaption(
-                $chatId,
-                $messageId,
-                mb_substr($caption, 0, 1000),
-                $this->qrReplyMarkup($chatId, $messageId),
-            );
+            $this->bot->editMessageCaption($chatId, $messageId, mb_substr($caption, 0, 1000));
         } catch (Throwable $exception) {
             // If the user deleted the QR message, Telegram can no longer edit it.
             // Let the queue retry transport faults, but permanently missing

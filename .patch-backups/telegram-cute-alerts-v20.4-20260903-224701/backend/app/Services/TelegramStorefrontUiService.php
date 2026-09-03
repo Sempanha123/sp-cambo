@@ -365,6 +365,7 @@ class TelegramStorefrontUiService
 
         $lines = [
             $km ? '⏳✨ ការបញ្ជាទិញកំពុងរង់ចាំ' : '⏳✨ PENDING ORDERS',
+            $km ? 'អតិបរមា 4 · មិនបានបង់ផុតកំណត់ក្នុង 1 ម៉ោង' : 'Max 4 open orders · unpaid orders expire after 1 hour',
             '',
         ];
 
