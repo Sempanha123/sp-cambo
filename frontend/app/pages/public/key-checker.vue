@@ -941,7 +941,7 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
             </div>
           </UCard>
 
-          <UCard class="sp-app-card overflow-hidden">
+          <UCard class="sp-app-card sp-recent-requests-card overflow-hidden">
             <template #header>
               <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
@@ -1149,9 +1149,10 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
   box-shadow: inset 0 1px rgb(255 255 255 / .025), var(--kc-shadow) !important;
 }
 
+/* Soft hover only: keep the control-panel feel without a strong glow. */
 .sp-checker-page :deep(.sp-app-card:hover),
 .sp-checker-page :deep(.sp-metric-tile:hover) {
-  border-color: rgb(78 211 255 / .24) !important;
+  border-color: rgb(78 211 255 / .14) !important;
 }
 
 .sp-checker-page :deep(.sp-metric-tile) {
@@ -1159,8 +1160,8 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 }
 
 .sp-checker-page :deep(.sp-metric-tile:hover) {
-  transform: translateY(-1px);
-  box-shadow: inset 0 1px rgb(255 255 255 / .035), 0 16px 36px rgb(0 0 0 / .22) !important;
+  transform: none;
+  box-shadow: inset 0 1px rgb(255 255 255 / .03), 0 8px 18px rgb(0 0 0 / .10) !important;
 }
 
 .sp-checker-page :deep(.text-muted),
@@ -1229,8 +1230,8 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 }
 
 .sp-checker-proof:hover {
-  border-color: rgb(78 211 255 / .25);
-  background: rgb(12 31 50 / .96);
+  border-color: rgb(78 211 255 / .15);
+  background: rgb(12 30 48 / .90);
 }
 
 .sp-checker-side-card {
@@ -1302,10 +1303,10 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 }
 
 .sp-checker-model-card:hover {
-  transform: translateY(-1px);
-  border-color: rgb(78 211 255 / .28);
-  background: var(--kc-panel-hover);
-  box-shadow: 0 12px 26px rgb(0 0 0 / .16);
+  transform: none;
+  border-color: rgb(78 211 255 / .16);
+  background: color-mix(in oklab, var(--kc-panel-hover) 54%, var(--kc-panel));
+  box-shadow: 0 7px 16px rgb(0 0 0 / .08);
 }
 
 .sp-checker-limit,
@@ -1357,13 +1358,19 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
   box-shadow: 0 0 0 5px rgb(48 215 160 / .10), 0 0 12px rgb(48 215 160 / .32);
 }
 
+/* Recent requests should feel calm: only a tiny row tint, never a glow. */
+.sp-checker-page :deep(.sp-recent-requests-card:hover) {
+  border-color: var(--kc-line) !important;
+  box-shadow: inset 0 1px rgb(255 255 255 / .025), var(--kc-shadow) !important;
+}
+
 .sp-checker-request-row {
-  transition: background-color 140ms ease, box-shadow 140ms ease;
+  transition: background-color 120ms ease;
 }
 
 .sp-checker-request-row:hover {
-  background: rgb(15 36 58 / .62);
-  box-shadow: inset 2px 0 var(--kc-cyan);
+  background: rgb(56 189 248 / .035);
+  box-shadow: inset 1px 0 rgb(78 211 255 / .14);
 }
 
 .sp-request-status {
@@ -1458,6 +1465,12 @@ const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_reque
 :global(html.light) .sp-checker-usage,
 :global(html.light) .sp-request-status {
   background: rgb(246 251 254 / .96);
+}
+
+
+:global(html.light) .sp-checker-request-row:hover {
+  background: rgb(14 165 233 / .025);
+  box-shadow: inset 1px 0 rgb(14 165 233 / .10);
 }
 
 @media (prefers-reduced-motion: reduce) {
