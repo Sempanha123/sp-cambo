@@ -26,7 +26,7 @@ const year = new Date().getFullYear()
       <template #title>
         <span class="inline-flex items-center gap-2.5">
           <SpLogo />
-          <span class="sp-khmer-chip hidden xl:inline-flex">កម្ពុជា</span>
+          <span class="sp-khmer-chip hidden min-[1760px]:inline-flex">កម្ពុជា</span>
         </span>
       </template>
 
@@ -36,45 +36,50 @@ const year = new Date().getFullYear()
       />
 
       <template #right>
-        <UButton
-          to="/public/key-checker"
-          color="neutral"
-          variant="subtle"
-          icon="i-lucide-key-round"
-          class="hidden lg:inline-flex"
-        >
-          Check API key
-        </UButton>
+        <!-- Compact desktop header actions: plain NuxtLink avoids global UButton
+             sizing/wrapping while keeping the rest of the V4 button theme intact. -->
+        <div class="flex shrink-0 items-center gap-1.5">
+          <NuxtLink
+            to="/public/key-checker"
+            class="hidden h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-cyan-500/20 bg-cyan-500/[0.07] px-2.5 text-xs font-semibold leading-none text-cyan-700 shadow-[0_0_16px_rgba(34,211,238,.05)] transition-all duration-200 hover:-translate-y-px hover:border-cyan-400/35 hover:bg-cyan-500/[0.12] hover:text-cyan-600 dark:text-cyan-200 dark:hover:text-cyan-100 min-[1480px]:inline-flex"
+          >
+            <UIcon name="i-lucide-key-round" class="size-3.5 shrink-0" />
+            <span class="whitespace-nowrap">Check API key</span>
+          </NuxtLink>
 
-        <UColorModeButton />
-
-        <UButton
-          v-if="auth.authenticated"
-          to="/dashboard"
-          color="neutral"
-          variant="subtle"
-          trailing-icon="i-lucide-arrow-right"
-          class="hidden sm:inline-flex"
-        >
-          Dashboard
-        </UButton>
-
-        <template v-else>
-          <UButton
-            to="/login"
+          <UColorModeButton
+            size="xs"
             color="neutral"
             variant="ghost"
-            class="hidden sm:inline-flex"
+            class="size-8 shrink-0 p-0"
+          />
+
+          <NuxtLink
+            v-if="auth.authenticated"
+            to="/dashboard"
+            class="hidden h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-sky-400/25 bg-gradient-to-r from-sky-500 to-cyan-500 px-3 text-xs font-semibold leading-none text-white shadow-[0_7px_18px_-12px_rgba(14,165,233,.85),0_0_14px_rgba(34,211,238,.10)] transition-all duration-200 hover:-translate-y-px hover:from-sky-400 hover:to-cyan-400 hover:shadow-[0_9px_22px_-12px_rgba(14,165,233,.95),0_0_18px_rgba(34,211,238,.16)] sm:inline-flex"
           >
-            Sign in
-          </UButton>
-          <UButton
-            to="/register"
-            class="hidden sm:inline-flex"
-          >
-            Create account
-          </UButton>
-        </template>
+            <span class="whitespace-nowrap">Dashboard</span>
+            <UIcon name="i-lucide-arrow-right" class="size-3.5 shrink-0" />
+          </NuxtLink>
+
+          <template v-else>
+            <NuxtLink
+              to="/login"
+              class="hidden h-8 shrink-0 items-center whitespace-nowrap rounded-lg border border-violet-400/15 bg-violet-500/[0.06] px-2.5 text-xs font-semibold leading-none text-violet-700 transition-all duration-200 hover:-translate-y-px hover:border-violet-400/30 hover:bg-violet-500/[0.11] hover:text-violet-600 dark:text-violet-200 dark:hover:text-violet-100 sm:inline-flex"
+            >
+              <span class="whitespace-nowrap">Sign in</span>
+            </NuxtLink>
+
+            <NuxtLink
+              to="/register"
+              class="hidden h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-sky-300/25 bg-gradient-to-r from-sky-500 via-blue-500 to-violet-500 px-3 text-xs font-semibold leading-none text-white shadow-[0_7px_18px_-12px_rgba(59,130,246,.85),0_0_16px_rgba(139,92,246,.10)] transition-all duration-200 hover:-translate-y-px hover:from-sky-400 hover:via-blue-400 hover:to-violet-400 hover:shadow-[0_9px_22px_-12px_rgba(59,130,246,.95),0_0_20px_rgba(139,92,246,.16)] sm:inline-flex"
+            >
+              <span class="whitespace-nowrap">Create account</span>
+              <UIcon name="i-lucide-arrow-up-right" class="size-3.5 shrink-0" />
+            </NuxtLink>
+          </template>
+        </div>
       </template>
 
       <template #body>
