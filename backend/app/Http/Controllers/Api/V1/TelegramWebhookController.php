@@ -37,6 +37,7 @@ class TelegramWebhookController extends Controller
         $lastName = trim((string) data_get($from, 'last_name', ''));
         $displayName = trim($firstName.' '.$lastName);
         $callbackId = is_array($callback) ? (string) data_get($callback, 'id', '') : '';
+        $callbackMessageId = is_array($callback) ? (int) data_get($callback, 'message.message_id', 0) : 0;
 
         if ($chatId === '' || $telegramUserId === '') return response()->json(['ok' => true]);
         if ($chatType !== 'private') {
@@ -54,7 +55,7 @@ class TelegramWebhookController extends Controller
                     return response()->json(['ok' => true]);
                 }
                 if (in_array($legacyCommand, ['/chatid', '/myid'], true)) {
-                    $bot->sendMessage($chatId, "ℹ️ This is your SP Cambo Store Bot chat ID: {$chatId}.\n\nThe website does not send Telegram order alerts.");
+                    $bot->sendMessage($chatId, "ℹ️ This is your SP Cambo Store Bot chat ID: {$chatId}.\n\nVerified paid + fulfilled website and Telegram purchases can be announced according to Admin → Telegram Store routing.");
                     return response()->json(['ok' => true]);
                 }
             }
@@ -67,7 +68,16 @@ class TelegramWebhookController extends Controller
             );
 
             if (is_array($callback)) {
-                $this->handleCallback($telegram, $ui, $bot, $account, trim((string) data_get($callback, 'data', '')), $callbackId, $updateId);
+                $this->handleCallback(
+                    $telegram,
+                    $ui,
+                    $bot,
+                    $account,
+                    trim((string) data_get($callback, 'data', '')),
+                    $callbackId,
+                    $updateId,
+                    $callbackMessageId,
+                );
                 return response()->json(['ok' => true]);
             }
 
@@ -166,6 +176,7 @@ class TelegramWebhookController extends Controller
         string $data,
         string $callbackId,
         string $updateId,
+        int $messageId,
     ): void {
         $ack = static function (TelegramBotClient $bot, string $callbackId, ?string $text = null): void {
             if ($callbackId !== '') $bot->answerCallbackQuery($callbackId, $text);
@@ -181,15 +192,25 @@ class TelegramWebhookController extends Controller
             return;
         }
         if ($data === 'store' || str_starts_with($data, 'store:')) {
-            $page = $data === 'store' ? 1 : max(1, (int) substr($data, 6));
-            $ui->sendStorefront($account, $page);
-            $ack($bot, $callbackId, 'Store opened');
+            $ui->sendStorefront($account, 1, $messageId);
+            $ack($bot, $callbackId, 'Choose a model family');
+            return;
+        }
+        if (str_starts_with($data, 'family:')) {
+            [, $family, $pageValue] = array_pad(explode(':', $data, 3), 3, '1');
+            $family = mb_strtolower(trim($family));
+            if ($family === '' || preg_match('/^[a-z0-9_-]{1,32}$/', $family) !== 1) {
+                throw new RuntimeException('That model family button is invalid.');
+            }
+            $ui->sendStorefront($account, max(1, (int) $pageValue), $messageId, $family);
+            $ack($bot, $callbackId);
             return;
         }
         if (str_starts_with($data, 'pkg:')) {
-            $packageId = filter_var(substr($data, 4), FILTER_VALIDATE_INT);
+            [, $packageValue, $pageValue] = array_pad(explode(':', $data, 3), 3, '1');
+            $packageId = filter_var($packageValue, FILTER_VALIDATE_INT);
             if ($packageId === false) throw new RuntimeException('That package button is invalid.');
-            $ui->sendProduct($account, (int) $packageId);
+            $ui->sendProduct($account, (int) $packageId, $messageId, max(1, (int) $pageValue));
             $ack($bot, $callbackId);
             return;
         }

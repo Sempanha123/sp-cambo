@@ -135,8 +135,8 @@ class TelegramAnnouncementService
     }
 
     /**
-     * R13 subscriber purchase activity. This method re-validates payment and
-     * fulfillment independently so callers cannot manufacture social proof.
+     * Unified website + Telegram purchase activity. This method re-validates
+     * payment and fulfillment independently so callers cannot manufacture social proof.
      */
     public function purchaseActivity(Order $order, ?TelegramAccount $excludedBuyer = null): ?TelegramAnnouncement
     {
@@ -145,9 +145,6 @@ class TelegramAnnouncementService
         }
 
         $order->loadMissing(['items', 'user', 'paymentAttempts']);
-        if (! str_starts_with((string) $order->idempotency_key, 'telegram:')) {
-            return null;
-        }
         if ($order->status !== 'FULFILLED' || $order->fulfilled_at === null || (int) $order->total_minor <= 0) {
             return null;
         }

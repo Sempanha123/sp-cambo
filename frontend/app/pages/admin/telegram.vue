@@ -134,7 +134,7 @@ const eventHelp: Record<string, string> = {
   model_created: 'A new public model alias becomes available.',
   model_updated: 'A customer-visible public model alias is changed.',
   promotion_changed: 'An enabled promotion code is created or updated.',
-  purchase_activity: 'Verified paid + fulfilled Telegram Store purchase activity.'
+  purchase_activity: 'Verified paid + fulfilled website and Telegram purchase activity.'
 }
 
 const packageOptions = computed(() => [

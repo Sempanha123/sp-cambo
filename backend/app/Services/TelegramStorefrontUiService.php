@@ -10,7 +10,7 @@ use RuntimeException;
 
 class TelegramStorefrontUiService
 {
-    private const STORE_PAGE_SIZE = 6;
+    private const STORE_PAGE_SIZE = 10;
     private const ORDER_PAGE_SIZE = 4;
 
     public function __construct(
@@ -18,63 +18,75 @@ class TelegramStorefrontUiService
         private readonly TelegramPendingOrderPolicy $pendingOrders,
     ) {}
 
-    public function sendStorefront(TelegramAccount $account, int $page = 1): void
-    {
-        $query = Package::query()
-            ->published()
-            ->where('auto_creates_api_key', true)
-            ->orderByDesc('featured')
-            ->orderBy('sort_order')
-            ->orderBy('id');
+    /**
+     * Store navigation is category-first. Callback-driven navigation edits the
+     * existing Telegram message so Previous / Next / product browsing does not
+     * flood the customer's chat with duplicate catalog messages.
+     */
+    public function sendStorefront(
+        TelegramAccount $account,
+        int $page = 1,
+        ?int $messageId = null,
+        ?string $family = null,
+    ): void {
+        $family = mb_strtolower(trim((string) $family));
 
-        $total = (clone $query)->count();
-        $pages = max(1, (int) ceil($total / self::STORE_PAGE_SIZE));
-        $page = max(1, min($page, $pages));
-        $packages = $query->forPage($page, self::STORE_PAGE_SIZE)->get();
-        $km = $this->isKhmer($account);
-
-        if ($packages->isEmpty()) {
-            $this->bot->sendMessage(
-                $account->chat_id,
-                $km
-                    ? "🛍 SP Cambo Store\n\nមិនទាន់មានកញ្ចប់ដែលអាចទិញបានទេ។"
-                    : "🛍 SP Cambo Store\n\nNo packages are available right now.",
-                ['inline_keyboard' => [[
-                    ['text' => '🏠 Home', 'callback_data' => 'home'],
-                ]]],
-            );
-
+        if ($family === '') {
+            $this->sendFamilyPicker($account, $messageId);
             return;
         }
 
-        // Keep the message short. The package buttons themselves show the
-        // useful comparison information, so customers do not need to scroll
-        // through the same catalog twice.
-        $text = $km
-            ? "🛍✨ SP CAMBO STORE\n\nជ្រើសកញ្ចប់ 👇\n🪙 Token package  •  💳 Credit package"
-            : "🛍✨ SP CAMBO STORE\n\nChoose a package 👇\n🪙 Token package  •  💳 Credit package";
+        $this->sendFamilyPackages($account, $family, $page, $messageId);
+    }
 
-        $packageButtons = [];
-        foreach ($packages as $package) {
-            $packageButtons[] = [
-                'text' => $this->packageButtonLabel($package),
-                'callback_data' => 'pkg:'.$package->id,
-            ];
+    private function sendFamilyPicker(TelegramAccount $account, ?int $messageId = null): void
+    {
+        $km = $this->isKhmer($account);
+        $packages = Package::query()
+            ->published()
+            ->where('auto_creates_api_key', true)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['id', 'family', 'family_label', 'sort_order']);
+
+        if ($packages->isEmpty()) {
+            $this->sendOrEdit(
+                $account,
+                $km
+                    ? "🛍 SP Cambo Store\n\nមិនទាន់មានកញ្ចប់ដែលអាចទិញបានទេ។"
+                    : "🛍 SP Cambo Store\n\nNo packages are available right now.",
+                ['inline_keyboard' => [[['text' => '🏠 Home', 'callback_data' => 'home']]]],
+                $messageId,
+            );
+            return;
         }
 
-        // 2 columns x 3 rows for a normal six-package page.
-        $keyboard = array_chunk($packageButtons, 2);
+        $families = $packages
+            ->groupBy(fn (Package $package): string => mb_strtolower(trim((string) $package->family)))
+            ->map(function ($group, string $family): array {
+                /** @var Package $first */
+                $first = $group->first();
+                return [
+                    'family' => $family,
+                    'label' => trim((string) ($first->family_label ?: $family)),
+                    'count' => $group->count(),
+                    'sort_order' => (int) $group->min('sort_order'),
+                ];
+            })
+            ->filter(fn (array $row): bool => $row['family'] !== '')
+            ->sortBy('sort_order')
+            ->values();
 
-        if ($pages > 1) {
-            $nav = [];
-            if ($page > 1) {
-                $nav[] = ['text' => '⬅️', 'callback_data' => 'store:'.($page - 1)];
-            }
-            $nav[] = ['text' => $page.'/'.$pages, 'callback_data' => 'noop'];
-            if ($page < $pages) {
-                $nav[] = ['text' => '➡️', 'callback_data' => 'store:'.($page + 1)];
-            }
-            $keyboard[] = $nav;
+        $text = $km
+            ? "🛍✨ SP CAMBO STORE\n\nជ្រើសរើសប្រភេទ AI 👇\nបន្ទាប់មកជ្រើសកញ្ចប់ដែលអ្នកចង់ទិញ។"
+            : "🛍✨ SP CAMBO STORE\n\nChoose an AI family 👇\nThen choose the package you want to buy.";
+
+        $keyboard = [];
+        foreach ($families as $row) {
+            $keyboard[] = [[
+                'text' => $this->familyIcon((string) $row['family']).' '.$row['label'].' · '.$row['count'].' packages',
+                'callback_data' => 'family:'.$row['family'].':1',
+            ]];
         }
 
         $keyboard[] = [
@@ -83,15 +95,76 @@ class TelegramStorefrontUiService
             ['text' => '🏠 Home', 'callback_data' => 'home'],
         ];
 
-        $this->bot->sendMessage(
-            $account->chat_id,
-            $text,
-            ['inline_keyboard' => $keyboard],
-        );
+        $this->sendOrEdit($account, $text, ['inline_keyboard' => $keyboard], $messageId);
     }
 
-    public function sendProduct(TelegramAccount $account, int $packageId): void
-    {
+    private function sendFamilyPackages(
+        TelegramAccount $account,
+        string $family,
+        int $page,
+        ?int $messageId = null,
+    ): void {
+        $query = Package::query()
+            ->published()
+            ->where('auto_creates_api_key', true)
+            ->where('family', $family)
+            ->orderByDesc('featured')
+            ->orderBy('sort_order')
+            ->orderBy('id');
+
+        $total = (clone $query)->count();
+        if ($total === 0) {
+            $this->sendFamilyPicker($account, $messageId);
+            return;
+        }
+
+        $pages = max(1, (int) ceil($total / self::STORE_PAGE_SIZE));
+        $page = max(1, min($page, $pages));
+        $packages = $query->forPage($page, self::STORE_PAGE_SIZE)->get();
+        /** @var Package|null $first */
+        $first = $packages->first();
+        $label = trim((string) ($first?->family_label ?: ucfirst($family)));
+        $km = $this->isKhmer($account);
+
+        $text = $km
+            ? "{$this->familyIcon($family)} {$label}\n\nជ្រើសកញ្ចប់ 👇\n📦 បង្ហាញស្តុកនៅលើប៊ូតុងនីមួយៗ។"
+            : "{$this->familyIcon($family)} {$label} PACKAGES\n\nChoose a package 👇\n📦 Stock is shown on every package button.";
+
+        // Exactly one package button per row, up to 10 rows per page.
+        $keyboard = [];
+        foreach ($packages as $package) {
+            $keyboard[] = [[
+                'text' => $this->packageButtonLabel($package),
+                'callback_data' => 'pkg:'.$package->id.':'.$page,
+            ]];
+        }
+
+        if ($pages > 1) {
+            $nav = [];
+            if ($page > 1) {
+                $nav[] = ['text' => '⬅️', 'callback_data' => 'family:'.$family.':'.($page - 1)];
+            }
+            $nav[] = ['text' => $page.'/'.$pages, 'callback_data' => 'noop'];
+            if ($page < $pages) {
+                $nav[] = ['text' => '➡️', 'callback_data' => 'family:'.$family.':'.($page + 1)];
+            }
+            $keyboard[] = $nav;
+        }
+
+        $keyboard[] = [
+            ['text' => $km ? '⬅️ ប្រភេទ' : '⬅️ Categories', 'callback_data' => 'store:1'],
+            ['text' => '🏠 Home', 'callback_data' => 'home'],
+        ];
+
+        $this->sendOrEdit($account, $text, ['inline_keyboard' => $keyboard], $messageId);
+    }
+
+    public function sendProduct(
+        TelegramAccount $account,
+        int $packageId,
+        ?int $messageId = null,
+        int $returnPage = 1,
+    ): void {
         $package = Package::query()
             ->published()
             ->where('auto_creates_api_key', true)
@@ -142,8 +215,13 @@ class TelegramStorefrontUiService
                 ? 'ℹ️ Token quota សម្រាប់ប្រើជាមួយម៉ូដែលខាងលើ។'
                 : 'ℹ️ Token quota for the models shown above.');
 
-        $this->bot->sendMessage(
-            $account->chat_id,
+        $family = mb_strtolower(trim((string) $package->family));
+        $backCallback = $family !== ''
+            ? 'family:'.$family.':'.max(1, $returnPage)
+            : 'store:1';
+
+        $this->sendOrEdit(
+            $account,
             implode("\n", $lines),
             ['inline_keyboard' => [
                 [[
@@ -151,10 +229,11 @@ class TelegramStorefrontUiService
                     'callback_data' => 'buy:'.$package->id,
                 ]],
                 [
-                    ['text' => $km ? '⬅️ ហាង' : '⬅️ Store', 'callback_data' => 'store:1'],
+                    ['text' => $km ? '⬅️ ត្រឡប់' : '⬅️ Back', 'callback_data' => $backCallback],
                     ['text' => '🏠 Home', 'callback_data' => 'home'],
                 ],
             ]],
+            $messageId,
         );
     }
 
@@ -365,12 +444,64 @@ class TelegramStorefrontUiService
         $family = trim((string) ($package->family_label ?: $package->name));
         $family = preg_replace('/\s+(credits?|tokens?)$/i', '', $family) ?: $family;
         $family = mb_substr($family, 0, 12);
+        $stock = '📦'.$this->stockButtonLabel($package);
 
         if ($this->isCreditPackage($package)) {
-            return '💳 '.$family.' '.$this->creditDisplay($package).' · '.$this->packagePrice($package);
+            return '💳 '.$family.' '.$this->creditDisplay($package).' · '.$this->packagePrice($package).' · '.$stock;
         }
 
-        return '🪙 '.$family.' '.$this->compactUnits((int) $package->advertised_units).' · '.$this->packagePrice($package);
+        return '🪙 '.$family.' '.$this->compactUnits((int) $package->advertised_units).' · '.$this->packagePrice($package).' · '.$stock;
+    }
+
+    private function stockButtonLabel(Package $package): string
+    {
+        if ($package->stock_quantity === null) {
+            return '∞';
+        }
+
+        return number_format(max(0, (int) $package->stock_quantity));
+    }
+
+    private function familyIcon(string $family): string
+    {
+        return match (mb_strtolower(trim($family))) {
+            'claude' => '🟠',
+            'deepseek' => '🔵',
+            'codex', 'openai' => '🟢',
+            'gemini' => '✨',
+            default => '🤖',
+        };
+    }
+
+    /** @param array<string,mixed> $replyMarkup */
+    private function sendOrEdit(
+        TelegramAccount $account,
+        string $text,
+        array $replyMarkup,
+        ?int $messageId = null,
+    ): void {
+        if ($messageId !== null && $messageId > 0) {
+            try {
+                $this->bot->editMessageText($account->chat_id, $messageId, $text, $replyMarkup);
+                return;
+            } catch (RuntimeException $exception) {
+                $message = mb_strtolower($exception->getMessage());
+
+                if (str_contains($message, 'message is not modified')) {
+                    return;
+                }
+
+                $notEditable = str_contains($message, 'message to edit not found')
+                    || str_contains($message, "message can't be edited")
+                    || str_contains($message, 'message_id_invalid');
+
+                if (! $notEditable) {
+                    throw $exception;
+                }
+            }
+        }
+
+        $this->bot->sendMessage($account->chat_id, $text, $replyMarkup);
     }
 
     private function isCreditPackage(Package $package): bool

@@ -226,7 +226,7 @@ Artisan::command('telegram:dispatch-purchase-alerts {--batch=50}', function (): 
     // commerce succeeded and retry state is healthy. Telegram outages must not
     // poison the scheduler heartbeat or bury unrelated application errors.
     return 0;
-})->purpose('Cancel legacy Fix17 purchase-alert outbox rows; Fix19 website orders are Telegram-silent');
+})->purpose('Cancel legacy purchase-alert outbox rows and recover unified verified purchase announcements');
 
 Artisan::command('telegram:dispatch-public-purchase-feed {--batch=50}', function (): int {
     $service = app(TelegramPurchaseAlertService::class);
@@ -234,7 +234,7 @@ Artisan::command('telegram:dispatch-public-purchase-feed {--batch=50}', function
     $this->info("Recovered {$recovered} missing R13 public purchase event(s). Public rows are delivered by telegram:dispatch-purchase-alerts.");
 
     return 0;
-})->purpose('Recover missing Telegram Store purchase-activity subscriber announcements only');
+})->purpose('Recover missing verified website + Telegram purchase announcements');
 
 Artisan::command('system:check-access-allocation-schema', function (): int {
     if (AccessAllocationSchema::ready()) {

@@ -11,24 +11,40 @@ use Illuminate\Support\Str;
 use Throwable;
 
 /**
- * Compatibility facade for the old R12/R13 purchase-alert outbox.
+ * Compatibility facade for the old purchase-alert outbox.
  *
- * Fix19 has one Telegram role only: the customer Store Bot. Website orders are
- * intentionally silent and never create Telegram rows. Telegram social-proof
- * activity is generated only after a Telegram-originated order is paid,
- * fulfilled, and the buyer's API access was actually delivered.
+ * V20 emits one verified PURCHASE_ACTIVITY announcement for every real paid +
+ * fulfilled SP Cambo order, regardless of whether checkout started on the
+ * website or in the Telegram Store. The Telegram notification router decides
+ * whether that announcement goes to Bot subscribers, configured channels, both,
+ * or nowhere.
  */
 class TelegramPurchaseAlertService
 {
     public function __construct(private readonly TelegramAnnouncementService $announcements) {}
 
-    /** Website and generic order creation never emits Telegram messages. */
+    /** Order creation is intentionally silent; only verified fulfillment may alert. */
     public function orderCreated(Order $order): void {}
 
-    /** Website and generic fulfillment never emits Telegram messages. */
-    public function orderFulfilled(Order $order): void {}
+    /** Website + Telegram orders both emit after verified paid fulfillment. */
+    public function orderFulfilled(Order $order): void
+    {
+        $this->bestEffort(function () use ($order): void {
+            $order = $order->fresh(['items', 'user', 'paymentAttempts']);
+            if (! $order || ! $this->isVerifiedPaidFulfilled($order)) {
+                return;
+            }
 
-    /** Telegram Store social proof is emitted only after customer delivery. */
+            // Do not exclude the buyer. An enabled Store Bot subscriber should see
+            // the same verified purchase activity as every other subscriber.
+            $this->announcements->purchaseActivity($order);
+        });
+    }
+
+    /**
+     * Telegram delivery keeps this idempotent recovery hook. orderFulfilled()
+     * normally created the announcement already; firstOrCreate() prevents doubles.
+     */
     public function telegramPurchaseDelivered(TelegramPurchase $purchase): void
     {
         $this->bestEffort(function () use ($purchase): void {
@@ -37,14 +53,11 @@ class TelegramPurchaseAlertService
             if (! $purchase || ! $order || $purchase->delivered_at === null) {
                 return;
             }
-            if (! str_starts_with((string) $order->idempotency_key, 'telegram:')) {
-                return;
-            }
             if (! $this->isVerifiedPaidFulfilled($order)) {
                 return;
             }
 
-            $this->announcements->purchaseActivity($order, $purchase->account);
+            $this->announcements->purchaseActivity($order);
         });
     }
 
@@ -58,9 +71,8 @@ class TelegramPurchaseAlertService
     }
 
     /**
-     * Legacy R12/R13 rows are cancelled instead of being delivered. This makes an
-     * upgraded database safe even when it still contains old website-alert outbox
-     * rows from Fix17.
+     * Legacy purchase-alert outbox rows are cancelled. V20 uses the unified
+     * TelegramAnnouncement router for verified website + Telegram purchases.
      *
      * @return array{checked:int,sent:int,failed:int}
      */
@@ -76,7 +88,7 @@ class TelegramPurchaseAlertService
         if ($ids->isNotEmpty()) {
             TelegramPurchaseAlert::query()->whereIn('id', $ids)->update([
                 'status' => 'CANCELLED',
-                'last_error' => 'Fix19 disabled website/admin/public purchase alerts. Telegram Store activity now uses subscriber announcements only.',
+                'last_error' => 'V20 uses unified verified purchase activity announcements; legacy purchase-alert outbox rows are disabled.',
                 'retry_after' => null,
                 'delivery_lease_token' => null,
                 'delivery_lease_expires_at' => null,
@@ -87,13 +99,13 @@ class TelegramPurchaseAlertService
         return ['checked' => $ids->count(), 'sent' => 0, 'failed' => 0];
     }
 
-    /** Legacy purchase-alert rows are no longer retryable in the single-bot design. */
+    /** Legacy purchase-alert rows are no longer retryable in the unified router design. */
     public function retry(string $alertId): bool
     {
         return false;
     }
 
-    /** Recover only delivered Telegram Store purchases, never website orders. */
+    /** Recover missing verified purchase events for BOTH website and Telegram orders. */
     public function recoverMissingPublicEvents(int $batch = 100): int
     {
         if (! (bool) config('services.telegram.purchase_activity_enabled', true)) {
@@ -101,22 +113,22 @@ class TelegramPurchaseAlertService
         }
 
         $count = 0;
-        $purchases = TelegramPurchase::query()
-            ->with(['account', 'order.items', 'order.user', 'order.paymentAttempts'])
-            ->whereNotNull('delivered_at')
-            ->latest('delivered_at')
+        $orders = Order::query()
+            ->with(['items', 'user', 'paymentAttempts'])
+            ->where('status', 'FULFILLED')
+            ->whereNotNull('fulfilled_at')
+            ->latest('fulfilled_at')
             ->limit(max(1, min($batch, 500)))
             ->get();
 
-        foreach ($purchases as $purchase) {
-            $order = $purchase->order;
-            if (! $order || ! str_starts_with((string) $order->idempotency_key, 'telegram:') || ! $this->isVerifiedPaidFulfilled($order)) {
+        foreach ($orders as $order) {
+            if (! $this->isVerifiedPaidFulfilled($order)) {
                 continue;
             }
 
             $eventKey = 'r13:public:order:'.$order->id.':subscribers';
             $before = TelegramAnnouncement::query()->where('event_key', $eventKey)->exists();
-            $this->announcements->purchaseActivity($order, $purchase->account);
+            $this->announcements->purchaseActivity($order);
             if (! $before && TelegramAnnouncement::query()->where('event_key', $eventKey)->exists()) {
                 $count++;
             }

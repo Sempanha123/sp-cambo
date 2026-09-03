@@ -450,7 +450,7 @@ class TelegramCommerceService
         $enabled = (bool) $account->announcements_enabled;
         $text = $km
             ? '🔔 ព័ត៌មានថ្មី: '.($enabled ? 'បើក' : 'បិទ')."\n\nSP Cambo អាចផ្ញើព័ត៌មានអំពីកញ្ចប់ថ្មី ការកែប្រែកញ្ចប់ បន្ថែមស្តុក/មានស្តុកវិញ ម៉ូដែលថ្មី ប្រូម៉ូសិន និងការទិញថ្មីដែលបានបញ្ជាក់។"
-            : '🔔 Store updates: '.($enabled ? 'ON' : 'OFF')."\n\nSP Cambo can notify you about new packages, package updates, stock/restock, new models, promotions and verified Telegram purchase activity.";
+            : '🔔 Store updates: '.($enabled ? 'ON' : 'OFF')."\n\nSP Cambo can notify you about new packages, package updates, stock/restock, new models, promotions and verified purchase activity.";
         $this->bot->sendMessage($account->chat_id, $text, [
             'inline_keyboard' => [[
                 [

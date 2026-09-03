@@ -30,7 +30,7 @@ class TelegramNotificationRouter
         'model_created' => 'New model',
         'model_updated' => 'Model updated',
         'promotion_changed' => 'Promotion created / updated',
-        'purchase_activity' => 'Verified Telegram purchase activity',
+        'purchase_activity' => 'Verified purchase activity',
     ];
 
     /** @return array<string,string> */

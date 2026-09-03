@@ -849,9 +849,21 @@ trait TelegramCommerceWalletFeatures
             $subjectType = 'purchase';
         }
 
-        // A sync queue would execute the delayed job immediately, deleting the QR at once.
-        // Production can use database/redis/etc.; SP Cambo already runs a queue worker.
+        // A sync queue would execute delayed jobs immediately. Production uses the
+        // normal queue worker, so start BOTH the live caption countdown and expiry cleanup.
         if ((string) config('queue.default') !== 'sync') {
+            if ($topup) {
+                $topupRow = StoreWalletTopup::query()->find($subjectId);
+                if ($topupRow) {
+                    app(TelegramQrCountdownService::class)->scheduleTopup($topupRow);
+                }
+            } else {
+                $purchaseRow = TelegramPurchase::query()->find($subjectId);
+                if ($purchaseRow) {
+                    app(TelegramQrCountdownService::class)->schedulePurchase($purchaseRow);
+                }
+            }
+
             DeleteExpiredTelegramQrMessage::dispatch($subjectType, $subjectId)->delay($expiry);
         }
     }
