@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+﻿import { createHash } from "node:crypto";
 import { once } from "node:events";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { customerKey } from "./auth.js";
@@ -324,7 +324,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
   }
 
   async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<void> {
-    let buffer = ""; let bytesSent = false; let localOutputTokens = 0; let terminalFrameSeen = false;
+    let buffer = ""; let bytesSent = false; let localOutputTokens = 0;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     const beginPublicStream = (): void => {
       if (reply.sent) return;
@@ -346,7 +346,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       if (!reply.raw.write(publicText)) await abortable(once(reply.raw, "drain"), signal);
     };
     try {
-      streamReadLoop: while (true) {
+      while (true) {
         const { value, done } = await abortable(reader.read(), signal); if (done) break;
         buffer += decoder.decode(value, { stream: true });
         while (true) {
@@ -356,23 +356,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
           await writePublic(localizeSseUsage(frame.complete, path, localUsage));
           buffer = frame.remainder;
-
-          // The protocol has completed successfully. Some compatible upstreams
-          // keep the HTTP body open after [DONE]/message_stop/response.completed.
-          // Finish SP Cambo immediately instead of leaving the reservation in
-          // STREAMING until the private upstream socket eventually closes.
-          if (terminalSseFrame(frame.complete, path)) {
-            terminalFrameSeen = true;
-            buffer = "";
-
-            try {
-              reader.releaseLock();
-            } catch {
-              // Best-effort cleanup only.
-            }
-
-            break streamReadLoop;
-          }
         }
       }
       buffer += decoder.decode();
@@ -405,16 +388,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     void routeSuccessBestEffort(reservationId);
     beginPublicStream();
     reply.raw.end();
-
-    if (terminalFrameSeen) {
-      // Public response + local settlement are already complete. Clean up any
-      // compatible upstream that keeps its private HTTP body open.
-      setTimeout(() => {
-        void upstream.body
-          ?.cancel("sp_cambo_terminal_cleanup_after_public_end")
-          .catch(() => undefined);
-      }, 0);
-    }
   }
 
   async function markStateBestEffort(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
@@ -495,80 +468,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 }
 
 
-
-/**
- * Detect a successful terminal Server-Sent Events frame.
- *
- * This only examines public protocol completion markers. It does not read
- * OmniRoute/provider token counters, provider billing data, or private usage.
- */
-export function terminalSseFrame(frame: string, path: InferencePath): boolean {
-  const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === "object" && value !== null && !Array.isArray(value);
-
-  for (const line of frame.split(/\r?\n/)) {
-    if (line.startsWith("event:")) {
-      const eventName = line.slice(6).trim().toLowerCase();
-
-      if (
-        eventName === "message_stop"
-        || eventName === "response.completed"
-        || eventName === "done"
-      ) {
-        return true;
-      }
-
-      continue;
-    }
-
-    if (!line.startsWith("data:")) continue;
-
-    const data = line.slice(5).trim();
-
-    if (data === "[DONE]") return true;
-    if (data === "") continue;
-
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(data);
-    } catch {
-      continue;
-    }
-
-    if (!isObjectRecord(parsed)) continue;
-
-    const type =
-      typeof parsed.type === "string"
-        ? parsed.type.toLowerCase()
-        : "";
-
-    if (path === "/v1/messages" && type === "message_stop") {
-      return true;
-    }
-
-    if (path === "/v1/responses" && type === "response.completed") {
-      return true;
-    }
-
-    if (
-      path === "/v1/chat/completions"
-      && Array.isArray(parsed.choices)
-      && parsed.choices.length > 0
-    ) {
-      const finished = parsed.choices.every((choice) => {
-        if (!isObjectRecord(choice)) return false;
-
-        const reason = choice.finish_reason;
-        return typeof reason === "string" && reason.trim() !== "";
-      });
-
-      if (finished) return true;
-    }
-  }
-
-  return false;
-}
 function takeSseFrame(buffer: string): { complete: string; remainder: string } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
