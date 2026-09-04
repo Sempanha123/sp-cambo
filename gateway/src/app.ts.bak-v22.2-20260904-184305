@@ -356,18 +356,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
           await writePublic(localizeSseUsage(frame.complete, path, localUsage));
           buffer = frame.remainder;
-          // The protocol has already completed successfully. Some compatible
-          // upstreams keep the HTTP body/socket open after this point, which
-          // would otherwise leave SP Cambo stuck in STREAMING / reserved.
-          if (terminalSseFrame(frame.complete, path)) {
-            buffer = "";
-            try {
-              await reader.cancel("sp_cambo_terminal_sse");
-            } catch {
-              // The response is already complete at protocol level.
-            }
-            break;
-          }
         }
       }
       buffer += decoder.decode();
@@ -480,71 +468,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 }
 
 
-
-/**
- * Treat the protocol's own successful terminal marker as completion.
- *
- * Billing remains SP Cambo local-only. This function does not inspect
- * OmniRoute/provider usage fields or provider token counters.
- */
-export function terminalSseFrame(frame: string, path: InferencePath): boolean {
-  let eventName = "";
-
-  for (const line of frame.split(/\r?\n/)) {
-    if (line.startsWith("event:")) {
-      eventName = line.slice(6).trim().toLowerCase();
-
-      if (eventName === "message_stop"
-        || eventName === "response.completed"
-        || eventName === "done") {
-        return true;
-      }
-
-      continue;
-    }
-
-    if (!line.startsWith("data:")) continue;
-
-    const data = line.slice(5).trim();
-    if (data === "[DONE]") return true;
-    if (data === "") continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(data);
-    } catch {
-      continue;
-    }
-
-    if (!record(parsed)) continue;
-
-    const type = typeof parsed.type === "string"
-      ? parsed.type.toLowerCase()
-      : "";
-
-    if (path === "/v1/messages" && type === "message_stop") {
-      return true;
-    }
-
-    if (path === "/v1/responses" && type === "response.completed") {
-      return true;
-    }
-
-    if (path === "/v1/chat/completions"
-      && Array.isArray(parsed.choices)
-      && parsed.choices.length > 0) {
-      const finished = parsed.choices.every((choice) => {
-        if (!record(choice)) return false;
-        const reason = choice.finish_reason;
-        return typeof reason === "string" && reason.trim() !== "";
-      });
-
-      if (finished) return true;
-    }
-  }
-
-  return false;
-}
 function takeSseFrame(buffer: string): { complete: string; remainder: string } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
