@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { ControlPlaneError } from "../src/errors.js";
 import { MemoryRateStore } from "../src/rate-store.js";
-import { estimateTokens } from "../src/protocol.js";
+import { estimateTokens, localOutputBilledTokens } from "../src/protocol.js";
 import type { ControlPlane, GatewayConfig, InspectData, PreflightData, RateLease, RateStore, Usage } from "../src/types.js";
 
 const secret = `sk-${"a".repeat(48)}`;
@@ -67,6 +67,12 @@ it("bounds non-billable inspection before calling the control plane", async () =
   expect(rejected.statusCode).toBe(429); expect(rejected.headers["retry-after"]).toBe("60"); expect(control.inspectCalls).toBe(0);
 });
 
+
+it("calibrates SP-local generated output without provider usage", () => {
+  expect(localOutputBilledTokens(0)).toBe(0);
+  expect(localOutputBilledTokens(2)).toBe(3);
+  expect(localOutputBilledTokens(622)).toBe(933);
+});
 describe("preflight rejection", () => {
   for (const [status, code] of [[401, "invalid_api_key"], [403, "model_not_allowed"], [402, "insufficient_tokens"]] as const) {
     it(`${code} never reaches OmniRoute`, async () => {
@@ -136,7 +142,7 @@ it("maps public model, strips customer auth and settles SP-local JSON usage", as
   const control = new FakeControlPlane();
   const [instance] = app(control, fetchMock as typeof fetch);
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: { ...auth, "anthropic-version": "2023-06-01", cookie: secret }, payload: body });
-  expect(response.statusCode).toBe(200); expect(response.json().model).toBe("claude-coding"); expect(response.body).not.toContain("private-route"); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(body)), output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }); expect(control.releases).toHaveLength(0);
+  expect(response.statusCode).toBe(200); expect(response.json().model).toBe("claude-coding"); expect(response.body).not.toContain("private-route"); expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(body)), output_tokens: localOutputBilledTokens(2), cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }); expect(control.releases).toHaveLength(0);
 });
 
 
@@ -189,7 +195,7 @@ it("restores exact Claude Code tool casing in streamed Anthropic responses", asy
   const response = await instance.inject({ method: "POST", url: "/v1/messages", headers: auth, payload: requestBody });
   expect(response.statusCode).toBe(200);
   expect(response.body).toContain('"name":"Edit"');
-  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(requestBody)), output_tokens: 2 });
+  expect(control.settleCalls[0]?.usage).toMatchObject({ input_tokens: estimateTokens(JSON.stringify(requestBody)), output_tokens: localOutputBilledTokens(2) });
 });
 
 it("forwards Playground funding scope only to the control plane and never upstream", async () => {

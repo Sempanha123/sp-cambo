@@ -2,6 +2,25 @@ import { createHash, randomUUID } from "node:crypto";
 import { GatewayError } from "./errors.js";
 import type { InferencePath, Usage } from "./types.js";
 
+/**
+ * SP Cambo local-only output calibration.
+ *
+ * This is NOT provider usage and NEVER reads OmniRoute token counters.
+ * The local text estimator is intentionally conservative on generated output
+ * because code/HTML and hidden tokenizer differences can otherwise under-meter
+ * customer usage. Input/cache estimation is unchanged.
+ *
+ * 15_000 bps = 1.50x locally measured generated output.
+ */
+export const LOCAL_OUTPUT_CALIBRATION_BPS = 15_000;
+const LOCAL_OUTPUT_CALIBRATION_SCALE = 10_000;
+
+export function localOutputBilledTokens(rawTokens: number): number {
+  const tokens = Math.max(0, Math.trunc(rawTokens));
+  if (tokens === 0) return 0;
+  return Math.ceil((tokens * LOCAL_OUTPUT_CALIBRATION_BPS) / LOCAL_OUTPUT_CALIBRATION_SCALE);
+}
+
 const FIELDS: Record<InferencePath, ReadonlySet<string>> = {
   "/v1/messages": new Set(["model", "messages", "system", "max_tokens", "metadata", "stop_sequences", "stream", "temperature", "thinking", "tool_choice", "tools", "top_k", "top_p", "service_tier", "context_management", "output_config"]),
   "/v1/messages/count_tokens": new Set(["model", "messages", "system", "thinking", "tool_choice", "tools", "context_management", "output_config"]),
@@ -181,7 +200,7 @@ export function spLocalUsage(inputTokens: number, cacheReadTokens: number, outpu
 
   return {
     input_tokens: Math.max(0, inputTokens),
-    output_tokens: Math.max(0, outputTokens),
+    output_tokens: localOutputBilledTokens(outputTokens),
     cache_read_tokens: Math.max(0, cacheReadTokens),
     cache_write_tokens: 0,
     reasoning_tokens: 0,
@@ -211,7 +230,7 @@ export function spLocalOutputTokensFromSse(frame: string): number {
 export function spLocalUsageFromOutputTokens(inputTokens: number, cacheReadTokens: number, outputTokens: number): Usage {
   return {
     input_tokens: Math.max(0, inputTokens),
-    output_tokens: Math.max(0, outputTokens),
+    output_tokens: localOutputBilledTokens(outputTokens),
     cache_read_tokens: Math.max(0, cacheReadTokens),
     cache_write_tokens: 0,
     reasoning_tokens: 0,
