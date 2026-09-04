@@ -184,61 +184,6 @@ onBeforeUnmount(() => {
   if (summaryTimer) clearInterval(summaryTimer)
   if (clockTimer) clearInterval(clockTimer)
 })
-
-/* V21.3 — customer-facing request result codes.
- * Internal billing lifecycle remains unchanged in the backend.
- */
-const requestResultCode = (item: RequestActivity) => {
-  const rawError = String(item.error_code ?? '').trim()
-
-  // Preserve a real HTTP-style code if the backend error text already contains one.
-  const explicitCode = rawError.match(/(?:^|\D)([45]\d{2})(?:\D|$)/)?.[1]
-  if (explicitCode) return explicitCode
-
-  const error = rawError.toLowerCase()
-  if (error.includes('timeout')) return '504'
-  if (error.includes('rate') || error.includes('quota') || error.includes('too_many')) return '429'
-  if (error.includes('unauthorized') || error.includes('authentication')) return '401'
-  if (error.includes('forbidden') || error.includes('not_allowed')) return '403'
-  if (error.includes('not_found')) return '404'
-
-  switch (item.state) {
-    case 'settled':
-      return '200'
-    case 'reconciling':
-      return '202'
-    case 'streaming':
-    case 'connecting':
-    case 'reserved':
-      return '102'
-    case 'received':
-      return '100'
-    case 'released':
-    case 'failed':
-      return '500'
-    default:
-      return item.error_code ? '500' : '200'
-  }
-}
-
-const requestResultTone = (item: RequestActivity) => {
-  const code = Number(requestResultCode(item))
-  if (code >= 400) return 'error'
-  if (code === 202) return 'warning'
-  if (code >= 200 && code < 300) return 'success'
-  return 'info'
-}
-
-const requestResultLabel = (item: RequestActivity) => {
-  const code = requestResultCode(item)
-  if (code === '200') return 'Success'
-  if (code === '202') return 'Finalizing'
-  if (code === '102') return 'Running'
-  if (code === '100') return 'Received'
-  if (code === '429') return 'Rate limited'
-  if (code === '504') return 'Timeout'
-  return 'Failed'
-}
 </script>
 
 <template>
@@ -576,14 +521,7 @@ const requestResultLabel = (item: RequestActivity) => {
                     {{ item.public_model }}
                   </span>
 
-                  <div
-                    class="sp-request-status"
-                    :class="`sp-request-status--${requestResultTone(item)}`"
-                    :title="`Internal state: ${stateLabel(item.state)}`"
-                  >
-                    <strong class="sp-request-status__code">{{ requestResultCode(item) }}</strong>
-                    <span class="sp-request-status__label">{{ requestResultLabel(item) }}</span>
-                  </div>
+                  <SpStatusBadge :status="item.state" />
 
                   <UBadge
                     v-if="item.estimated"
@@ -621,7 +559,7 @@ const requestResultLabel = (item: RequestActivity) => {
                 >
                   <dt class="text-[11px] font-medium leading-4 text-dimmed">{{ row.label }}</dt>
                   <dd class="sp-numeric text-sm font-semibold leading-5" :class="tokenValueTone(row.label)">
-                    {{ formatUnits(row.value) }}
+                    {{ formatCompactUnits(row.value) }}
                   </dd>
                 </div>
               </dl>
@@ -697,52 +635,4 @@ const requestResultLabel = (item: RequestActivity) => {
   background: linear-gradient(to top, rgb(70 117 255 / .55), rgb(83 151 255 / .96));
   box-shadow: 0 0 18px -4px rgb(72 128 255 / .7);
 }
-
-/* V21.3 — compact numeric request result status */
-.sp-request-status {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
-  min-width: 4.8rem;
-  border: 1px solid rgb(148 163 184 / .14);
-  border-radius: .55rem;
-  padding: .28rem .48rem;
-  background: rgb(15 23 42 / .32);
-  line-height: 1;
-}
-
-.sp-request-status__code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: .75rem;
-  font-weight: 750;
-}
-
-.sp-request-status__label {
-  font-size: .68rem;
-  color: var(--ui-text-muted);
-}
-
-.sp-request-status--success {
-  border-color: rgb(52 211 153 / .22);
-  background: rgb(16 185 129 / .07);
-}
-.sp-request-status--success .sp-request-status__code { color: rgb(52 211 153); }
-
-.sp-request-status--warning {
-  border-color: rgb(251 191 36 / .22);
-  background: rgb(245 158 11 / .07);
-}
-.sp-request-status--warning .sp-request-status__code { color: rgb(251 191 36); }
-
-.sp-request-status--info {
-  border-color: rgb(96 165 250 / .22);
-  background: rgb(59 130 246 / .07);
-}
-.sp-request-status--info .sp-request-status__code { color: rgb(96 165 250); }
-
-.sp-request-status--error {
-  border-color: rgb(251 113 133 / .25);
-  background: rgb(244 63 94 / .08);
-}
-.sp-request-status--error .sp-request-status__code { color: rgb(251 113 133); }
 </style>
