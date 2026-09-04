@@ -66,13 +66,13 @@ const tones: Record<string, { color: Tone, label: string, icon?: string }> = {
    * gateway has an ambiguous outcome and the control plane is awaiting a terminal
    * settlement or expiry.
    */
-  received: { color: 'info', label: '100' },
-  reserved: { color: 'info', label: '102' },
-  connecting: { color: 'info', label: '102' },
-  streaming: { color: 'info', label: '102' },
-  reconciling: { color: 'warning', label: '202' },
-  settled: { color: 'success', label: '200' },
-  released: { color: 'success', label: '200' }
+  received: { color: 'info', label: 'Received' },
+  reserved: { color: 'info', label: 'Reserved' },
+  connecting: { color: 'info', label: 'Connecting' },
+  streaming: { color: 'info', label: 'Streaming' },
+  reconciling: { color: 'warning', label: 'Billing pending' },
+  settled: { color: 'success', label: 'Settled' },
+  released: { color: 'neutral', label: 'Released' }
 }
 
 const humanise = (value: string) => {
@@ -97,10 +97,16 @@ const isStreaming = computed(() => statusKey.value === 'streaming')
     :color="resolved.color"
     :variant="variant"
     :size="size"
-    :icon="resolved.icon"
+    :icon="isStreaming ? undefined : resolved.icon"
     class="whitespace-nowrap"
   >
     <span class="inline-flex items-center gap-1.5">
+      <UIcon
+        v-if="isStreaming"
+        name="i-lucide-loader-circle"
+        class="size-3.5 shrink-0 animate-spin"
+        aria-hidden="true"
+      />
       <span>{{ resolved.label }}</span>
     </span>
   </UBadge>

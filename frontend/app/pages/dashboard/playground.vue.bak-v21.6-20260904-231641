@@ -233,43 +233,8 @@ const elapsed = (row: RequestActivity) => {
   if (!liveRequestStates.includes(row.state)) return 'Finished'
   return `${Math.max(0, Math.round((liveClock.value - new Date(row.started_at).getTime()) / 100) / 10)} s live`
 }
-const requestStatusCode = (row: RequestActivity) => {
-  const rawError = String(row.error_code ?? '').trim()
-  const error = rawError.toLowerCase()
-
-  const explicitCode = rawError.match(/(?:^|\D)([45]\d{2})(?:\D|$)/)?.[1]
-  if (explicitCode) return explicitCode
-
-  if (
-    error.includes('client_closed')
-    || error.includes('client_disconnected')
-    || error.includes('client_disconnect')
-    || error.includes('client_aborted')
-    || error.includes('client_cancelled')
-    || error.includes('client_canceled')
-  ) return '200'
-
-  if (error.includes('timeout')) return '504'
-  if (error.includes('rate') || error.includes('quota') || error.includes('too_many')) return '429'
-  if (error.includes('unauthorized') || error.includes('authentication')) return '401'
-  if (error.includes('forbidden') || error.includes('not_allowed')) return '403'
-  if (error.includes('not_found')) return '404'
-  if (rawError !== '') return '500'
-
-  if (row.state === 'settled' || row.state === 'released') return '200'
-  if (row.state === 'reconciling') return '202'
-  if (['reserved', 'connecting', 'streaming'].includes(row.state)) return '102'
-  if (row.state === 'failed') return '500'
-  return '100'
-}
-
-const requestStatusTone = (row: RequestActivity) => {
-  const code = Number(requestStatusCode(row))
-  if (code >= 400) return 'error'
-  if (code === 202) return 'warning'
-  if (code >= 200) return 'success'
-  return 'info'
-}
+const stateColor = (state: RequestActivity['state']) => state === 'settled' ? 'success' : ['failed', 'released'].includes(state) ? 'error' : state === 'reconciling' ? 'warning' : 'primary'
+const stateLabel = (state: RequestActivity['state']) => state === 'reconciling' ? 'Billing pending' : state === 'settled' ? 'Settled' : state === 'released' ? 'Released' : state === 'failed' ? 'Failed' : state === 'streaming' ? 'Streaming' : state === 'connecting' ? 'Connecting' : 'Reserved'
 const requestUnits = (row: RequestActivity) => row.metered_units !== null ? `${formatUnits(row.metered_units)} Tokens · ${formatSpCredits(row.sp_credits_used)} Credits` : row.reserved_units !== null ? `${formatUnits(row.reserved_units)} Tokens reserved` : '—'
 const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => nextTick(() => chatScroll.value?.scrollTo({ top: chatScroll.value.scrollHeight, behavior }))
 
@@ -1140,7 +1105,7 @@ onBeforeUnmount(() => {
                 <section v-if="lastRequest" class="rounded-xl border border-default bg-default/25 p-3.5">
                   <div class="mb-3 flex items-center justify-between gap-2">
                     <h3 class="text-sm font-semibold text-highlighted">Last request</h3>
-                    <UBadge :color="requestStatusTone(lastRequest)" variant="subtle" size="sm" class="sp-numeric font-mono">{{ requestStatusCode(lastRequest) }}</UBadge>
+                    <UBadge :color="stateColor(lastRequest.state)" variant="subtle" size="sm">{{ stateLabel(lastRequest.state) }}</UBadge>
                   </div>
                   <div class="space-y-2.5 text-xs">
                     <div class="flex justify-between gap-3"><span class="text-muted">Model</span><span class="max-w-52 truncate font-mono text-[11px] text-highlighted">{{ lastRequest.public_model }}</span></div>

@@ -190,34 +190,20 @@ onBeforeUnmount(() => {
  */
 const requestResultCode = (item: RequestActivity) => {
   const rawError = String(item.error_code ?? '').trim()
-  const error = rawError.toLowerCase()
 
-  // Preserve an explicit HTTP-style error code when the backend recorded one.
+  // Preserve a real HTTP-style code if the backend error text already contains one.
   const explicitCode = rawError.match(/(?:^|\D)([45]\d{2})(?:\D|$)/)?.[1]
   if (explicitCode) return explicitCode
 
-  // Benign client-side stop/close signals are not server failures.
-  if (
-    error.includes('client_closed')
-    || error.includes('client_disconnected')
-    || error.includes('client_disconnect')
-    || error.includes('client_aborted')
-    || error.includes('client_cancelled')
-    || error.includes('client_canceled')
-  ) return '200'
-
+  const error = rawError.toLowerCase()
   if (error.includes('timeout')) return '504'
   if (error.includes('rate') || error.includes('quota') || error.includes('too_many')) return '429'
   if (error.includes('unauthorized') || error.includes('authentication')) return '401'
   if (error.includes('forbidden') || error.includes('not_allowed')) return '403'
   if (error.includes('not_found')) return '404'
 
-  // A real recorded error remains an error even if the reservation was released.
-  if (rawError !== '') return '500'
-
   switch (item.state) {
     case 'settled':
-    case 'released':
       return '200'
     case 'reconciling':
       return '202'
@@ -227,10 +213,11 @@ const requestResultCode = (item: RequestActivity) => {
       return '102'
     case 'received':
       return '100'
+    case 'released':
     case 'failed':
       return '500'
     default:
-      return '200'
+      return item.error_code ? '500' : '200'
   }
 }
 
@@ -242,6 +229,16 @@ const requestResultTone = (item: RequestActivity) => {
   return 'info'
 }
 
+const requestResultLabel = (item: RequestActivity) => {
+  const code = requestResultCode(item)
+  if (code === '200') return 'Success'
+  if (code === '202') return 'Finalizing'
+  if (code === '102') return 'Running'
+  if (code === '100') return 'Received'
+  if (code === '429') return 'Rate limited'
+  if (code === '504') return 'Timeout'
+  return 'Failed'
+}
 
 const stateLabel = (state: string | null | undefined) => {
   switch (String(state ?? '').toLowerCase()) {

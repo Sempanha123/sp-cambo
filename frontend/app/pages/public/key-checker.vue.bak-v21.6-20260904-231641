@@ -114,11 +114,8 @@ const performCheck = async (secret: string, mode: 'manual' | 'refresh') => {
 
     const presentation = errorPresentation(error)
     if (mode === 'refresh' && keyStatus.value) {
-      // Background refresh is intentionally quiet. A transient 429 or network
-      // miss keeps the last successful snapshot on screen and leaves the timer
-      // enabled so the next normal refresh can recover automatically.
-      refreshWarning.value = ''
-      autoRefresh.value = true
+      refreshWarning.value = `${presentation.title}: ${presentation.description}`
+      if (toSpApiError(error).code === 'rate_limit_exceeded') autoRefresh.value = false
     } else {
       checkError.value = presentation
       sessionSecret.value = ''
@@ -309,35 +306,12 @@ const requestFilters = [
 ]
 
 const requestStatusCode = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
-  const rawError = String(request.error_code ?? '').trim()
-  const error = rawError.toLowerCase()
-
-  const explicitCode = rawError.match(/(?:^|\D)([45]\d{2})(?:\D|$)/)?.[1]
-  if (explicitCode) return explicitCode
-
-  if (
-    error.includes('client_closed')
-    || error.includes('client_disconnected')
-    || error.includes('client_disconnect')
-    || error.includes('client_aborted')
-    || error.includes('client_cancelled')
-    || error.includes('client_canceled')
-  ) return '200'
-
-  if (error.includes('timeout')) return '504'
-  if (error.includes('rate') || error.includes('quota') || error.includes('too_many')) return '429'
-  if (error.includes('unauthorized') || error.includes('authentication')) return '401'
-  if (error.includes('forbidden') || error.includes('not_allowed')) return '403'
-  if (error.includes('not_found')) return '404'
-  if (rawError !== '') return '500'
-
-  if (request.state === 'settled' || request.state === 'released') return '200'
+  if (request.status === 'success') return '200'
+  if (request.status === 'error') return request.error_code && request.error_code.toLowerCase().includes('timeout') ? '504' : '500'
+  if (request.state === 'streaming') return '102'
   if (request.state === 'reconciling') return '202'
-  if (request.state === 'streaming' || request.state === 'reserved' || request.state === 'connecting') return '102'
-  if (request.state === 'received') return '100'
-  if (request.state === 'failed') return '500'
-
-  return request.status === 'error' ? '500' : '200'
+  if (request.state === 'reserved' || request.state === 'connecting') return '102'
+  return '200'
 }
 
 const requestStatusTone = (request: NonNullable<PublicApiKeyStatus['recent_requests']>[number]) => {
@@ -618,7 +592,17 @@ const stateLabel = (state: string | null | undefined) => {
           title="This key could not be verified"
           :description="`${checkError.title}: ${checkError.description}`"
         />
-<template v-if="keyStatus">
+        <UAlert
+          v-if="refreshWarning"
+          role="status"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-refresh-cw-off"
+          title="Showing the last successful result"
+          :description="refreshWarning"
+        />
+
+        <template v-if="keyStatus">
           <section
             class="sp-checker-result"
             :class="`sp-checker-result--${statusUi.key}`"
@@ -1048,6 +1032,7 @@ const stateLabel = (state: string | null | undefined) => {
                     <td class="px-3 py-3">
                       <div class="sp-request-status" :class="`sp-request-status--${requestStatusTone(request)}`">
                         <strong class="sp-request-status__code">{{ requestStatusCode(request) }}</strong>
+                        <span class="sp-request-status__label">{{ stateLabel(request.state) }}</span>
                       </div>
                     </td>
                     <td class="px-3 py-3">
@@ -1525,17 +1510,5 @@ const stateLabel = (state: string | null | undefined) => {
   .sp-checker-proof {
     padding: .65rem .75rem;
   }
-}
-</style>
-
-
-<style scoped>
-/* V21.6 numeric-only request status */
-.sp-checker-page .sp-request-status {
-  min-width: 3.75rem;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
 }
 </style>

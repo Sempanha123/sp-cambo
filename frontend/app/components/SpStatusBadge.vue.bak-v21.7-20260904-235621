@@ -72,7 +72,7 @@ const tones: Record<string, { color: Tone, label: string, icon?: string }> = {
   streaming: { color: 'info', label: '102' },
   reconciling: { color: 'warning', label: '202' },
   settled: { color: 'success', label: '200' },
-  released: { color: 'success', label: '200' }
+  released: { color: 'error', label: '500' }
 }
 
 const humanise = (value: string) => {
