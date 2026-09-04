@@ -318,7 +318,7 @@ class InferenceBillingService
         if (($snapshot['billing_mode'] ?? null) === 'TOKEN_QUOTA') {
             $input = max(0, (int) ($usage['input_tokens'] ?? 0));
             $cached = $this->localCacheUnits($snapshot, max(0, (int) ($usage['cache_read_tokens'] ?? 0)));
-            $output = $this->boundedLocalOutput($snapshot, $usage);
+            $output = max(0, (int) ($usage['output_tokens'] ?? 0));
             return $this->checkedAdd($this->checkedAdd($input, $cached), $output);
         }
 
@@ -327,7 +327,7 @@ class InferenceBillingService
         // public gateway never trusts OmniRoute/provider usage for settlement.
         $localUsage = [
             'input_tokens' => max(0, (int) ($usage['input_tokens'] ?? 0)),
-            'output_tokens' => $this->boundedLocalOutput($snapshot, $usage),
+            'output_tokens' => max(0, (int) ($usage['output_tokens'] ?? 0)),
             'cache_read_tokens' => max(0, (int) ($usage['cache_read_tokens'] ?? 0)),
             'cache_write_tokens' => 0,
             'reasoning_tokens' => 0,
@@ -344,22 +344,6 @@ class InferenceBillingService
         throw new InvalidArgumentException('Unsupported billing mode.');
     }
 
-
-    /**
-     * Bound SP-local calibrated output to the max output the customer requested
-     * and that preflight already reserved. Provider/OmniRoute counters are never
-     * consulted here.
-     *
-     * @param array<string, mixed> $snapshot
-     * @param array<string, int> $usage
-     */
-    private function boundedLocalOutput(array $snapshot, array $usage): int
-    {
-        $output = $this->boundedLocalOutput($snapshot, $usage);
-        $requestedMax = max(0, (int) ($snapshot['requested_max_output_tokens'] ?? 0));
-
-        return $requestedMax > 0 ? min($output, $requestedMax) : $output;
-    }
     private function hardMaxOutput(ApiKey $apiKey, ModelAlias $alias): int
     {
         $limits = is_array($alias->limits) ? $alias->limits : [];
