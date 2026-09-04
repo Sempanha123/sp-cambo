@@ -111,11 +111,13 @@ class TelegramAnnouncementService
             'event_key' => $eventKey,
             'kind' => 'NEW_MODEL',
             'title' => 'New model available',
-            'body' => implode("\n", [
-                '🤖 '.$alias->display_name,
-                '✨ Ready to use on SP Cambo',
-                '🛍 Tap Open Store below',
-            ]),
+            'body' => implode("\n", array_filter([
+                $alias->display_name,
+                '🏷️ Alias: '.$alias->public_alias,
+                $provider ? '🔌 Provider: '.$provider : null,
+                $alias->description,
+                '🛍️✨ Open the Store to see packages for this model!',
+            ])),
             'model_alias_id' => $alias->id,
             'package_id' => $package?->id,
         ]);
@@ -481,7 +483,7 @@ class TelegramAnnouncementService
             default => '📣✨',
         };
         $heading = match ($announcement->kind) {
-            'NEW_MODEL' => $km ? 'ម៉ូដែលបានអាប់ដេត ✨' : 'MODEL UPDATED ✨',
+            'NEW_MODEL' => $km ? 'មានម៉ូដែលថ្មីហើយ!' : 'NEW MODEL IS HERE!',
             'NEW_PACKAGE' => $km ? 'មានកញ្ចប់ថ្មីហើយ!' : 'NEW PACKAGE JUST LANDED!',
             'PACKAGE_UPDATE' => $km ? 'កញ្ចប់បានអាប់ដេតហើយ!' : 'PACKAGE JUST GOT AN UPDATE!',
             'STOCK_ADDED' => $km ? 'បានបន្ថែមស្តុកថ្មី!' : 'MORE STOCK JUST ARRIVED!',

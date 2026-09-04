@@ -41,13 +41,12 @@ trait TelegramCommerceWalletFeatures
                     ['text' => $km ? '💰 សមតុល្យ' : '💰 Balance', 'callback_data' => 'balance'],
                 ],
                 [
-                    ['text' => $km ? '🧾✨ ប្រវត្តិ' : '🧾✨ History', 'callback_data' => 'history'],
-                ],
-                [
+                    ['text' => '🔑 API Keys', 'callback_data' => 'keys'],
+                    ['text' => $km ? '🧾 ការបញ្ជាទិញ' : '🧾 Orders', 'callback_data' => 'orders'],
                     ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models', 'callback_data' => 'models'],
-                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language', 'callback_data' => 'language'],
                 ],
                 [
+                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language', 'callback_data' => 'language'],
                     ['text' => $km ? '📞 ជំនួយ' : '📞 Support', 'callback_data' => 'support'],
                 ],
             ],

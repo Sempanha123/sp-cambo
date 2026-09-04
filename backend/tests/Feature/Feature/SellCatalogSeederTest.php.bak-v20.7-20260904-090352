@@ -155,7 +155,7 @@ class SellCatalogSeederTest extends TestCase
 
         // R44 calculated production token prices.
         $claude100 = Package::query()->where('slug', 'claude-token-100m')->firstOrFail();
-        $this->assertSame(269, (int) $claude100->price_minor);
+        $this->assertSame(549, (int) $claude100->price_minor);
         $this->assertSame(100_000_000, (int) $claude100->advertised_units);
         $this->assertSame(86400, (int) $claude100->duration_seconds);
         $this->assertSame(128_000, (int) ($claude100->limits['max_output_tokens'] ?? 0));
@@ -165,7 +165,7 @@ class SellCatalogSeederTest extends TestCase
         );
 
         $codex50 = Package::query()->where('slug', 'codex-token-50m')->firstOrFail();
-        $this->assertSame(199, (int) $codex50->price_minor);
+        $this->assertSame(1409, (int) $codex50->price_minor);
         $this->assertSame(128_000, (int) ($codex50->limits['max_output_tokens'] ?? 0));
         $this->assertSame(
             ['4.8-sol', '5.6-sol', 'openai-codex'],
@@ -173,7 +173,7 @@ class SellCatalogSeederTest extends TestCase
         );
 
         $gemini100 = Package::query()->where('slug', 'gemini-token-100m')->firstOrFail();
-        $this->assertSame(269, (int) $gemini100->price_minor);
+        $this->assertSame(549, (int) $gemini100->price_minor);
         $this->assertSame(65_536, (int) ($gemini100->limits['max_output_tokens'] ?? 0));
         $this->assertSame(
             ['gemini-3.6-flash', 'gemini-3.6-pro', 'gemini-google-ai-studio'],
@@ -191,7 +191,7 @@ class SellCatalogSeederTest extends TestCase
         $credit = Package::query()->where('slug', 'claude-credit-50')->firstOrFail();
         $this->assertSame('TOKEN_QUOTA', $credit->billing_mode);
         $this->assertSame('Claude $50 Credits', $credit->name);
-        $this->assertSame(99, (int) $credit->price_minor);
+        $this->assertSame(149, (int) $credit->price_minor);
         $this->assertSame(5_000_000, (int) $credit->advertised_units);
         $this->assertSame(50, (int) ($credit->billing_rules['display_units'] ?? 0));
         $this->assertSame('Credits', $credit->billing_rules['display_unit_label'] ?? null);

@@ -19,8 +19,7 @@ class SellCatalogSeeder extends Seeder
     private const DAY = 86_400;
     private const LONG_CREDIT_VALIDITY = 365 * self::DAY;
     private const SP_CREDIT_UNITS = 100_000; // $1 displayed Credit = 100k locally metered Tokens.
-    private const PACKAGE_MINIMUM_MARGIN_BPS = 1_000;
-    private const PACKAGE_PRICE_MARKUP_BPS = 1_000; // Small +10% retail increase over V20.6.
+    private const PACKAGE_MINIMUM_MARGIN_BPS = 2_500;
 
     /**
      * R44 LOW-PRICE VOLUME CURVES:
@@ -38,7 +37,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Claude',
             'sort_order' => 10,
             'anchor_units' => 100,
-            'anchor_price_minor' => 159,
+            'anchor_price_minor' => 249,
             'multipliers_bps' => [
                 10 => 18_000,
                 50 => 11_200,
@@ -54,7 +53,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Codex',
             'sort_order' => 30,
             'anchor_units' => 100,
-            'anchor_price_minor' => 249,
+            'anchor_price_minor' => 749,
             'multipliers_bps' => [
                 10 => 10_000,
                 50 => 10_000,
@@ -69,7 +68,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Gemini',
             'sort_order' => 50,
             'anchor_units' => 100,
-            'anchor_price_minor' => 119,
+            'anchor_price_minor' => 199,
             'multipliers_bps' => [
                 10 => 18_000,
                 50 => 11_500,
@@ -84,7 +83,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'DeepSeek',
             'sort_order' => 60,
             'anchor_units' => 100,
-            'anchor_price_minor' => 79,
+            'anchor_price_minor' => 149,
             'multipliers_bps' => [
                 10 => 16_000,
                 50 => 11_000,
@@ -103,7 +102,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Claude',
             'sort_order' => 70,
             'anchor_units' => 100,
-            'anchor_price_minor' => 149,
+            'anchor_price_minor' => 249,
             'multipliers_bps' => [
                 50 => 11_200,
                 100 => 10_000,
@@ -118,7 +117,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Codex',
             'sort_order' => 90,
             'anchor_units' => 100,
-            'anchor_price_minor' => 249,
+            'anchor_price_minor' => 499,
             'multipliers_bps' => [
                 50 => 11_000,
                 100 => 10_000,
@@ -133,7 +132,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'Gemini',
             'sort_order' => 110,
             'anchor_units' => 100,
-            'anchor_price_minor' => 99,
+            'anchor_price_minor' => 149,
             'multipliers_bps' => [
                 50 => 11_000,
                 100 => 10_000,
@@ -148,7 +147,7 @@ class SellCatalogSeeder extends Seeder
             'label' => 'DeepSeek',
             'sort_order' => 130,
             'anchor_units' => 100,
-            'anchor_price_minor' => 59,
+            'anchor_price_minor' => 99,
             'multipliers_bps' => [
                 50 => 11_000,
                 100 => 10_000,
@@ -214,11 +213,11 @@ class SellCatalogSeeder extends Seeder
             // SP internal reference floor for private margin reporting only.
             // It is NOT read from OmniRoute and does not represent a provider invoice.
             'reference' => [
-                'input' => 4,
-                'output' => 20,
+                'input' => 8,
+                'output' => 40,
                 'cache_read' => 1,
-                'cache_write' => 5,
-                'reasoning' => 20,
+                'cache_write' => 10,
+                'reasoning' => 40,
             ],
             'weights' => [
                 'input' => 1_000_000,
@@ -273,11 +272,11 @@ class SellCatalogSeeder extends Seeder
                 'reasoning' => 375,   // $0.375
             ],
             'reference' => [
-                'input' => 6,
-                'output' => 30,
-                'cache_read' => 1,
-                'cache_write' => 8,
-                'reasoning' => 30,
+                'input' => 42,
+                'output' => 210,
+                'cache_read' => 4,
+                'cache_write' => 50,
+                'reasoning' => 210,
             ],
             'weights' => [
                 'input' => 1_000_000,
@@ -332,11 +331,11 @@ class SellCatalogSeeder extends Seeder
                 'reasoning' => 90,    // $0.090
             ],
             'reference' => [
-                'input' => 3,
-                'output' => 15,
+                'input' => 8,
+                'output' => 40,
                 'cache_read' => 1,
-                'cache_write' => 4,
-                'reasoning' => 15,
+                'cache_write' => 8,
+                'reasoning' => 40,
             ],
             'weights' => [
                 'input' => 1_000_000,
@@ -788,30 +787,6 @@ class SellCatalogSeeder extends Seeder
             $prices[$currentUnits] = max($prices[$currentUnits], $this->friendlyPriceMinor($minimumForCurve));
         }
 
-        // V20.7: small retail increase over the already-calculated safe/volume curve.
-        foreach ($prices as $unitKey => $priceMinor) {
-            $markedUp = intdiv(
-                ($priceMinor * (10_000 + self::PACKAGE_PRICE_MARKUP_BPS)) + 9_999,
-                10_000,
-            );
-            $prices[$unitKey] = $this->friendlyPriceMinor($markedUp);
-        }
-
-        // Friendly rounding can shift a boundary by a cent; normalize once more
-        // so larger packages never become more expensive per unit.
-        $units = array_keys($prices);
-        for ($index = count($units) - 2; $index >= 0; $index--) {
-            $currentUnits = $units[$index];
-            $nextUnits = $units[$index + 1];
-            $minimumForCurve = intdiv(
-                ($prices[$nextUnits] * $currentUnits) + $nextUnits - 1,
-                $nextUnits,
-            );
-            $prices[$currentUnits] = max(
-                $prices[$currentUnits],
-                $this->friendlyPriceMinor($minimumForCurve),
-            );
-        }
         return $prices;
     }
 

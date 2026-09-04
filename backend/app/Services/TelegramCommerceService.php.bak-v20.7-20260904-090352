@@ -309,7 +309,7 @@ class TelegramCommerceService
     public function sendSupport(TelegramAccount $account): void
     {
         $km = $this->isKhmer($account);
-        $supportUrl = 'https://t.me/spcambo_chat';
+        $supportUrl = trim((string) config('services.telegram.support_url'));
         $keyboard = [[['text' => $km ? '🏠 ទំព័រដើម' : '🏠 Main Menu', 'callback_data' => 'home']]];
         if ($supportUrl !== '' && preg_match('~^https?://~i', $supportUrl) === 1) {
             array_unshift($keyboard, [[
