@@ -36,11 +36,32 @@ class PackageCatalogSeederTest extends TestCase
         $this->assertNull($provider->active_connection_revision_id);
         $this->assertDatabaseCount('provider_connection_revisions', 0);
 
-        $this->assertSame(
-            ['Chatgpt', 'Claude', 'Deepseek', 'Gemini'],
-            AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
+        $this->assertEqualsCanonicalizing(
+            [
+                'gpt-5.6-sol',
+                'gpt-5.6-terra',
+                'gpt-5.6-luna',
+                'gpt-4.8-sol',
+                'claude-fable-5',
+                'claude-mythos-5',
+                'claude-opus-5',
+                'claude-opus-4-8',
+                'claude-opus-4-7',
+                'claude-opus-4-6',
+                'claude-sonnet-5',
+                'claude-sonnet-4-6',
+                'claude-haiku-4-5',
+                'gemini-3.8-flash',
+                'gemini-3.7-flash',
+                'gemini-3.6-flash',
+                'gemini-3.5-flash',
+                'gemini-3.5-flash-lite',
+                'deepseek-v4-flash',
+                'deepseek-v4-pro',
+            ],
+            AiModel::query()->where('enabled', true)->pluck('internal_model_id')->all(),
         );
-        $this->assertSame(10, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
+        $this->assertSame(20, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
         $this->assertSame(57, Package::query()->where('enabled', true)->where('customer_visible', true)->count());
 
         // Nothing is publicly sellable until the Admin-managed route is READY.
@@ -68,18 +89,76 @@ class PackageCatalogSeederTest extends TestCase
         ]);
         $provider->activateConnectionRevision($revision);
 
-        $this->assertSame(10, ModelAlias::query()->published()->count());
+        $this->assertSame(20, ModelAlias::query()->published()->count());
         $this->assertSame(57, Package::query()->published()->count());
-        $this->assertSame(57, Package::query()->published()->where('billing_mode', 'TOKEN_QUOTA')->count());
+        
+        // Both Token and Credit products are quota-backed internally.
+        $this->assertSame(
+            57,
+            Package::query()
+                ->published()
+                ->where('billing_mode', 'TOKEN_QUOTA')
+                ->count()
+        );
+        
+        $this->assertSame(
+            0,
+            Package::query()
+                ->published()
+                ->where('billing_mode', 'CREDIT_BALANCE')
+                ->count()
+        );
+        
+        // Check customer-facing package kinds instead.
+        $publishedPackages = Package::query()->published()->get();
+        
+        $this->assertSame(
+            29,
+            $publishedPackages
+                ->filter(fn (Package $package) =>
+                    data_get($package->billing_rules, 'package_kind') === 'SP_TOKENS'
+                )
+                ->count()
+        );
+        
+        $this->assertSame(
+            28,
+            $publishedPackages
+                ->filter(fn (Package $package) =>
+                    data_get($package->billing_rules, 'package_kind') === 'SP_CREDITS'
+                )
+                ->count()
+        );
     }
 
     public function test_sell_catalog_keeps_exact_private_combo_ids(): void
     {
         $this->seed(SellCatalogSeeder::class);
 
-        $this->assertSame(
-            ['Chatgpt', 'Claude', 'Deepseek', 'Gemini'],
-            AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
+        $this->assertEqualsCanonicalizing(
+            [
+                'gpt-5.6-sol',
+                'gpt-5.6-terra',
+                'gpt-5.6-luna',
+                'gpt-4.8-sol',
+                'claude-fable-5',
+                'claude-mythos-5',
+                'claude-opus-5',
+                'claude-opus-4-8',
+                'claude-opus-4-7',
+                'claude-opus-4-6',
+                'claude-sonnet-5',
+                'claude-sonnet-4-6',
+                'claude-haiku-4-5',
+                'gemini-3.8-flash',
+                'gemini-3.7-flash',
+                'gemini-3.6-flash',
+                'gemini-3.5-flash',
+                'gemini-3.5-flash-lite',
+                'deepseek-v4-flash',
+                'deepseek-v4-pro',
+            ],
+            AiModel::query()->where('enabled', true)->pluck('internal_model_id')->all(),
         );
     }
 }

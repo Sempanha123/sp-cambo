@@ -184,24 +184,15 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                'opus-5' => [
-                    'display_name' => 'Claude Opus 5',
-                    'context_tokens' => 1_000_000,
-                    'max_output_tokens' => 128_000,
-                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
-                ],
-                'sonnet-5' => [
-                    'display_name' => 'Claude Sonnet 5',
-                    'context_tokens' => 1_000_000,
-                    'max_output_tokens' => 128_000,
-                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
-                ],
-                'haiku-4.5' => [
-                    'display_name' => 'Claude Haiku 4.5',
-                    'context_tokens' => 200_000,
-                    'max_output_tokens' => 64_000,
-                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
-                ],
+                'claude-fable-5' => ['display_name' => 'Claude Fable 5', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-mythos-5' => ['display_name' => 'Claude Mythos 5', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-opus-5' => ['display_name' => 'Claude Opus 5', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-opus-4-8' => ['display_name' => 'Claude Opus 4.8', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-opus-4-7' => ['display_name' => 'Claude Opus 4.7', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-opus-4-6' => ['display_name' => 'Claude Opus 4.6', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-sonnet-5' => ['display_name' => 'Claude Sonnet 5', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-sonnet-4-6' => ['display_name' => 'Claude Sonnet 4.6', 'context_tokens' => 1_000_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'claude-haiku-4-5' => ['display_name' => 'Claude Haiku 4.5', 'context_tokens' => 200_000, 'max_output_tokens' => 64_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
             ],
             // Aggressive SP-local customer rates, USD exponent-3 units / 1M SP-metered tokens.
             'sell' => [
@@ -246,24 +237,10 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                '5.6-sol' => [
-                    'display_name' => 'GPT-5.6 Sol',
-                    'context_tokens' => 1_050_000,
-                    'max_output_tokens' => 128_000,
-                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
-                ],
-                '4.8-sol' => [
-                    'display_name' => 'GPT-4.8 Sol',
-                    'context_tokens' => 400_000,
-                    'max_output_tokens' => 128_000,
-                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
-                ],
-                'openai-codex' => [
-                    'display_name' => 'OpenAI Codex',
-                    'context_tokens' => 400_000,
-                    'max_output_tokens' => 128_000,
-                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
-                ],
+                'gpt-5.6-sol' => ['display_name' => 'GPT-5.6 Sol', 'context_tokens' => 1_050_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gpt-5.6-terra' => ['display_name' => 'GPT-5.6 Terra', 'context_tokens' => 1_050_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gpt-5.6-luna' => ['display_name' => 'GPT-5.6 Luna', 'context_tokens' => 1_050_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gpt-4.8-sol' => ['display_name' => 'GPT-4.8 Sol', 'context_tokens' => 400_000, 'max_output_tokens' => 128_000, 'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE'],
             ],
             'sell' => [
                 'input' => 75,        // $0.075
@@ -305,24 +282,11 @@ class SellCatalogSeeder extends Seeder
             'minimum_request_units' => 0,
             'local_cache_read_billing_bps' => 2_500,
             'aliases' => [
-                'gemini-3.6-flash' => [
-                    'display_name' => 'Gemini 3.6 Flash',
-                    'context_tokens' => 1_048_576,
-                    'max_output_tokens' => 65_536,
-                    'capability_basis' => 'PROVIDER_PUBLIC_SPEC',
-                ],
-                'gemini-3.6-pro' => [
-                    'display_name' => 'Gemini 3.6 Pro',
-                    'context_tokens' => 1_048_576,
-                    'max_output_tokens' => 65_536,
-                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
-                ],
-                'gemini-google-ai-studio' => [
-                    'display_name' => 'Gemini Google AI Studio',
-                    'context_tokens' => 1_048_576,
-                    'max_output_tokens' => 65_536,
-                    'capability_basis' => 'SP_CAMBO_ROUTE_PROFILE',
-                ],
+                'gemini-3.8-flash' => ['display_name' => 'Gemini 3.8 Flash', 'context_tokens' => 1_048_576, 'max_output_tokens' => 65_536, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gemini-3.7-flash' => ['display_name' => 'Gemini 3.7 Flash', 'context_tokens' => 1_048_576, 'max_output_tokens' => 65_536, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gemini-3.6-flash' => ['display_name' => 'Gemini 3.6 Flash', 'context_tokens' => 1_048_576, 'max_output_tokens' => 65_536, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gemini-3.5-flash' => ['display_name' => 'Gemini 3.5 Flash', 'context_tokens' => 1_048_576, 'max_output_tokens' => 65_536, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
+                'gemini-3.5-flash-lite' => ['display_name' => 'Gemini 3.5 Flash-Lite', 'context_tokens' => 1_048_576, 'max_output_tokens' => 65_536, 'capability_basis' => 'PROVIDER_PUBLIC_SPEC'],
             ],
             'sell' => [
                 'input' => 18,        // $0.018
@@ -409,6 +373,45 @@ class SellCatalogSeeder extends Seeder
         ],
     ];
 
+    /**
+     * V21.0 CANONICAL MODEL ROUTING
+     *
+     * Public alias = SP private internal_model_id = OmniRoute Combo Name.
+     * This removes avoidable naming translation between the public API and
+     * OmniRoute. gpt-4.8-sol and the DeepSeek V4 names remain operator-owned
+     * SP Cambo route names; the other entries use current public provider IDs.
+     *
+     * @var array<string,array{internal_model_id:string,display_name:string}>
+     */
+    private const STRICT_COMBOS = [
+        // OpenAI / GPT
+        'gpt-5.6-sol' => ['internal_model_id' => 'gpt-5.6-sol', 'display_name' => 'GPT-5.6 Sol'],
+        'gpt-5.6-terra' => ['internal_model_id' => 'gpt-5.6-terra', 'display_name' => 'GPT-5.6 Terra'],
+        'gpt-5.6-luna' => ['internal_model_id' => 'gpt-5.6-luna', 'display_name' => 'GPT-5.6 Luna'],
+        'gpt-4.8-sol' => ['internal_model_id' => 'gpt-4.8-sol', 'display_name' => 'GPT-4.8 Sol'],
+
+        // Claude
+        'claude-fable-5' => ['internal_model_id' => 'claude-fable-5', 'display_name' => 'Claude Fable 5'],
+        'claude-mythos-5' => ['internal_model_id' => 'claude-mythos-5', 'display_name' => 'Claude Mythos 5'],
+        'claude-opus-5' => ['internal_model_id' => 'claude-opus-5', 'display_name' => 'Claude Opus 5'],
+        'claude-opus-4-8' => ['internal_model_id' => 'claude-opus-4-8', 'display_name' => 'Claude Opus 4.8'],
+        'claude-opus-4-7' => ['internal_model_id' => 'claude-opus-4-7', 'display_name' => 'Claude Opus 4.7'],
+        'claude-opus-4-6' => ['internal_model_id' => 'claude-opus-4-6', 'display_name' => 'Claude Opus 4.6'],
+        'claude-sonnet-5' => ['internal_model_id' => 'claude-sonnet-5', 'display_name' => 'Claude Sonnet 5'],
+        'claude-sonnet-4-6' => ['internal_model_id' => 'claude-sonnet-4-6', 'display_name' => 'Claude Sonnet 4.6'],
+        'claude-haiku-4-5' => ['internal_model_id' => 'claude-haiku-4-5', 'display_name' => 'Claude Haiku 4.5'],
+
+        // Gemini
+        'gemini-3.8-flash' => ['internal_model_id' => 'gemini-3.8-flash', 'display_name' => 'Gemini 3.8 Flash'],
+        'gemini-3.7-flash' => ['internal_model_id' => 'gemini-3.7-flash', 'display_name' => 'Gemini 3.7 Flash'],
+        'gemini-3.6-flash' => ['internal_model_id' => 'gemini-3.6-flash', 'display_name' => 'Gemini 3.6 Flash'],
+        'gemini-3.5-flash' => ['internal_model_id' => 'gemini-3.5-flash', 'display_name' => 'Gemini 3.5 Flash'],
+        'gemini-3.5-flash-lite' => ['internal_model_id' => 'gemini-3.5-flash-lite', 'display_name' => 'Gemini 3.5 Flash-Lite'],
+
+        // DeepSeek operator routes
+        'deepseek-v4-flash' => ['internal_model_id' => 'deepseek-v4-flash', 'display_name' => 'DeepSeek V4 Flash'],
+        'deepseek-v4-pro' => ['internal_model_id' => 'deepseek-v4-pro', 'display_name' => 'DeepSeek V4 Pro'],
+    ];
     public function run(): void
     {
         $provider = Provider::query()->updateOrCreate(
@@ -523,6 +526,10 @@ class SellCatalogSeeder extends Seeder
             }
         }
 
+        // V21.0: move every public alias onto its exact canonical OmniRoute combo model.
+        // Existing route-pool entry IDs are preserved; only ai_model_id changes,
+        // so historical reservations and connection-revision settings stay intact.
+        $modelIds = $this->applyStrictComboModels($provider, $aliasIds);
         $allPublicAliases = collect($routeAliases)->flatten()->values()->all();
 
         PlaygroundSetting::current()->forceFill([
@@ -599,7 +606,7 @@ class SellCatalogSeeder extends Seeder
             $this->command->line($bootstrapRevision
                 ? 'OmniRoute bootstrap revision exists; probe/activate it in Admin > Providers.'
                 : 'Configure OmniRoute in Admin > Providers, then Probe and Activate.');
-            $this->command->line('Private combo IDs: Claude, Chatgpt, Gemini, Deepseek.');
+            $this->command->line('Private combo IDs: '.implode(', ', array_column(self::STRICT_COMBOS, 'internal_model_id')).'.');
             $this->command->line('Public aliases: '.implode(', ', $allPublicAliases).'.');
             $this->command->line('Calculated volume-priced 1-day Token lines + long-life Credit lines seeded for Claude, Codex, Gemini and DeepSeek.');
             $this->command->line('Customer billing: local 1:1 new input/output; locally reused context bills at 0.25x; OmniRoute/provider usage and cost metadata are ignored.');
@@ -607,6 +614,109 @@ class SellCatalogSeeder extends Seeder
         }
     }
 
+    /**
+     * Create one private model per public alias and align any existing route pool
+     * entries with that exact OmniRoute combo. This intentionally preserves route
+     * entry IDs, priorities, weights, revisions and reservation history.
+     *
+     * @param array<string,int|string> $aliasIds
+     * @return list<int>
+     */
+    private function applyStrictComboModels(Provider $provider, array $aliasIds): array
+    {
+        $strictModelIds = [];
+
+        foreach (self::STRICT_COMBOS as $publicAlias => $combo) {
+            $route = null;
+            $aliasProfile = null;
+
+            foreach (self::ROUTES as $candidateRoute) {
+                if (array_key_exists($publicAlias, $candidateRoute['aliases'])) {
+                    $route = $candidateRoute;
+                    $aliasProfile = $candidateRoute['aliases'][$publicAlias];
+                    break;
+                }
+            }
+
+            if (!is_array($route) || !is_array($aliasProfile)) {
+                throw new \RuntimeException("V21.0 canonical combo {$publicAlias} is missing from ROUTES.");
+            }
+
+            $aliasId = $aliasIds[$publicAlias] ?? null;
+            if ($aliasId === null) {
+                throw new \RuntimeException("V21.0 canonical combo {$publicAlias} has no seeded public alias id.");
+            }
+
+            $alias = ModelAlias::query()->findOrFail($aliasId);
+            $model = AiModel::query()->firstOrNew([
+                'provider_id' => $provider->id,
+                'internal_model_id' => $combo['internal_model_id'],
+            ]);
+
+            $model->forceFill([
+                'display_name' => $combo['display_name'],
+                'family' => $route['family'],
+                'family_label' => $combo['display_name'],
+                'capabilities' => [
+                    'streaming' => true,
+                    'tools' => true,
+                    'vision' => (bool) $route['vision'],
+                    'reasoning' => (bool) $route['reasoning'],
+                    'context_tokens' => (int) $aliasProfile['context_tokens'],
+                    'max_output_tokens' => (int) $aliasProfile['max_output_tokens'],
+                ],
+                'limits' => [
+                    'context_window' => (int) $aliasProfile['context_tokens'],
+                    'max_output_tokens' => (int) $aliasProfile['max_output_tokens'],
+                ],
+                'enabled' => true,
+            ]);
+
+            if ($model->commercial_resale_verified_at === null) {
+                $model->commercial_resale_verified_at = now();
+            }
+            $model->save();
+
+            $alias->forceFill(['ai_model_id' => $model->id])->save();
+
+            $pool = \App\Models\ModelRoutePool::query()
+                ->where('model_alias_id', $alias->id)
+                ->first();
+
+            if ($pool) {
+                $entries = \App\Models\ModelRoutePoolEntry::query()
+                    ->where('model_route_pool_id', $pool->id)
+                    ->orderBy('id')
+                    ->get();
+
+                foreach ($entries as $entry) {
+                    if ((int) $entry->ai_model_id === (int) $model->id) {
+                        continue;
+                    }
+
+                    $conflict = \App\Models\ModelRoutePoolEntry::query()
+                        ->where('model_route_pool_id', $pool->id)
+                        ->where('provider_connection_revision_id', $entry->provider_connection_revision_id)
+                        ->where('ai_model_id', $model->id)
+                        ->whereKeyNot($entry->id)
+                        ->exists();
+
+                    if ($conflict) {
+                        throw new \RuntimeException(
+                            "V21.0 cannot remap route entry {$entry->id} for {$publicAlias}: "
+                            .'the same connection revision already has this strict combo model.'
+                        );
+                    }
+
+                    $entry->forceFill(['ai_model_id' => $model->id])->save();
+                }
+            }
+
+            $strictModelIds[] = (int) $model->id;
+        }
+
+        return array_values(array_unique($strictModelIds));
+    }
     /** @return array<string,int> */
     private function customerLimits(int $maxOutputTokens = 65_536): array
     {
