@@ -162,7 +162,7 @@ class SellCatalogSeeder extends Seeder
     ];
 
     /**
-     * R29 keeps three stable operator-owned OmniRoute combo IDs. Public aliases are
+     * R45 follows the operator-owned OmniRoute route names configured in production. Public aliases are
      * just SP Cambo routing labels and several aliases may point at the same combo.
      * That lets OmniRoute rotate/fail over accounts without changing customer keys.
      *
@@ -174,8 +174,8 @@ class SellCatalogSeeder extends Seeder
      */
     private const ROUTES = [
         'claude' => [
-            'internal_model_id' => 'AgentRouter-claude-opus-5',
-            'internal_display_name' => 'AgentRouter Claude Combo',
+            'internal_model_id' => 'Claude',
+            'internal_display_name' => 'Claude Combo',
             'family' => 'claude',
             'vision' => true,
             'reasoning' => true,
@@ -236,7 +236,7 @@ class SellCatalogSeeder extends Seeder
             ],
         ],
         'codex' => [
-            'internal_model_id' => 'OpenAI Codex',
+            'internal_model_id' => 'Chatgpt',
             'internal_display_name' => 'OpenAI Codex Combo',
             'family' => 'codex',
             'vision' => true,
@@ -295,7 +295,7 @@ class SellCatalogSeeder extends Seeder
             ],
         ],
         'gemini' => [
-            'internal_model_id' => 'Gemini Google AI Studio',
+            'internal_model_id' => 'Gemini',
             'internal_display_name' => 'Gemini Google AI Studio Combo',
             'family' => 'gemini',
             'vision' => true,
@@ -355,7 +355,7 @@ class SellCatalogSeeder extends Seeder
         ],
         'deepseek' => [
             // Operator-provided OmniRoute internal model id. Keep this exact spelling.
-            'internal_model_id' => 'Deepsek',
+            'internal_model_id' => 'Deepseek',
             'internal_display_name' => 'DeepSeek Combo',
             'family' => 'deepseek',
             'vision' => false,
@@ -599,7 +599,7 @@ class SellCatalogSeeder extends Seeder
             $this->command->line($bootstrapRevision
                 ? 'OmniRoute bootstrap revision exists; probe/activate it in Admin > Providers.'
                 : 'Configure OmniRoute in Admin > Providers, then Probe and Activate.');
-            $this->command->line('Private combo IDs: AgentRouter-claude-opus-5, OpenAI Codex, Gemini Google AI Studio, Deepsek.');
+            $this->command->line('Private combo IDs: Claude, Chatgpt, Gemini, Deepseek.');
             $this->command->line('Public aliases: '.implode(', ', $allPublicAliases).'.');
             $this->command->line('Calculated volume-priced 1-day Token lines + long-life Credit lines seeded for Claude, Codex, Gemini and DeepSeek.');
             $this->command->line('Customer billing: local 1:1 new input/output; locally reused context bills at 0.25x; OmniRoute/provider usage and cost metadata are ignored.');

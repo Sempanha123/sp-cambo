@@ -36,7 +36,7 @@ class SellCatalogSeederTest extends TestCase
         $this->seed(SellCatalogSeeder::class);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['Chatgpt', 'Claude', 'Deepseek', 'Gemini'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
 
@@ -65,25 +65,25 @@ class SellCatalogSeederTest extends TestCase
         );
 
         $this->assertSame(
-            'AgentRouter-claude-opus-5',
+            'Claude',
             ModelAlias::query()->where('public_alias', 'opus-5')->firstOrFail()->model()->value('internal_model_id'),
         );
         foreach (['deepseek-v4-flash', 'deepseek-v4-pro'] as $deepseekAlias) {
             $this->assertSame(
-                'Deepsek',
+                'Deepseek',
                 ModelAlias::query()->where('public_alias', $deepseekAlias)->firstOrFail()->model()->value('internal_model_id'),
             );
         }
         $this->assertSame(
-            'OpenAI Codex',
+            'Chatgpt',
             ModelAlias::query()->where('public_alias', '5.6-sol')->firstOrFail()->model()->value('internal_model_id'),
         );
         $this->assertSame(
-            'OpenAI Codex',
+            'Chatgpt',
             ModelAlias::query()->where('public_alias', '4.8-sol')->firstOrFail()->model()->value('internal_model_id'),
         );
         $this->assertSame(
-            'Gemini Google AI Studio',
+            'Gemini',
             ModelAlias::query()->where('public_alias', 'gemini-3.6-flash')->firstOrFail()->model()->value('internal_model_id'),
         );
 
@@ -275,7 +275,7 @@ class SellCatalogSeederTest extends TestCase
             ModelAlias::query()->where('public_alias', '5.6-sol')->firstOrFail()->model()->value('internal_model_id'),
         );
         $this->assertSame(
-            'AgentRouter-claude-opus-5',
+            'Claude',
             ModelAlias::query()->where('public_alias', 'opus-5')->firstOrFail()->model()->value('internal_model_id'),
         );
     }

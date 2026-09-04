@@ -37,7 +37,7 @@ class PackageCatalogSeederTest extends TestCase
         $this->assertDatabaseCount('provider_connection_revisions', 0);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['Chatgpt', 'Claude', 'Deepseek', 'Gemini'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
         $this->assertSame(10, ModelAlias::query()->where('enabled', true)->where('customer_visible', true)->count());
@@ -78,7 +78,7 @@ class PackageCatalogSeederTest extends TestCase
         $this->seed(SellCatalogSeeder::class);
 
         $this->assertSame(
-            ['AgentRouter-claude-opus-5', 'Deepsek', 'Gemini Google AI Studio', 'OpenAI Codex'],
+            ['Chatgpt', 'Claude', 'Deepseek', 'Gemini'],
             AiModel::query()->where('enabled', true)->orderBy('internal_model_id')->pluck('internal_model_id')->all(),
         );
     }
