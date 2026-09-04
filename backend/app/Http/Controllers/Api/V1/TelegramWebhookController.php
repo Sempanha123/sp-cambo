@@ -126,10 +126,18 @@ class TelegramWebhookController extends Controller
                 }
             } elseif ($command === '/balance' || $this->matches($normalized, ['💰 balance', '💰 my balance', '💰 សមតុល្យ', '💰 សមតុល្យរបស់ខ្ញុំ'])) {
                 $telegram->sendBalance($account);
-            } elseif ($command === '/keys' || $command === '/apikeys' || $this->matches($normalized, ['🔑 api keys', '🔑 my api keys', '🔑 api keys របស់ខ្ញុំ'])) {
-                $telegram->sendApiKeys($account);
-            } elseif ($command === '/orders' || $this->matches($normalized, ['🧾 orders', '🧾 my orders', '🧾 ការបញ្ជាទិញ', '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ', '📋 orders', '📋 ការបញ្ជាទិញ'])) {
-                $ui->sendOrders($account);
+            } elseif ($command === '/history'
+                || $command === '/keys'
+                || $command === '/apikeys'
+                || $command === '/orders'
+                || $this->matches($normalized, [
+                    '🧾✨ history', '🧾 history', 'history',
+                    '🧾✨ ប្រវត្តិ', '🧾 ប្រវត្តិ', 'ប្រវត្តិ',
+                    '🔑 api keys', '🔑 my api keys', '🔑 api keys របស់ខ្ញុំ',
+                    '🧾 orders', '🧾 my orders', '🧾 ការបញ្ជាទិញ', '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ',
+                    '📋 orders', '📋 ការបញ្ជាទិញ',
+                ])) {
+                $ui->sendHistory($account);
             } elseif ($command === '/models' || $this->matches($normalized, ['🧠 models', '🧠 ម៉ូដែល'])) {
                 $telegram->sendModels($account);
             } elseif ($command === '/language' || $this->matches($normalized, ['🌐 language', '🌐 ភាសា'])) {
@@ -152,7 +160,7 @@ class TelegramWebhookController extends Controller
             try {
                 $bot->sendMessage($chatId, '🧾 '.$e->getMessage(), [
                     'inline_keyboard' => [[
-                        ['text' => '⏳ Pending Orders', 'callback_data' => 'orders:pending'],
+                        ['text' => '🧾✨ History', 'callback_data' => 'history'],
                         ['text' => '🏠 Home', 'callback_data' => 'home'],
                     ]],
                 ]);
@@ -292,19 +300,13 @@ class TelegramWebhookController extends Controller
             $ack($bot, $callbackId);
             return;
         }
-        if ($data === 'keys') {
-            $telegram->sendApiKeys($account);
-            $ack($bot, $callbackId);
-            return;
-        }
-        if ($data === 'orders' || $data === 'orders:completed') {
-            $ui->sendOrders($account, 'completed');
-            $ack($bot, $callbackId);
-            return;
-        }
-        if ($data === 'orders:pending') {
-            $ui->sendOrders($account, 'pending');
-            $ack($bot, $callbackId);
+        if ($data === 'history'
+            || $data === 'keys'
+            || $data === 'orders'
+            || $data === 'orders:completed'
+            || $data === 'orders:pending') {
+            $ui->sendHistory($account, $messageId);
+            $ack($bot, $callbackId, 'History');
             return;
         }
         if ($data === 'models') {

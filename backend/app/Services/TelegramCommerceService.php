@@ -797,7 +797,7 @@ class TelegramCommerceService
             'inline_keyboard' => [
                 [
                     ['text' => $km ? '📊 ពិនិត្យ Usage' : '📊 Check Usage', 'url' => $checker],
-                    ['text' => $km ? '🔑 API Keys របស់ខ្ញុំ' : '🔑 My API Keys', 'callback_data' => 'keys'],
+                    ['text' => $km ? '🧾✨ ប្រវត្តិ' : '🧾✨ History', 'callback_data' => 'history'],
                 ],
                 [
                     ['text' => $km ? '🛍 ទិញបន្ថែម' : '🛍 Buy More', 'callback_data' => 'store:1'],
@@ -957,18 +957,17 @@ class TelegramCommerceService
                 ],
                 [
                     ['text' => $km ? '💰 សមតុល្យរបស់ខ្ញុំ' : '💰 My Balance'],
-                    ['text' => $km ? '🔑 API Keys របស់ខ្ញុំ' : '🔑 My API Keys'],
+                    ['text' => $km ? '🧾✨ ប្រវត្តិ' : '🧾✨ History'],
                 ],
                 [
-                    ['text' => $km ? '🧾 ការបញ្ជាទិញរបស់ខ្ញុំ' : '🧾 My Orders'],
                     ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models'],
-                ],
-                [
                     ['text' => $km ? '🔔 ព័ត៌មានថ្មី' : '🔔 Updates'],
-                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language'],
                 ],
                 [
+                    ['text' => $km ? '🌐 ភាសា' : '🌐 Language'],
                     ['text' => $km ? '📞 ជំនួយ' : '📞 Support'],
+                ],
+                [
                     ['text' => $km ? '➕💵 បញ្ចូលប្រាក់' : '➕💵 Add Money'],
                 ],
             ],

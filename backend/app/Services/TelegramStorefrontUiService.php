@@ -16,6 +16,7 @@ class TelegramStorefrontUiService
     public function __construct(
         private readonly TelegramBotClient $bot,
         private readonly TelegramPendingOrderPolicy $pendingOrders,
+        private readonly ApiKeySecretService $secrets,
     ) {}
 
     /**
@@ -91,7 +92,7 @@ class TelegramStorefrontUiService
 
         $keyboard[] = [
             ['text' => $km ? '🧠 ម៉ូដែល' : '🧠 Models', 'callback_data' => 'models'],
-            ['text' => $km ? '🧾 ការទិញ' : '🧾 Orders', 'callback_data' => 'orders'],
+            ['text' => $km ? '🧾✨ ប្រវត្តិ' : '🧾✨ History', 'callback_data' => 'history'],
             ['text' => '🏠 Home', 'callback_data' => 'home'],
         ];
 
@@ -236,24 +237,20 @@ class TelegramStorefrontUiService
         );
     }
 
-    public function sendOrders(TelegramAccount $account, string $view = 'completed'): void
+    /** V20.5 unified Telegram purchase history. */
+    public function sendHistory(TelegramAccount $account, ?int $messageId = null): void
     {
-        // Keep the list fresh even if the user opens Orders before the scheduled
-        // cleanup tick. Only abandoned unpaid orders older than one hour can be
-        // removed; paid/delivery-retry orders are protected.
+        // Preserve the existing pending-order cleanup policy. Only abandoned
+        // unpaid orders are cleaned up; paid/delivery-retry orders remain safe.
         $this->pendingOrders->cleanupExpired($account, 50);
 
-        if ($view === 'pending') {
-            $this->sendPendingOrders($account);
-            return;
-        }
-
-        $this->sendCompletedOrders($account);
-    }
-
-    private function sendCompletedOrders(TelegramAccount $account): void
-    {
         $km = $this->isKhmer($account);
+
+        $pending = $this->pendingQuery($account)
+            ->with('order.items')
+            ->latest()
+            ->limit(4)
+            ->get();
 
         $completed = TelegramPurchase::query()
             ->where('telegram_account_id', $account->id)
@@ -261,152 +258,114 @@ class TelegramStorefrontUiService
                 $query->whereNotNull('delivered_at')
                     ->orWhere('status', 'DELIVERED');
             })
-            ->with('order.items')
+            ->with(['order.items', 'apiKey.modelAliases'])
             ->latest('delivered_at')
-            ->limit(self::ORDER_PAGE_SIZE)
+            ->limit(8)
             ->get();
 
-        $pendingCount = $this->pendingQuery($account)->count();
-
-        if ($completed->isEmpty()) {
-            $text = $km
-                ? "🧾✨ ការទិញរបស់ខ្ញុំ\n\nមិនទាន់មានការទិញដែលបានបញ្ចប់ទេ។"
-                : "🧾✨ MY PURCHASES\n\nNo completed purchases yet.";
-
-            if ($pendingCount > 0) {
-                $text .= $km
-                    ? "\n\n⏳ មាន {$pendingCount} ការទូទាត់/ការបញ្ជាទិញកំពុងរង់ចាំ។"
-                    : "\n\n⏳ {$pendingCount} payment/order".($pendingCount === 1 ? ' is' : 's are').' still pending.';
-            }
-
-            $keyboard = [];
-            if ($pendingCount > 0) {
-                $keyboard[] = [[
-                    'text' => '⏳ '.($km ? 'កំពុងរង់ចាំ' : 'Pending').' ('.$pendingCount.')',
-                    'callback_data' => 'orders:pending',
-                ]];
-            }
-            $keyboard[] = [
-                ['text' => $km ? '🛍 ទិញ' : '🛍 Buy', 'callback_data' => 'store:1'],
-                ['text' => '🏠 Home', 'callback_data' => 'home'],
-            ];
-
-            $this->bot->sendMessage(
-                $account->chat_id,
-                $text,
-                ['inline_keyboard' => $keyboard],
-            );
-
-            return;
-        }
-
         $lines = [
-            $km ? '✅✨ ការទិញបានជោគជ័យ' : '✅✨ COMPLETED PURCHASES',
+            $km ? '🧾✨ ប្រវត្តិរបស់ខ្ញុំ' : '🧾✨ MY HISTORY',
+            $km ? 'ការទូទាត់កំពុងរង់ចាំ + ការទិញដែលបានបញ្ចប់' : 'Pending payments + completed purchases',
             '',
         ];
-
-        foreach ($completed as $index => $purchase) {
-            $order = $purchase->order;
-            $name = $order?->items?->first()?->package_name ?? 'Package';
-            $reference = $this->shortReference((string) ($order?->reference ?? ''));
-            $date = $purchase->delivered_at?->format('M j, Y')
-                ?? $purchase->updated_at?->format('M j, Y')
-                ?? '—';
-
-            $lines[] = ($index + 1).'. ✅ '.$name;
-            $lines[] = '   '.$date.($reference !== '' ? ' · '.$reference : '');
-        }
 
         $keyboard = [];
 
-        if ($pendingCount > 0) {
-            $keyboard[] = [[
-                'text' => '⏳ '.($km ? 'កំពុងរង់ចាំ' : 'Pending').' ('.$pendingCount.')',
-                'callback_data' => 'orders:pending',
-            ]];
+        if ($pending->isNotEmpty()) {
+            $lines[] = $km ? '⏳💳 កំពុងរង់ចាំ' : '⏳💳 PENDING PAYMENT';
+
+            foreach ($pending as $index => $purchase) {
+                $order = $purchase->order;
+                $name = $order?->items?->first()?->package_name ?? 'Package';
+                $price = $order
+                    ? $this->money(
+                        (int) $order->total_minor,
+                        (string) $order->currency,
+                        (int) $order->currency_exponent,
+                    )
+                    : '';
+                $reference = $this->shortReference((string) ($order?->reference ?? ''));
+
+                $lines[] = ($index + 1).'. '.$this->pendingIcon($purchase).' '.$name;
+                $lines[] = '   '.$this->pendingLabel($purchase, $km)
+                    .($price !== '' ? ' · '.$price : '')
+                    .($reference !== '' ? ' · '.$reference : '');
+
+                $keyboard[] = [[
+                    'text' => '🔄 '.($km ? 'ពិនិត្យការទូទាត់' : 'Check Payment').' #'.($index + 1),
+                    'callback_data' => 'check:'.$purchase->id,
+                ]];
+            }
+
+            $lines[] = '';
+        }
+
+        if ($completed->isNotEmpty()) {
+            $lines[] = $km ? '✅🎁 បានទិញរួច' : '✅🎁 PURCHASED';
+
+            foreach ($completed as $index => $purchase) {
+                $order = $purchase->order;
+                $key = $purchase->apiKey;
+                $name = $order?->items?->first()?->package_name ?? 'Package';
+                $reference = $this->shortReference((string) ($order?->reference ?? ''));
+                $date = $purchase->delivered_at?->format('M j, Y')
+                    ?? $purchase->updated_at?->format('M j, Y')
+                    ?? '—';
+                $price = $order
+                    ? $this->money(
+                        (int) $order->total_minor,
+                        (string) $order->currency,
+                        (int) $order->currency_exponent,
+                    )
+                    : '';
+
+                $lines[] = ($index + 1).'. 📦 '.$name;
+                $lines[] = '   '.$date
+                    .($price !== '' ? ' · '.$price : '')
+                    .($reference !== '' ? ' · '.$reference : '');
+
+                if ($key && (string) $key->user_id === (string) $account->user_id) {
+                    $masked = trim((string) $key->prefix).($key->last_four ? '••••'.$key->last_four : '');
+                    if ($masked !== '') {
+                        $lines[] = '   🔑 '.$masked;
+                    }
+
+                    $secret = $key->revoked_at === null ? $this->secrets->reveal($key) : null;
+                    if (is_string($secret) && $secret !== '') {
+                        $keyboard[] = [[
+                            'text' => '📋🔑 '.($km ? 'ចម្លង Key' : 'Copy Key').' #'.($index + 1),
+                            'copy_text' => ['text' => $secret],
+                        ]];
+                    }
+                }
+            }
+        } else {
+            $lines[] = $km ? '✅ មិនទាន់មានការទិញដែលបានបញ្ចប់ទេ។' : '✅ No completed purchases yet.';
+        }
+
+        if ($pending->isEmpty() && $completed->isEmpty()) {
+            $lines[] = '';
+            $lines[] = $km ? '🛍 ជ្រើសកញ្ចប់មួយដើម្បីចាប់ផ្ដើម។' : '🛍 Choose a package to get started.';
         }
 
         $keyboard[] = [
-            ['text' => $km ? '🛍 ទិញម្តងទៀត' : '🛍 Buy Again', 'callback_data' => 'store:1'],
+            ['text' => $km ? '🛍✨ ទិញបន្ថែម' : '🛍✨ Buy More', 'callback_data' => 'store:1'],
             ['text' => '🏠 Home', 'callback_data' => 'home'],
         ];
 
-        $this->bot->sendMessage(
-            $account->chat_id,
+        $this->sendOrEdit(
+            $account,
             implode("\n", $lines),
             ['inline_keyboard' => $keyboard],
+            $messageId,
         );
     }
 
-    private function sendPendingOrders(TelegramAccount $account): void
+    /** Backward compatibility for old /orders and old Telegram buttons. */
+    public function sendOrders(TelegramAccount $account, string $view = 'completed'): void
     {
-        $km = $this->isKhmer($account);
-
-        $pending = $this->pendingQuery($account)
-            ->with('order.items')
-            ->latest()
-            ->limit(self::ORDER_PAGE_SIZE)
-            ->get();
-
-        if ($pending->isEmpty()) {
-            $this->bot->sendMessage(
-                $account->chat_id,
-                $km
-                    ? "⏳ មិនមានការបញ្ជាទិញកំពុងរង់ចាំទេ។"
-                    : "⏳ No pending orders.",
-                ['inline_keyboard' => [[
-                    ['text' => $km ? '✅ បានបញ្ចប់' : '✅ Completed', 'callback_data' => 'orders:completed'],
-                    ['text' => '🏠 Home', 'callback_data' => 'home'],
-                ]]],
-            );
-
-            return;
-        }
-
-        $lines = [
-            $km ? '⏳✨ ការបញ្ជាទិញកំពុងរង់ចាំ' : '⏳✨ PENDING ORDERS',
-            '',
-        ];
-
-        $checkButtons = [];
-
-        foreach ($pending as $index => $purchase) {
-            $order = $purchase->order;
-            $name = $order?->items?->first()?->package_name ?? 'Package';
-            $price = $order
-                ? $this->money(
-                    (int) $order->total_minor,
-                    (string) $order->currency,
-                    (int) $order->currency_exponent,
-                )
-                : '';
-            $reference = $this->shortReference((string) ($order?->reference ?? ''));
-
-            $lines[] = ($index + 1).'. '.$this->pendingIcon($purchase).' '.$name;
-            $lines[] = '   '.$this->pendingLabel($purchase, $km)
-                .($price !== '' ? ' · '.$price : '')
-                .($reference !== '' ? ' · '.$reference : '');
-
-            $checkButtons[] = [
-                'text' => '🔄 '.($km ? 'ពិនិត្យ' : 'Check').' #'.($index + 1),
-                'callback_data' => 'check:'.$purchase->id,
-            ];
-        }
-
-        $keyboard = array_chunk($checkButtons, 2);
-        $keyboard[] = [
-            ['text' => $km ? '✅ បានបញ្ចប់' : '✅ Completed', 'callback_data' => 'orders:completed'],
-            ['text' => $km ? '🛍 ហាង' : '🛍 Store', 'callback_data' => 'store:1'],
-            ['text' => '🏠 Home', 'callback_data' => 'home'],
-        ];
-
-        $this->bot->sendMessage(
-            $account->chat_id,
-            implode("\n", $lines),
-            ['inline_keyboard' => $keyboard],
-        );
+        $this->sendHistory($account);
     }
-
     private function pendingQuery(TelegramAccount $account): Builder
     {
         return TelegramPurchase::query()

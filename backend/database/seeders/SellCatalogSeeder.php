@@ -853,7 +853,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => number_format($units).' Tokens. New input/output uses 1:1; locally reused context uses 0.25x. Larger bundles have a lower effective unit price. Valid for 1 day. SP Cambo package price; not provider API list pricing.',
+            'subtitle' => '✨ '.number_format($units).' Tokens · 1 day access',
             'badge' => $featured ? 'Popular' : ($units >= 500_000_000 ? 'Best bulk value' : ($units >= 100_000_000 ? 'Volume value' : 'Starter value')),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
@@ -901,7 +901,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => '$'.number_format($credits).' '.($credits === 1 ? 'Credit' : 'Credits').'. $1 Credit = '.number_format(self::SP_CREDIT_UNITS).' billable Tokens. Locally reused context uses 0.25x. Platform usage credit only; not USD, provider credit, or withdrawable cash.',
+            'subtitle' => '✨ $'.number_format($credits).' '.($credits === 1 ? 'Credit' : 'Credits').' · prepaid AI access',
             'badge' => $featured ? 'Popular credits' : ($credits >= 1000 ? 'Best bulk value' : 'Long-life value'),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),
