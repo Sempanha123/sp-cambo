@@ -491,7 +491,42 @@ class TelegramAnnouncementService
             default => $announcement->title,
         };
 
-        $keyboard = $this->announcementKeyboard($announcement, $km);
+        if ($announcement->kind === 'PURCHASE_ACTIVITY') {
+            $meta = is_array($announcement->metadata) ? $announcement->metadata : [];
+            $username = ltrim(trim((string) config('services.telegram.bot_username')), '@');
+            $slug = (string) ($meta['package_slug'] ?? '');
+            $start = 'store';
+            if ($slug !== '' && Package::query()->published()->where('slug', $slug)->exists()) {
+                $safeSlug = (string) preg_replace('/[^a-z0-9_-]/i', '', $slug);
+                $start = 'package_'.Str::limit($safeSlug, 48, '');
+            }
+            $keyboard = [];
+            if ($username !== '') {
+                $keyboard[] = [[
+                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'url' => 'https://t.me/'.$username.'?start='.$start,
+                ]];
+            } else {
+                $keyboard[] = [[
+                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'callback_data' => 'store:1',
+                ]];
+            }
+
+        } else {
+            $keyboard = [];
+            if ($announcement->package_id !== null) {
+                $keyboard[] = [[
+                    'text' => $km ? '🛒✨ ទិញឥឡូវ' : '🛒✨ Buy Now',
+                    'callback_data' => 'buy:'.$announcement->package_id,
+                ]];
+            }
+            $keyboard[] = [[
+                'text' => $km ? '🛍️✨ បើកហាង' : '🛍️✨ Open Store',
+                'callback_data' => 'store:1',
+            ]];
+
+        }
 
         $body = $announcement->kind === 'PURCHASE_ACTIVITY'
             ? $this->purchaseActivityBody($announcement, $km)
@@ -503,66 +538,6 @@ class TelegramAnnouncementService
         ];
     }
 
-    /**
-     * Channel-safe announcement CTA.
-     *
-     * A published/buyable package opens that exact product in the Store Bot.
-     * Missing, unpublished or non-buyable package opens the Store Bot home.
-     *
-     * URL buttons are required for channel posts. callback_data remains only as
-     * a private-chat compatibility fallback when the bot username is not set.
-     *
-     * @return array<int,array<int,array<string,string>>>
-     */
-    private function announcementKeyboard(TelegramAnnouncement $announcement, bool $km): array
-    {
-        $username = ltrim(trim((string) config('services.telegram.bot_username')), '@');
-        $package = null;
-
-        if ($announcement->package_id !== null) {
-            $package = Package::query()
-                ->published()
-                ->where('auto_creates_api_key', true)
-                ->find($announcement->package_id);
-        }
-
-        if (! $package && $announcement->kind === 'PURCHASE_ACTIVITY') {
-            $meta = is_array($announcement->metadata) ? $announcement->metadata : [];
-            $slug = trim((string) ($meta['package_slug'] ?? ''));
-
-            if ($slug !== '') {
-                $package = Package::query()
-                    ->published()
-                    ->where('auto_creates_api_key', true)
-                    ->where('slug', $slug)
-                    ->first();
-            }
-        }
-
-        $start = 'store';
-        if ($package) {
-            $safeSlug = (string) preg_replace('/[^a-z0-9_-]/i', '', (string) $package->slug);
-            if ($safeSlug !== '') {
-                $start = 'package_'.Str::limit($safeSlug, 48, '');
-            }
-        }
-
-        if ($username !== '') {
-            return [[[
-                'text' => $package
-                    ? ($km ? '🛒 ទិញកញ្ចប់នេះ' : '🛒 Buy this package')
-                    : ($km ? '🤖 បើក SP Cambo Bot' : '🤖 Open SP Cambo Bot'),
-                'url' => 'https://t.me/'.$username.'?start='.$start,
-            ]]];
-        }
-
-        return [[[
-            'text' => $package
-                ? ($km ? '🛒 ទិញកញ្ចប់នេះ' : '🛒 Buy this package')
-                : ($km ? '🛍️ បើកហាង' : '🛍️ Open Store'),
-            'callback_data' => $package ? 'buy:'.$package->id : 'store:1',
-        ]]];
-    }
     private function purchaseActivityBody(TelegramAnnouncement $announcement, bool $km): string
     {
         $meta = is_array($announcement->metadata) ? $announcement->metadata : [];
