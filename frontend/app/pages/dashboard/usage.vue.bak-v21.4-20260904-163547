@@ -239,23 +239,6 @@ const requestResultLabel = (item: RequestActivity) => {
   if (code === '504') return 'Timeout'
   return 'Failed'
 }
-
-const stateLabel = (state: string | null | undefined) => {
-  switch (String(state ?? '').toLowerCase()) {
-    case 'received': return 'Received'
-    case 'reserved': return 'Reserved'
-    case 'connecting': return 'Connecting'
-    case 'streaming': return 'Streaming'
-    case 'reconciling': return 'Reconciling'
-    case 'settled': return 'Settled'
-    case 'released': return 'Released'
-    case 'failed': return 'Failed'
-    default: {
-      const value = String(state ?? '').trim()
-      return value ? value.replace(/[_-]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : 'Unknown'
-    }
-  }
-}
 </script>
 
 <template>
