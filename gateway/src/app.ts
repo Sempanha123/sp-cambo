@@ -324,7 +324,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
   }
 
   async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<void> {
-    let buffer = ""; let bytesSent = false; let localOutputTokens = 0; let terminalFrameSeen = false;
+    let buffer = ""; let bytesSent = false; let localOutputTokens = 0;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     const beginPublicStream = (): void => {
       if (reply.sent) return;
@@ -346,7 +346,8 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       if (!reply.raw.write(publicText)) await abortable(once(reply.raw, "drain"), signal);
     };
     try {
-      streamReadLoop: while (true) {const { value, done } = await abortable(reader.read(), signal); if (done) break;
+      while (true) {
+        const { value, done } = await abortable(reader.read(), signal); if (done) break;
         buffer += decoder.decode(value, { stream: true });
         while (true) {
           const frame = takeSseFrame(buffer);
@@ -355,24 +356,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
           await writePublic(localizeSseUsage(frame.complete, path, localUsage));
           buffer = frame.remainder;
-          // The protocol has already completed successfully. Some compatible
-          // upstreams keep the HTTP body/socket open after this point, which
-          // would otherwise leave SP Cambo stuck in STREAMING / reserved.
-          if (terminalSseFrame(frame.complete, path)) {
-            terminalFrameSeen = true;
-            buffer = "";
-
-            // No pending reader.read() exists at this point. Unlock the private
-            // response body, finish SP Cambo settlement, and close the customer
-            // response before cleaning up the lingering upstream body.
-            try {
-              reader.releaseLock();
-            } catch {
-              // Best-effort cleanup only.
-            }
-
-            break streamReadLoop;
-          }
         }
       }
       buffer += decoder.decode();
@@ -405,16 +388,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     void routeSuccessBestEffort(reservationId);
     beginPublicStream();
     reply.raw.end();
-
-    if (terminalFrameSeen) {
-      // The customer response and local settlement are already complete.
-      // Clean up a compatible upstream that keeps its HTTP body open.
-      setTimeout(() => {
-        void upstream.body
-          ?.cancel("sp_cambo_terminal_cleanup_after_public_end")
-          .catch(() => undefined);
-      }, 0);
-    }
   }
 
   async function markStateBestEffort(reservationId: string, state: "CONNECTING" | "STREAMING"): Promise<void> {
@@ -495,97 +468,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 }
 
 
-
-/**
- * Treat the protocol's own successful terminal marker as completion.
- *
- * Billing remains SP Cambo local-only. This function does not inspect
- * OmniRoute/provider usage fields or provider token counters.
- */
-export function terminalSseFrame(frame: string, path: InferencePath): boolean {
-  const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === "object" && value !== null && !Array.isArray(value);
-
-  let eventName = "";
-
-  for (const line of frame.split(/\r?\n/)) {
-    if (line.startsWith("event:")) {
-      eventName = line.slice(6).trim().toLowerCase();
-
-      if (eventName === "message_stop"
-        || eventName === "response.completed"
-        || eventName === "done") {
-        return true;
-      }
-
-      continue;
-    }
-
-    if (!line.startsWith("data:")) continue;
-
-    const data = line.slice(5).trim();
-    if (data === "[DONE]") return true;
-    if (data === "") continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(data);
-    } catch {
-      continue;
-    }
-
-    if (!isObjectRecord(parsed)) continue;
-
-    const type = typeof parsed.type === "string"
-      ? parsed.type.toLowerCase()
-      : "";
-
-    if (type === "message_stop" || type === "response.completed") {
-      return true;
-    }
-
-    // Compatible routers do not always keep the terminal signal in exactly the
-    // same protocol-shaped field. These are semantic completion markers only;
-    // no provider token/usage counters are read here.
-    const directFinish = parsed.finish_reason;
-    if (typeof directFinish === "string" && directFinish.trim() !== "") {
-      return true;
-    }
-
-    const directStop = parsed.stop_reason;
-    if (typeof directStop === "string" && directStop.trim() !== "") {
-      return true;
-    }
-
-    const delta = isObjectRecord(parsed.delta) ? parsed.delta : null;
-    const deltaStop = delta?.stop_reason;
-    if (typeof deltaStop === "string" && deltaStop.trim() !== "") {
-      return true;
-    }
-
-    const response = isObjectRecord(parsed.response) ? parsed.response : null;
-    if (response?.status === "completed") {
-      return true;
-    }
-
-    if (parsed.done === true || parsed.completed === true) {
-      return true;
-    }
-
-    const choices = parsed.choices;
-    if (Array.isArray(choices) && choices.length > 0) {
-      const finished = choices.every((choice: unknown) => {
-        if (!isObjectRecord(choice)) return false;
-        const reason = choice.finish_reason;
-        return typeof reason === "string" && reason.trim() !== "";
-      });
-
-      if (finished) return true;
-    }
-  }
-
-  return false;
-}
 function takeSseFrame(buffer: string): { complete: string; remainder: string } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
