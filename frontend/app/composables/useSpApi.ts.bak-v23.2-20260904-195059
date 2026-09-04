@@ -297,7 +297,6 @@ export function useSpApi() {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    let playgroundDoneSeen = false
 
     const handleFrame = (frame: string) => {
       let event = 'message'
@@ -320,7 +319,6 @@ export function useSpApi() {
         return
       }
       if (event === 'done') {
-        playgroundDoneSeen = true
         handlers.onDone?.(data as { request_id?: string, protocol?: string, event_count?: number, text_length?: number, finish_reason?: string | null, response?: unknown })
         return
       }
@@ -353,7 +351,7 @@ export function useSpApi() {
     }
 
     try {
-      while (!playgroundDoneSeen) {
+      while (true) {
         const { value, done } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
@@ -362,13 +360,6 @@ export function useSpApi() {
       buffer += decoder.decode()
       drainFrames(true)
     } finally {
-      if (playgroundDoneSeen) {
-        try {
-          await reader.cancel('sp_playground_done')
-        } catch {
-          // The server may already have closed the completed stream.
-        }
-      }
       reader.releaseLock()
     }
   }

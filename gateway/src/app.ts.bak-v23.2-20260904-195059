@@ -540,40 +540,18 @@ export function terminalSseFrame(frame: string, path: InferencePath): boolean {
       ? parsed.type.toLowerCase()
       : "";
 
-    if (type === "message_stop" || type === "response.completed") {
+    if (path === "/v1/messages" && type === "message_stop") {
       return true;
     }
 
-    // Compatible routers do not always keep the terminal signal in exactly the
-    // same protocol-shaped field. These are semantic completion markers only;
-    // no provider token/usage counters are read here.
-    const directFinish = parsed.finish_reason;
-    if (typeof directFinish === "string" && directFinish.trim() !== "") {
-      return true;
-    }
-
-    const directStop = parsed.stop_reason;
-    if (typeof directStop === "string" && directStop.trim() !== "") {
-      return true;
-    }
-
-    const delta = isObjectRecord(parsed.delta) ? parsed.delta : null;
-    const deltaStop = delta?.stop_reason;
-    if (typeof deltaStop === "string" && deltaStop.trim() !== "") {
-      return true;
-    }
-
-    const response = isObjectRecord(parsed.response) ? parsed.response : null;
-    if (response?.status === "completed") {
-      return true;
-    }
-
-    if (parsed.done === true || parsed.completed === true) {
+    if (path === "/v1/responses" && type === "response.completed") {
       return true;
     }
 
     const choices = parsed.choices;
-    if (Array.isArray(choices) && choices.length > 0) {
+    if (path === "/v1/chat/completions"
+      && Array.isArray(choices)
+      && choices.length > 0) {
       const finished = choices.every((choice: unknown) => {
         if (!isObjectRecord(choice)) return false;
         const reason = choice.finish_reason;

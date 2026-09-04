@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Exceptions\InferenceIdempotencyException;
 use App\Exceptions\InsufficientBalanceException;
-use App\Models\ApiRequestLog;
 use App\Models\CreditLedger;
 use App\Models\EntitlementLot;
 use App\Models\Reservation;
@@ -167,67 +166,11 @@ class ReservationService
             ->limit($batchSize)
             ->pluck('id');
 
-        $recovered = 0;
-
         foreach ($reservationIds as $reservationId) {
-            $reservation = Reservation::query()->find($reservationId);
-            if (! $reservation || $reservation->status !== 'ACTIVE') {
-                continue;
-            }
-
-            $log = ApiRequestLog::query()
-                ->where('reservation_id', $reservation->id)
-                ->first();
-
-            // Once public output started, automatically releasing the entire hold
-            // could give away delivered inference for free. SP Cambo deliberately
-            // does not reconstruct billing from provider counters, so preserve the
-            // hold and surface a finite 202/reconciliation state for operator-safe
-            // local resolution instead of pretending the request is still live.
-            if ($log && strtoupper((string) $log->state) === 'STREAMING') {
-                $pending = $this->markForReconciliation(
-                    $reservation,
-                    'stale_stream_local_usage_missing'
-                );
-                $finishedAt = $pending->reconciliation_requested_at ?? now();
-                $durationMs = $log->started_at
-                    ? max(0, $log->started_at->diffInMilliseconds($finishedAt))
-                    : null;
-
-                $log->forceFill([
-                    'state' => 'RECONCILING',
-                    'duration_ms' => $log->duration_ms ?? $durationMs,
-                    'finished_at' => $log->finished_at ?? $finishedAt,
-                    'error_code' => 'settlement_pending',
-                ])->save();
-
-                $recovered++;
-                continue;
-            }
-
-            // No public stream was observed. It is safe to release an expired
-            // pre-output reservation and stop displaying it as a live request.
-            $expired = $this->expire($reservation);
-            $finishedAt = $expired->settled_at ?? now();
-
-            if ($log && in_array(strtoupper((string) $log->state), ['RESERVED', 'CONNECTING', 'RECONCILING'], true)) {
-                $durationMs = $log->started_at
-                    ? max(0, $log->started_at->diffInMilliseconds($finishedAt))
-                    : null;
-
-                $log->forceFill([
-                    'state' => 'RELEASED',
-                    'estimated_units' => null,
-                    'duration_ms' => $log->duration_ms ?? $durationMs,
-                    'finished_at' => $log->finished_at ?? $finishedAt,
-                    'error_code' => 'reservation_expired',
-                ])->save();
-            }
-
-            $recovered++;
+            $this->expire(Reservation::query()->findOrFail($reservationId));
         }
 
-        return $recovered;
+        return $reservationIds->count();
     }
 
     /** @param array<int, string> $finalizableStatuses */

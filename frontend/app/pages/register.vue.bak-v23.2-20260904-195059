@@ -18,9 +18,9 @@ const referral = useReferralAttribution()
 
 const referralCode = ref<string | null>(null)
 
-// Referral attribution belongs only to the CURRENT registration URL.
-// Direct /register explicitly means "register without referral", so any stale
-// attribution cookie from an older visit is removed before registration.
+// Referral attribution belongs to the CURRENT registration URL only.
+// A direct /register visit explicitly means "register without referral",
+// so a stale referral cookie from an older visit must be removed.
 watch(
   () => route.query.ref,
   (value) => {
@@ -35,9 +35,7 @@ watch(
     referralCode.value = captured
   },
   { immediate: true }
-)
-
-const signUp = async (input: AuthFormState) => {
+)const signUp = async (input: AuthFormState) => {
   const success = await auth.register({
     name: input.name,
     email: input.email,

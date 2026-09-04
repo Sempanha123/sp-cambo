@@ -446,27 +446,18 @@ class PlaygroundService
                     while (($frame = $this->takeSseFrame($buffer)) !== null) {
                         $eventCount++;
                         $data = $this->sseFrameData($frame);
-                        if ($data === null) {
+                        if ($data === null || $data === '[DONE]') {
                             continue;
-                        }
-                        if ($data === '[DONE]') {
-                            $buffer = '';
-                            break 2;
                         }
                         $payload = json_decode($data, true);
                         if (! is_array($payload)) {
                             continue;
                         }
-                        $frameFinishReason = $this->streamFinishReason($payload);
-                        $finishReason = $frameFinishReason ?? $finishReason;
+                        $finishReason = $this->streamFinishReason($payload) ?? $finishReason;
                         $delta = $this->streamDelta($payload);
                         if ($delta !== '') {
                             $finalText .= $delta;
                             $this->emitSse('delta', ['text' => $delta]);
-                        }
-                        if ($this->streamPayloadIsTerminal($payload, $protocol, $frameFinishReason ?? null)) {
-                            $buffer = '';
-                            break 2;
                         }
                     }
                 }
@@ -476,8 +467,7 @@ class PlaygroundService
                     if ($data !== null && $data !== '[DONE]') {
                         $payload = json_decode($data, true);
                         if (is_array($payload)) {
-                            $frameFinishReason = $this->streamFinishReason($payload);
-                        $finishReason = $frameFinishReason ?? $finishReason;
+                            $finishReason = $this->streamFinishReason($payload) ?? $finishReason;
                             $delta = $this->streamDelta($payload);
                             if ($delta !== '') {
                                 $finalText .= $delta;
@@ -604,36 +594,6 @@ class PlaygroundService
         return '';
     }
 
-
-    private function streamPayloadIsTerminal(array $payload, string $protocol, ?string $finishReason): bool
-    {
-        if ($finishReason !== null && trim($finishReason) !== '') {
-            return true;
-        }
-
-        $type = is_string($payload['type'] ?? null)
-            ? strtolower(trim((string) $payload['type']))
-            : '';
-
-        if (in_array($type, ['message_stop', 'response.completed'], true)) {
-            return true;
-        }
-
-        $response = is_array($payload['response'] ?? null) ? $payload['response'] : [];
-        if (($response['status'] ?? null) === 'completed') {
-            return true;
-        }
-
-        if (($payload['done'] ?? false) === true || ($payload['completed'] ?? false) === true) {
-            return true;
-        }
-
-        // Protocol is kept in the signature intentionally so future adapters can
-        // add protocol-specific terminal checks without touching the stream loop.
-        unset($protocol);
-
-        return false;
-    }
     private function streamFinishReason(array $payload): ?string
     {
         // OpenAI Chat Completions and compatible routers.

@@ -172,25 +172,8 @@ class UsageController extends Controller
     {
         $usage = $log->usage;
         $reservation = $log->reservation;
-
-        $state = strtolower((string) $log->state);
-        $reservationStatus = strtoupper((string) ($reservation?->status ?? ''));
-
-        if ($usage !== null || $reservationStatus === 'SETTLED') {
-            $state = 'settled';
-        } elseif ($reservationStatus === 'RECONCILIATION_REQUIRED') {
-            $state = 'reconciling';
-        } elseif (in_array($reservationStatus, ['RELEASED', 'EXPIRED'], true)) {
-            $state = 'released';
-        }
-
-        $estimated = $usage === null
-            && $log->estimated_units !== null
-            && in_array($state, ['reserved', 'connecting', 'streaming', 'reconciling'], true);
-
-        $finishedAt = $log->finished_at
-            ?? $reservation?->settled_at
-            ?? $reservation?->reconciliation_requested_at;
+        $estimated = $usage === null && $log->estimated_units !== null;
+        $finishedAt = $log->finished_at ?? $reservation?->reconciliation_requested_at;
         $durationMs = $log->duration_ms;
         if ($durationMs === null && $finishedAt !== null && $log->started_at !== null) {
             $durationMs = max(0, $log->started_at->diffInMilliseconds($finishedAt));
@@ -203,7 +186,7 @@ class UsageController extends Controller
             'api_key_id' => $log->api_key_id,
             'api_key_label' => $log->apiKey?->label ?? 'Deleted key',
             'api_key_prefix' => $log->apiKey?->prefix ?? '',
-            'state' => $state,
+            'state' => strtolower($log->state),
             'endpoint' => $log->endpoint,
             'started_at' => $log->started_at->toAtomString(),
             'finished_at' => $finishedAt?->toAtomString(),
