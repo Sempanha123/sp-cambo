@@ -181,10 +181,8 @@ it("restores exact Claude Code tool casing in non-stream Anthropic responses", a
 it("restores exact Claude Code tool casing in streamed Anthropic responses", async () => {
   const requestBody = { ...body, stream: true, tools: [{ name: "Edit", description: "Edit a file", input_schema: { type: "object", properties: {} } }] };
   const stream = [
-    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool_1", name: "edit", input: {} } })}\n\n`,
+    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", content_block: { type: "tool_use", id: "tool_1", name: "edit", input: {} } })}\n\n`,
     `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", usage: { input_tokens: 4, output_tokens: 6 } })}\n\n`,
-    `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`,
-    `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`,
   ].join("");
   const fetchMock = vi.fn(async () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }));
   const [instance, control] = app(new FakeControlPlane(), fetchMock as typeof fetch);
