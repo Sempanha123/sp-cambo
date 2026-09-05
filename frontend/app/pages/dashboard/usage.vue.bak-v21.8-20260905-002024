@@ -600,13 +600,7 @@ const stateLabel = (state: string | null | undefined) => {
                     class="sp-request-status"
                     :class="`sp-request-status--${requestResultTone(item)}`"
                   >
-                    <UIcon
-                    v-if="liveStates.includes(item.state)"
-                    name="i-lucide-loader-circle"
-                    class="sp-request-status__spinner size-3.5 animate-spin"
-                    aria-hidden="true"
-                  />
-                  <strong class="sp-request-status__code">{{ requestResultCode(item) }}</strong>
+                    <strong class="sp-request-status__code">{{ requestResultCode(item) }}</strong>
                   </div>
 
                   <UBadge
@@ -769,25 +763,4 @@ const stateLabel = (state: string | null | undefined) => {
   background: rgb(244 63 94 / .08);
 }
 .sp-request-status--error .sp-request-status__code { color: rgb(251 113 133); }
-</style>
-
-
-<style scoped>
-/* V21.8 usage running status */
-.sp-request-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: .35rem;
-  min-width: 3.9rem;
-  box-shadow: none !important;
-}
-
-.sp-request-status__label {
-  display: none !important;
-}
-
-.sp-request-status__spinner {
-  flex: 0 0 auto;
-}
 </style>

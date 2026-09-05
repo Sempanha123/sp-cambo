@@ -1047,12 +1047,6 @@ const stateLabel = (state: string | null | undefined) => {
                     </td>
                     <td class="px-3 py-3">
                       <div class="sp-request-status" :class="`sp-request-status--${requestStatusTone(request)}`">
-                        <UIcon
-                          v-if="runningStates.includes(request.state)"
-                          name="i-lucide-loader-circle"
-                          class="sp-request-status__spinner size-3.5 animate-spin"
-                          aria-hidden="true"
-                        />
                         <strong class="sp-request-status__code">{{ requestStatusCode(request) }}</strong>
                       </div>
                     </td>
@@ -1543,70 +1537,5 @@ const stateLabel = (state: string | null | undefined) => {
   align-items: center;
   justify-content: center;
   gap: 0;
-}
-</style>
-
-<style scoped>
-/* V21.8 checker calm surfaces */
-
-/* Verification result: a clean box, not a glowing hero. */
-.sp-checker-result {
-  border: 1px solid var(--kc-line) !important;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in oklab, var(--kc-panel) 97%, var(--checker-tone) 3%),
-      color-mix(in oklab, var(--kc-panel) 99%, var(--checker-tone) 1%)
-    ) !important;
-  box-shadow: none !important;
-  filter: none !important;
-}
-
-.sp-checker-result__glow {
-  display: none !important;
-}
-
-/* Keep the icon readable, but make its surface quiet. */
-.sp-checker-status-icon {
-  border: 1px solid color-mix(in oklab, var(--checker-tone) 18%, var(--kc-line)) !important;
-  background: color-mix(in oklab, var(--checker-tone) 7%, transparent) !important;
-  box-shadow: none !important;
-}
-
-/* Recent requests should not react visually when the mouse moves across rows. */
-.sp-checker-request-row,
-.sp-checker-request-row:hover {
-  background: transparent !important;
-  box-shadow: none !important;
-  filter: none !important;
-  transform: none !important;
-}
-
-/* Numeric status only. Running gets a tiny rotating circle next to the code. */
-.sp-request-status {
-  min-width: 3.9rem !important;
-  flex-direction: row !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: .35rem !important;
-  box-shadow: none !important;
-}
-
-.sp-request-status__label {
-  display: none !important;
-}
-
-.sp-request-status__spinner {
-  flex: 0 0 auto;
-  color: var(--kc-cyan);
-}
-
-:global(html.light) .sp-checker-result {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in oklab, white 97%, var(--checker-tone) 3%),
-      color-mix(in oklab, white 99%, var(--checker-tone) 1%)
-    ) !important;
 }
 </style>
