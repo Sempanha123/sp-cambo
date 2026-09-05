@@ -6,7 +6,6 @@ import { GatewayError, writeError } from "./errors.js";
 import { LocalPromptCache } from "./local-prompt-cache.js";
 import { localizeSseUsage, prepare, restorePublicModel, restorePublicModelInSse, spLocalOutputTokensFromSse, spLocalUsage, spLocalUsageFromOutputTokens, upstreamBody, withLocalUsage } from "./protocol.js";
 import { buildToolNameMap, normalizeToolNames, rewriteSseToolNames, type ToolNameMap } from "./tool-names.js";
-import { AnthropicToolStreamGuard, InvalidToolInputError, MAX_BUFFERED_TOOL_STREAM_BYTES, normalizeCompleteToolInputs, rewriteSseToolInputs } from "./tool-integrity.js";
 import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore } from "./types.js";
 import { INFERENCE_PATHS } from "./types.js";
 
@@ -305,18 +304,10 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     try { parsed = JSON.parse(text); } catch {
       throw new PreStreamFailure("upstream_invalid_response");
     }
-    let normalizedResponse: unknown;
-    try {
-      normalizedResponse = restorePublicModel(
-        normalizeToolNames(normalizeCompleteToolInputs(parsed), toolNames),
-        publicModel,
-      );
-    } catch (error) {
-      if (error instanceof InvalidToolInputError) {
-        throw new PreStreamFailure("upstream_invalid_tool_input");
-      }
-      throw error;
-    }
+    const normalizedResponse = restorePublicModel(
+      normalizeToolNames(parsed, toolNames),
+      publicModel,
+    );
     // R29: customer settlement is measured entirely at the SP Cambo edge.
     // Provider/OmniRoute usage metadata and usage headers are intentionally
     // ignored for billing. They may remain in the proxied response for client
@@ -334,14 +325,6 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
 
   async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<void> {
     let buffer = ""; let bytesSent = false; let localOutputTokens = 0; let terminalFrameSeen = false;
-    // Hold Anthropic tool-enabled streams until tool JSON integrity is known.
-    // This allows the existing route pool to retry before malformed tool input
-    // reaches Claude Code.
-    const toolGuard = path === "/v1/messages" && toolNames.size > 0
-      ? new AnthropicToolStreamGuard()
-      : null;
-    const heldToolFrames: string[] = [];
-    let heldToolBytes = 0;
     const reader = upstream.body!.getReader(); const decoder = new TextDecoder();
     const beginPublicStream = (): void => {
       if (reply.sent) return;
@@ -355,42 +338,12 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const writePublic = async (text: string): Promise<void> => {
       if (text === "") return;
       const publicText = restorePublicModelInSse(
-        rewriteSseToolNames(rewriteSseToolInputs(text), toolNames),
+        rewriteSseToolNames(text, toolNames),
         publicModel,
       );
       beginPublicStream();
       bytesSent = true;
       if (!reply.raw.write(publicText)) await abortable(once(reply.raw, "drain"), signal);
-    };
-    const holdOrWrite = async (rawFrame: string, publicFrame: string): Promise<void> => {
-      if (!toolGuard) {
-        await writePublic(publicFrame);
-        return;
-      }
-
-      toolGuard.inspect(rawFrame);
-      heldToolBytes += Buffer.byteLength(publicFrame);
-
-      if (heldToolBytes > MAX_BUFFERED_TOOL_STREAM_BYTES) {
-        throw new InvalidToolInputError(
-          "Tool-enabled Anthropic stream exceeded the integrity buffer limit.",
-        );
-      }
-
-      heldToolFrames.push(publicFrame);
-    };
-
-    const flushHeld = async (): Promise<void> => {
-      if (!toolGuard || heldToolFrames.length === 0) return;
-
-      toolGuard.finish();
-
-      for (const frame of heldToolFrames) {
-        await writePublic(frame);
-      }
-
-      heldToolFrames.length = 0;
-      heldToolBytes = 0;
     };
     try {
       streamReadLoop: while (true) {
@@ -401,7 +354,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           if (!frame) break;
           localOutputTokens += spLocalOutputTokensFromSse(frame.complete);
           const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
-          await holdOrWrite(frame.complete, localizeSseUsage(frame.complete, path, localUsage));
+          await writePublic(localizeSseUsage(frame.complete, path, localUsage));
           buffer = frame.remainder;
 
           // The protocol has completed successfully. Some compatible upstreams
@@ -426,9 +379,8 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
       if (buffer !== "") {
         localOutputTokens += spLocalOutputTokensFromSse(buffer);
         const localUsage = spLocalUsageFromOutputTokens(localInputTokens, localCacheReadTokens, localOutputTokens);
-        await holdOrWrite(buffer, localizeSseUsage(buffer, path, localUsage));
+        await writePublic(localizeSseUsage(buffer, path, localUsage));
       }
-      await flushHeld();
     } catch {
       void reader.cancel(signal.reason).catch(() => undefined);
       const reason = abortReason(signal) ?? "upstream_disconnect";
