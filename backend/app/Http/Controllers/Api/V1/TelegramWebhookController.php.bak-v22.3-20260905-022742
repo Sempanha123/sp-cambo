@@ -307,34 +307,6 @@ class TelegramWebhookController extends Controller
             $ack($bot, $callbackId);
             return;
         }
-        // V22.3: Order detail must be checked before the generic History route.
-        // callback_data example: history:order:<order-ulid>:1
-        if (str_starts_with($data, 'history:order:')) {
-            $payload = substr($data, strlen('history:order:'));
-            [$orderId, $pageValue] = array_pad(explode(':', $payload, 2), 2, '1');
-
-            if ($orderId === '' || preg_match('/^[A-Za-z0-9_-]{1,64}$/', $orderId) !== 1) {
-                throw new RuntimeException('That order button is invalid.');
-            }
-
-            $ui->sendOrderDetail(
-                $account,
-                $orderId,
-                $messageId,
-                max(1, (int) $pageValue),
-            );
-            $ack($bot, $callbackId);
-            return;
-        }
-
-        // V22.3: History pagination, e.g. history:2
-        if (str_starts_with($data, 'history:')) {
-            $pageValue = substr($data, strlen('history:'));
-            $page = filter_var($pageValue, FILTER_VALIDATE_INT);
-            $ui->sendHistory($account, $messageId, $page === false ? 1 : max(1, (int) $page));
-            $ack($bot, $callbackId);
-            return;
-        }
         if ($data === 'history'
             || $data === 'keys'
             || $data === 'orders'
