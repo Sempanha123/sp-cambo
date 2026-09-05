@@ -48,19 +48,12 @@ trait TelegramCommerceWalletFeatures
                     ['text' => $km ? '🌐 ភាសា' : '🌐 Language', 'callback_data' => 'language'],
                 ],
                 [
-                    ['text' => $km ? '❓ របៀបប្រើ' : '❓ How to use', 'callback_data' => 'guide'],
                     ['text' => $km ? '📞 ជំនួយ' : '📞 Support', 'callback_data' => 'support'],
                 ],
             ],
         ]);
     }
 
-    public function sendBotGuide(TelegramAccount $account): void
-    {
-        $km=$this->isKhmer($account);
-        $text=$km?"❓✨ របៀបប្រើ SP CAMBO BOT\n\n1️⃣ 🛍 ជ្រើសកញ្ចប់ពី Buy\n2️⃣ 💳 បង់តាម Wallet ឬ KHQR\n3️⃣ ✅ Bot ផ្ទៀងផ្ទាត់ដោយស្វ័យប្រវត្តិ\n4️⃣ 🔑 API Key ផ្ញើមក chat នេះ\n5️⃣ 🧾 History មើល Order និងចម្លង Key ម្តងទៀត\n\n💡 👛 Wallet = ទិញកញ្ចប់\n🪙 Tokens / 💳 Credit = ប្រើ AI\n\n✨ ចាប់ផ្តើមខាងក្រោម 👇":"❓✨ HOW TO USE SP CAMBO BOT\n\n1️⃣ 🛍 Choose a package from Buy\n2️⃣ 💳 Pay with Wallet or KHQR\n3️⃣ ✅ The bot verifies payment automatically\n4️⃣ 🔑 Your API key is delivered in this chat\n5️⃣ 🧾 History lets you reopen orders and copy your key again\n\n💡 👛 Wallet = buy packages\n🪙 Tokens / 💳 Credit = use AI\n\n✨ Ready? Start below 👇";
-        $this->bot->sendMessage($account->chat_id,$text,['inline_keyboard'=>[[['text'=>'🛍✨ Start Shopping','callback_data'=>'store:1'],['text'=>'🧾✨ My History','callback_data'=>'history']],[['text'=>'💰 Balance','callback_data'=>'balance'],['text'=>'📞 Support','callback_data'=>'support']],[['text'=>'🏠 Home','callback_data'=>'home']]]]);
-    }
     /**
      * Remove the old persistent ReplyKeyboard once per account after upgrading
      * to the message-attached inline Home menu. The tiny cleanup message is

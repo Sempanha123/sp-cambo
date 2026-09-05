@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Order;
 use App\Models\Package;
 use App\Models\TelegramAccount;
 use App\Models\TelegramPurchase;
@@ -12,7 +11,7 @@ use RuntimeException;
 class TelegramStorefrontUiService
 {
     private const STORE_PAGE_SIZE = 10;
-    private const ORDER_PAGE_SIZE = 5;
+    private const ORDER_PAGE_SIZE = 4;
 
     public function __construct(
         private readonly TelegramBotClient $bot,
@@ -238,62 +237,114 @@ class TelegramStorefrontUiService
         );
     }
 
-    /** V22.2 cute account-wide order history. */
-    public function sendHistory(TelegramAccount $account, ?int $messageId = null, int $page = 1): void
+    /** V20.7 compact unified Telegram purchase history. */
+    public function sendHistory(TelegramAccount $account, ?int $messageId = null): void
     {
+        // Keep the existing safety policy unchanged:
+        // max 4 open orders; abandoned unpaid orders expire after 1 hour.
         $this->pendingOrders->cleanupExpired($account, 50);
+
         $km = $this->isKhmer($account);
-        $query = Order::query()->where('user_id', $account->user_id)->whereNull('customer_hidden_at')->with('items')->latest();
-        $total = (clone $query)->count();
-        $pages = max(1, (int) ceil($total / self::ORDER_PAGE_SIZE));
-        $page = max(1, min($page, $pages));
-        $orders = $query->forPage($page, self::ORDER_PAGE_SIZE)->get();
-        $lines = [$km ? '🧾✨ ប្រវត្តិការបញ្ជាទិញ' : '🧾✨ ORDER HISTORY', '📊 '.number_format($total).' '.($total === 1 ? 'order' : 'orders').' · Page '.$page.'/'.$pages, '━━━━━━━━━━━━━━━━━━'];
+
+        $pending = $this->pendingQuery($account)
+            ->with('order.items')
+            ->latest()
+            ->limit(4)
+            ->get();
+
+        $completed = TelegramPurchase::query()
+            ->where('telegram_account_id', $account->id)
+            ->where(function (Builder $query): void {
+                $query->whereNotNull('delivered_at')
+                    ->orWhere('status', 'DELIVERED');
+            })
+            ->with(['order.items', 'apiKey.modelAliases'])
+            ->latest('delivered_at')
+            ->limit(8)
+            ->get();
+
+        $lines = [
+            $km ? '🧾✨ ប្រវត្តិ' : '🧾✨ HISTORY',
+            '',
+        ];
         $keyboard = [];
-        if ($orders->isEmpty()) {$lines[]='';$lines[]=$km?'✨ មិនទាន់មានការបញ្ជាទិញទេ។':'✨ No orders yet.';$lines[]=$km?'🛍 ជ្រើសកញ្ចប់មួយដើម្បីចាប់ផ្តើម។':'🛍 Choose a package to get started.';}
-        foreach($orders as $index=>$order){
-            $item=$order->items->first();$name=trim((string)($item?->package_name?:'SP Cambo package'));
-            $price=$this->money((int)$order->total_minor,(string)$order->currency,(int)$order->currency_exponent);
-            [$icon,$label]=$this->orderStatusVisual($order);$date=$order->created_at?->format('M j, Y')??'—';
-            $number=(($page-1)*self::ORDER_PAGE_SIZE)+$index+1;
-            $lines[]='';$lines[]=$number.'. 📦 '.$name;$lines[]='   💵 '.$price.' · '.$icon.' '.$label;$lines[]='   📅 '.$date;
-            $keyboard[]=[['text'=>$icon.' '.mb_strimwidth($name,0,28,'…').' · '.$price,'callback_data'=>'history:order:'.$order->id.':'.$page]];
+
+        if ($pending->isNotEmpty()) {
+            $lines[] = $km ? '⏳ កំពុងរង់ចាំ' : '⏳ PENDING';
+
+            foreach ($pending as $index => $purchase) {
+                $order = $purchase->order;
+                $name = $order?->items?->first()?->package_name ?? 'Package';
+                $price = $order
+                    ? $this->money(
+                        (int) $order->total_minor,
+                        (string) $order->currency,
+                        (int) $order->currency_exponent,
+                    )
+                    : '';
+
+                $lines[] = ($index + 1).'. 📦 '.$name.($price !== '' ? ' · '.$price : '');
+
+                $keyboard[] = [[
+                    'text' => '🔄 '.($km ? 'ពិនិត្យ' : 'Check').' #'.($index + 1),
+                    'callback_data' => 'check:'.$purchase->id,
+                ]];
+            }
+
+            $lines[] = '';
         }
-        if($pages>1){$nav=[];if($page>1)$nav[]=['text'=>'⬅️','callback_data'=>'history:'.($page-1)];$nav[]=['text'=>$page.' / '.$pages,'callback_data'=>'noop'];if($page<$pages)$nav[]=['text'=>'➡️','callback_data'=>'history:'.($page+1)];$keyboard[]=$nav;}
-        $keyboard[]=[['text'=>$km?'🛍✨ ទិញបន្ថែម':'🛍✨ Buy More','callback_data'=>'store:1'],['text'=>$km?'❓ របៀបប្រើ':'❓ How to use','callback_data'=>'guide']];
-        $keyboard[]=[['text'=>'🏠 Home','callback_data'=>'home']];
-        $this->sendOrEdit($account,implode("\n",$lines),['inline_keyboard'=>$keyboard],$messageId);
-    }
 
-    public function sendOrderDetail(TelegramAccount $account, string $orderId, ?int $messageId = null, int $returnPage = 1): void
-    {
-        $order=Order::query()->where('user_id',$account->user_id)->whereNull('customer_hidden_at')->with('items')->find($orderId);
-        if(!$order){$this->sendHistory($account,$messageId,$returnPage);return;}
-        $km=$this->isKhmer($account);$item=$order->items->first();$snapshot=is_array($item?->package_snapshot)?$item->package_snapshot:[];
-        $name=trim((string)($item?->package_name?:'SP Cambo package'));$qty=max(1,(int)($item?->quantity??1));
-        $price=$this->money((int)$order->total_minor,(string)$order->currency,(int)$order->currency_exponent);[$icon,$label]=$this->orderStatusVisual($order);
-        $lines=[$km?'📋✨ ព័ត៌មានលម្អិត':'📋✨ ORDER DETAIL','', '🧾 Order: '.((string)$order->reference?:$order->id),'📦 Product: '.$name,'🔢 Quantity: '.number_format($qty),'💵 Total: '.$price,'📅 Purchased: '.($order->created_at?->format('M j, Y · g:i A')??'—'),$icon.' Status: '.$label];
-        $units=(int)($snapshot['advertised_units']??0);if($units>0)$lines[]='🪙 Allowance: '.number_format($units).' '.trim((string)($snapshot['unit_label']??'Tokens'));
-        $duration=(int)($snapshot['duration_seconds']??0);if($duration>0)$lines[]='⏳ Validity: '.$this->durationLabel($duration);
-        $models=array_values(array_filter($snapshot['allowed_model_aliases']??[],fn($v)=>is_string($v)&&trim($v)!==''));if($models!==[]){$lines[]='';$lines[]='🧠✨ MODELS';foreach(array_slice($models,0,12) as $a)$lines[]='• '.$a;if(count($models)>12)$lines[]='• +'.(count($models)-12).' more';}
-        $purchase=TelegramPurchase::query()->where('telegram_account_id',$account->id)->where('order_id',$order->id)->with('apiKey.modelAliases')->latest()->first();$keyboard=[];$secret=null;$key=$purchase?->apiKey;
-        if($key&&(string)$key->user_id===(string)$account->user_id&&$key->revoked_at===null){$revealed=$this->secrets->reveal($key);if(is_string($revealed)&&$revealed!==''){$secret=$revealed;$lines[]='';$lines[]='🔑 API Key: '.$this->maskSecret($secret);$keyboard[]=[['text'=>'📋🔑 Copy API Key','copy_text'=>['text'=>$secret]]];}}
-        if($purchase&&$purchase->delivered_at===null&&in_array((string)$purchase->status,['AWAITING_PAYMENT','PAID','DELIVERY_FAILED'],true))$keyboard[]=[['text'=>'🔄 Check Payment','callback_data'=>'check:'.$purchase->id]];
-        $slug=trim((string)($item?->package_slug??''));$package=$slug!==''?Package::query()->published()->where('auto_creates_api_key',true)->where('slug',$slug)->first():null;if($package)$keyboard[]=[['text'=>'🛒✨ Buy Again','callback_data'=>'buy:'.$package->id]];
-        if($secret!==null){$checker=rtrim((string)config('app.frontend_url'),'/').'/public/key-checker';if(filter_var($checker,FILTER_VALIDATE_URL))$keyboard[]=[['text'=>'📊 Key Checker','url'=>$checker]];}
-        $keyboard[]=[['text'=>'⬅️ History','callback_data'=>'history:'.max(1,$returnPage)],['text'=>'🏠 Home','callback_data'=>'home']];
-        $this->sendOrEdit($account,implode("\n",$lines),['inline_keyboard'=>$keyboard],$messageId);
-    }
+        if ($completed->isNotEmpty()) {
+            $lines[] = $km ? '✅ បានទិញ' : '✅ PURCHASED';
 
-    /** @return array{0:string,1:string} */
-    private function orderStatusVisual(Order $order): array
-    {
-        return match(mb_strtoupper(trim((string)$order->status))){'FULFILLED'=>['✅','Delivered'],'PENDING_PAYMENT'=>['⏳','Payment pending'],'PAID'=>['💳','Payment verified'],'CANCELLED','CANCELED'=>['❌','Cancelled'],'REFUNDED'=>['↩️','Refunded'],'FAILED'=>['⚠️','Needs attention'],default=>['📌',ucwords(mb_strtolower(str_replace('_',' ',(string)$order->status)))?:'Processing']};
-    }
+            foreach ($completed as $index => $purchase) {
+                $order = $purchase->order;
+                $key = $purchase->apiKey;
+                $name = $order?->items?->first()?->package_name ?? 'Package';
+                $date = $purchase->delivered_at?->format('M j')
+                    ?? $purchase->updated_at?->format('M j')
+                    ?? '—';
+                $price = $order
+                    ? $this->money(
+                        (int) $order->total_minor,
+                        (string) $order->currency,
+                        (int) $order->currency_exponent,
+                    )
+                    : '';
 
-    private function maskSecret(string $secret): string
-    {
-        return mb_strlen($secret)<=12?mb_substr($secret,0,4).'••••':mb_substr($secret,0,8).'••••••'.mb_substr($secret,-4);
+                $lines[] = ($index + 1).'. 🎁 '.$name
+                    .($price !== '' ? ' · '.$price : '')
+                    .' · '.$date;
+
+                if ($key
+                    && (string) $key->user_id === (string) $account->user_id
+                    && $key->revoked_at === null) {
+                    $secret = $this->secrets->reveal($key);
+                    if (is_string($secret) && $secret !== '') {
+                        $keyboard[] = [[
+                            'text' => '📋🔑 '.($km ? 'ចម្លង Key' : 'Copy Key').' #'.($index + 1),
+                            'copy_text' => ['text' => $secret],
+                        ]];
+                    }
+                }
+            }
+        }
+
+        if ($pending->isEmpty() && $completed->isEmpty()) {
+            $lines[] = $km ? '✨ មិនទាន់មានប្រវត្តិទេ។' : '✨ No history yet.';
+        }
+
+        $keyboard[] = [
+            ['text' => $km ? '🛍✨ ទិញបន្ថែម' : '🛍✨ Buy More', 'callback_data' => 'store:1'],
+            ['text' => '🏠 Home', 'callback_data' => 'home'],
+        ];
+
+        $this->sendOrEdit(
+            $account,
+            implode("\n", $lines),
+            ['inline_keyboard' => $keyboard],
+            $messageId,
+        );
     }
     /** Backward compatibility for old /orders and old Telegram buttons. */
     public function sendOrders(TelegramAccount $account, string $view = 'completed'): void

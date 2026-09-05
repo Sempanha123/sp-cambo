@@ -146,8 +146,6 @@ class TelegramWebhookController extends Controller
                 $telegram->sendStoreWallet($account);
             } elseif ($command === '/topup' || $this->matches($normalized, ['➕💵 add money', '➕ add money', '➕💵 បញ្ចូលប្រាក់'])) {
                 $telegram->sendWalletTopupOptions($account);
-            } elseif (in_array($command, ['/help', '/guide'], true) || $this->matches($normalized, ['❓ how to use', 'how to use', '❓ របៀបប្រើ', 'របៀបប្រើ'])) {
-                $telegram->sendBotGuide($account);
             } elseif ($command === '/support' || $this->matches($normalized, ['📞 support', '📞 ជំនួយ'])) {
                 $telegram->sendSupport($account);
             } elseif ($command === '/updates' || $this->matches($normalized, ['🔔 updates', '🔔 ព័ត៌មាន', '🔔 ព័ត៌មានថ្មី', '📣 updates', '📣 ព័ត៌មានថ្មី'])) {
@@ -259,11 +257,6 @@ class TelegramWebhookController extends Controller
         if (str_starts_with($data, 'payq:')) {
             $telegram->beginCheckout($account, substr($data, 5), 'KHQR', $updateId);
             $ack($bot, $callbackId, 'KHQR ready');
-            return;
-        }
-        if ($data === 'guide') {
-            $telegram->sendBotGuide($account);
-            $ack($bot, $callbackId);
             return;
         }
         if ($data === 'wallet') {
