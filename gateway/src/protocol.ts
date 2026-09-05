@@ -11,14 +11,14 @@ const FIELDS: Record<InferencePath, ReadonlySet<string>> = {
 
 export type PromptSegment = { digest: string; tokens: number };
 
-export const LOCAL_OUTPUT_CALIBRATION_BPS = 19_500;
+export const LOCAL_OUTPUT_CALIBRATION_BPS = 17_000;
 
 /**
  * SP Cambo output-only safety calibration.
  *
  * This uses ONLY the output already measured locally by SP Cambo. Provider and
  * OmniRoute usage counters remain completely irrelevant to customer billing.
- * 13_000 bps = 1.30x local generated-output estimate.
+ * 17_000 bps = 1.70x local generated-output estimate.
  */
 export function localOutputBilledTokens(tokens: number): number {
   const safe = Math.max(0, Math.floor(tokens));
