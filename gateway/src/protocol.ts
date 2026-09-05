@@ -11,7 +11,7 @@ const FIELDS: Record<InferencePath, ReadonlySet<string>> = {
 
 export type PromptSegment = { digest: string; tokens: number };
 
-export const LOCAL_OUTPUT_CALIBRATION_BPS = 14_500;
+export const LOCAL_OUTPUT_CALIBRATION_BPS = 19_500;
 
 /**
  * SP Cambo output-only safety calibration.
