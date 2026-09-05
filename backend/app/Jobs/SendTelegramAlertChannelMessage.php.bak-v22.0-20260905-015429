@@ -21,22 +21,10 @@ class SendTelegramAlertChannelMessage implements ShouldQueue
 
     public int $timeout = 30;
 
-    /**
-     * Keep a declared default so already-queued jobs created before V22.0 can
-     * unserialize safely without having this property in their old payload.
-     *
-     * @var array<string,mixed>
-     */
-    public array $replyMarkup = [];
-
-    /** @param array<string,mixed> $replyMarkup */
     public function __construct(
         public readonly int $channelId,
         public readonly string $text,
-        array $replyMarkup = [],
-    ) {
-        $this->replyMarkup = $replyMarkup;
-    }
+    ) {}
 
     public function handle(TelegramBotClient $bot): void
     {
@@ -46,6 +34,6 @@ class SendTelegramAlertChannelMessage implements ShouldQueue
             return;
         }
 
-        $bot->sendMessage((string) $channel->chat_id, mb_substr($this->text, 0, 4000), $this->replyMarkup);
+        $bot->sendMessage((string) $channel->chat_id, mb_substr($this->text, 0, 4000));
     }
 }

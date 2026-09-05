@@ -493,12 +493,9 @@ class TelegramAnnouncementService
 
         $keyboard = $this->announcementKeyboard($announcement, $km);
 
-        $kind = strtoupper((string) $announcement->kind);
-        $body = match ($kind) {
-            'PURCHASE_ACTIVITY' => $this->purchaseActivityBody($announcement, $km),
-            'NEW_MODEL', 'MODEL_UPDATE' => $this->cuteModelBody($announcement, $km),
-            default => $announcement->body,
-        };
+        $body = $announcement->kind === 'PURCHASE_ACTIVITY'
+            ? $this->purchaseActivityBody($announcement, $km)
+            : $announcement->body;
 
         return [
             'text' => $icon.' '.$heading."\n\n".$body,
@@ -565,33 +562,6 @@ class TelegramAnnouncementService
                 : ($km ? '🛍️ បើកហាង' : '🛍️ Open Store'),
             'callback_data' => $package ? 'buy:'.$package->id : 'store:1',
         ]]];
-    }
-    private function cuteModelBody(TelegramAnnouncement $announcement, bool $km): string
-    {
-        $name = trim((string) $announcement->title);
-
-        if ($announcement->model_alias_id !== null) {
-            $alias = ModelAlias::query()->find($announcement->model_alias_id);
-            if ($alias) {
-                $name = trim((string) ($alias->display_name ?: $alias->public_alias));
-            }
-        }
-
-        if ($name === '') {
-            $name = $km ? 'ម៉ូដែល AI ថ្មី' : 'New AI model';
-        }
-
-        $updated = strtoupper((string) $announcement->kind) === 'MODEL_UPDATE';
-
-        return implode("\n", [
-            $updated
-                ? ($km ? '🧠✨ ម៉ូដែលបានអាប់ដេត' : '🧠✨ MODEL UPDATED')
-                : ($km ? '🧠✨ ម៉ូដែលថ្មី' : '🧠✨ NEW MODEL'),
-            '',
-            '🤖 '.$name,
-            $km ? '✅ រួចរាល់នៅ SP Cambo' : '✅ Ready on SP Cambo',
-            $km ? '🛍✨ ចុចខាងក្រោមដើម្បីមើលកញ្ចប់' : '🛍✨ Tap below to view packages',
-        ]);
     }
     private function purchaseActivityBody(TelegramAnnouncement $announcement, bool $km): string
     {

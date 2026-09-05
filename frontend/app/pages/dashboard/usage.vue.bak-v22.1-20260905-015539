@@ -168,7 +168,7 @@ const refreshAll = () => {
 onMounted(() => {
   activityTimer = setInterval(() => {
     if (liveRefresh.value) void activity.refresh()
-  }, 8_000)
+  }, 3000)
 
   summaryTimer = setInterval(() => {
     if (liveRefresh.value) void summary.refresh()
@@ -789,13 +789,5 @@ const stateLabel = (state: string | null | undefined) => {
 
 .sp-request-status__spinner {
   flex: 0 0 auto;
-}
-</style>
-
-<style scoped>
-/* V22.1 request-log running spinner */
-.sp-request-status__spinner {
-  flex: 0 0 auto;
-  transform-origin: center;
 }
 </style>

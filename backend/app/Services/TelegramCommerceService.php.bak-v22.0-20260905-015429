@@ -769,36 +769,31 @@ class TelegramCommerceService
         $defaultModel = $aliases[0] ?? 'MODEL_ALIAS';
         $km = $delivery['locale'] === 'km';
 
-        $this->bot->sendMessage($delivery['chat_id'], implode("\n", array_filter([
-            $km ? '✅✨ ការទូទាត់ជោគជ័យ' : '✅✨ PAYMENT SUCCESSFUL',
-            $km ? '🎉 API access របស់អ្នករួចរាល់ហើយ!' : '🎉 Your SP Cambo API access is ready!',
+        $this->bot->sendMessage($delivery['chat_id'], implode("\n", [
+            $km ? '✅ ការទូទាត់ជោគជ័យ' : '✅ PAYMENT SUCCESSFUL',
+            $km ? 'API access របស់អ្នករួចរាល់ហើយ។' : 'Your SP Cambo API access is ready.',
             '',
-            $km ? '🔑✨ API KEY' : '🔑✨ API KEY',
-            $delivery['secret'],
+            ($km ? '🔑 API key: ' : '🔑 API key: ').$delivery['secret'],
+            ($km ? '🧠 ម៉ូដែល: ' : '🧠 Models: ').implode(', ', $aliases),
             '',
-            $km ? '🧠✨ ម៉ូដែលរបស់អ្នក' : '🧠✨ YOUR MODELS',
-            implode("\n", array_map(static fn (string $alias): string => '• '.$alias, $aliases)),
+            $km ? 'រក្សា chat នេះឱ្យមានសុវត្ថិភាព។ Key ត្រូវបានផ្ញើដោយស្វ័យប្រវត្តិបន្ទាប់ពីការទូទាត់បានផ្ទៀងផ្ទាត់។' : 'Keep this chat private. The key was delivered automatically after verified payment.',
             '',
-            '🚀✨ QUICK START',
+            '🧩 Claude Code setup',
             '',
-            '💻 Claude Code · Windows PowerShell',
+            'Windows PowerShell',
             '$env:ANTHROPIC_BASE_URL="'.$anthropic.'"',
             '$env:ANTHROPIC_AUTH_TOKEN="'.$delivery['secret'].'"',
             '$env:ANTHROPIC_MODEL="'.$defaultModel.'"',
             'claude',
             '',
-            '🐧 Claude Code · macOS / Linux',
+            'macOS / Linux',
             'export ANTHROPIC_BASE_URL="'.$anthropic.'"',
             'export ANTHROPIC_AUTH_TOKEN="'.$delivery['secret'].'"',
             'export ANTHROPIC_MODEL="'.$defaultModel.'"',
             'claude',
             '',
-            '⚡ OpenAI / Codex',
-            'Base: '.$openai,
-            '',
-            $km ? '🔒 រក្សា API key នេះជាឯកជន។' : '🔒 Keep this API key private.',
-            $km ? '✨ រួចរាល់សម្រាប់ប្រើ!' : '✨ You’re ready to build!',
-        ])), [
+            'OpenAI / Codex base: '.$openai,
+        ]), [
             'inline_keyboard' => [
                 [
                     ['text' => $km ? '📊 ពិនិត្យ Usage' : '📊 Check Usage', 'url' => $checker],

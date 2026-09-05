@@ -5,7 +5,6 @@ namespace App\Services;
 use App\Models\Order;
 use App\Models\StoreWalletEntry;
 use App\Models\TelegramAnnouncement;
-use App\Models\TelegramAccount;
 use App\Models\TelegramPurchase;
 use App\Models\TelegramPurchaseAlert;
 use Illuminate\Support\Str;
@@ -36,15 +35,9 @@ class TelegramPurchaseAlertService
                 return;
             }
 
-            // The buyer already receives the private verified-payment delivery.
-            // Exclude only that buyer from the public subscriber activity DM.
-            // Everyone else who enabled announcements still receives it.
-            $buyer = TelegramAccount::query()
-                ->where('user_id', $order->user_id)
-                ->whereNull('revoked_at')
-                ->first();
-
-            $this->announcements->purchaseActivity($order, $buyer);
+            // Do not exclude the buyer. An enabled Store Bot subscriber should see
+            // the same verified purchase activity as every other subscriber.
+            $this->announcements->purchaseActivity($order);
         });
     }
 
@@ -64,7 +57,7 @@ class TelegramPurchaseAlertService
                 return;
             }
 
-            $this->announcements->purchaseActivity($order, $purchase->account);
+            $this->announcements->purchaseActivity($order);
         });
     }
 

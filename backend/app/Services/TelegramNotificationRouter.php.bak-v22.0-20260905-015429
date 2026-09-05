@@ -6,8 +6,6 @@ use App\Jobs\SendTelegramAlertChannelMessage;
 use App\Models\TelegramAlertChannel;
 use App\Models\TelegramAnnouncement;
 use App\Models\TelegramNotificationSetting;
-use App\Models\Package;
-use App\Models\ModelAlias;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -146,7 +144,7 @@ class TelegramNotificationRouter
         $mode = $this->modeForEvent($event);
 
         if (in_array($mode, [self::MODE_CHANNELS_ONLY, self::MODE_BOTH], true)) {
-            $this->dispatchToChannels($this->announcementText($announcement), $this->announcementKeyboard($announcement));
+            $this->dispatchToChannels($this->announcementText($announcement));
         }
 
         if (! in_array($mode, [self::MODE_BOT_ONLY, self::MODE_BOTH], true)) {
@@ -201,7 +199,7 @@ class TelegramNotificationRouter
         return max(10, min(60, (int) ($setting->qr_countdown_interval_seconds ?: 15)));
     }
 
-    private function dispatchToChannels(string $text, array $replyMarkup = []): int
+    private function dispatchToChannels(string $text): int
     {
         $channels = TelegramAlertChannel::query()
             ->where('enabled', true)
@@ -212,119 +210,43 @@ class TelegramNotificationRouter
             SendTelegramAlertChannelMessage::dispatch(
                 (int) $channel->id,
                 mb_substr($text, 0, 4000),
-                $replyMarkup,
             )->afterCommit();
         }
 
         return $channels->count();
     }
 
-    /**
-     * Channel-safe CTA. Telegram channels cannot use Store Bot callback_data
-     * because that callback would be handled in the channel context. A URL
-     * deep-link moves the customer into the private Store Bot instead.
-     *
-     * @return array<string,mixed>
-     */
-    private function announcementKeyboard(TelegramAnnouncement $announcement): array
-    {
-        $username = ltrim(trim((string) config('services.telegram.bot_username')), '@');
-
-        if ($username === '') {
-            return [];
-        }
-
-        $package = null;
-
-        if ($announcement->package_id !== null) {
-            $package = Package::query()
-                ->published()
-                ->where('auto_creates_api_key', true)
-                ->find($announcement->package_id);
-        }
-
-        if (! $package && strtoupper((string) $announcement->kind) === 'PURCHASE_ACTIVITY') {
-            $meta = is_array($announcement->metadata) ? $announcement->metadata : [];
-            $slug = trim((string) ($meta['package_slug'] ?? ''));
-
-            if ($slug !== '') {
-                $package = Package::query()
-                    ->published()
-                    ->where('auto_creates_api_key', true)
-                    ->where('slug', $slug)
-                    ->first();
-            }
-        }
-
-        $start = 'store';
-        if ($package) {
-            $safeSlug = (string) preg_replace('/[^a-z0-9_-]/i', '', (string) $package->slug);
-            if ($safeSlug !== '') {
-                $start = 'package_'.\Illuminate\Support\Str::limit($safeSlug, 48, '');
-            }
-        }
-
-        return [
-            'inline_keyboard' => [[[
-                'text' => $package ? '🛒✨ Buy this package' : '🤖✨ Open SP Cambo Bot',
-                'url' => 'https://t.me/'.$username.'?start='.$start,
-            ]]],
-        ];
-    }
     private function announcementText(TelegramAnnouncement $announcement): string
     {
         $kind = strtoupper((string) $announcement->kind);
+        $icon = match ($kind) {
+            'NEW_PACKAGE' => '📦',
+            'PACKAGE_UPDATE' => '✨',
+            'RESTOCK', 'STOCK_ADDED' => '📥',
+            'NEW_MODEL', 'MODEL_UPDATE' => '🧠',
+            'PROMOTION' => '🏷',
+            'PURCHASE_ACTIVITY' => '🎉',
+            default => '🔔',
+        };
 
         if ($kind === 'PURCHASE_ACTIVITY') {
             $meta = is_array($announcement->metadata) ? $announcement->metadata : [];
 
             return implode("\n", array_filter([
-                '🎉🛍 NEW ORDER!',
+                '🎉 SP CAMBO · VERIFIED ORDER',
                 '',
-                isset($meta['masked_customer']) ? '👤✨ '.$meta['masked_customer'].' grabbed a package!' : null,
-                isset($meta['package_name']) ? '📦🎁 '.$meta['package_name'] : null,
+                isset($meta['masked_customer']) ? '👤 '.$meta['masked_customer'] : null,
+                isset($meta['package_name']) ? '📦 '.$meta['package_name'] : null,
                 isset($meta['price'], $meta['currency']) ? '💵 '.$meta['price'].' '.$meta['currency'] : null,
                 isset($meta['quota']) ? '🪙 '.$meta['quota'] : null,
-                isset($meta['validity']) ? '⏳ '.$meta['validity'] : null,
+                isset($meta['validity']) ? '⏱ '.$meta['validity'] : null,
                 '',
-                '✅🚀 Verified & delivered',
-                '🛒✨ Want one too? Tap below!',
+                '✅ Payment and fulfillment verified by SP Cambo.',
             ]));
         }
 
-        if (in_array($kind, ['NEW_MODEL', 'MODEL_UPDATE'], true)) {
-            $name = trim((string) $announcement->title);
-
-            if ($announcement->model_alias_id !== null) {
-                $alias = ModelAlias::query()->find($announcement->model_alias_id);
-                if ($alias) {
-                    $name = trim((string) ($alias->display_name ?: $alias->public_alias));
-                }
-            }
-
-            if ($name === '') {
-                $name = 'New AI model';
-            }
-
-            return implode("\n", [
-                $kind === 'MODEL_UPDATE' ? '🧠✨ MODEL UPDATED' : '🧠✨ NEW MODEL',
-                '',
-                '🤖 '.$name,
-                '✅ Ready on SP Cambo',
-                '🛍✨ Tap below to view packages',
-            ]);
-        }
-
-        $icon = match ($kind) {
-            'NEW_PACKAGE' => '📦✨',
-            'PACKAGE_UPDATE' => '📦🔄',
-            'RESTOCK', 'STOCK_ADDED' => '📥✨',
-            'PROMOTION' => '🏷🎉',
-            default => '🔔✨',
-        };
-
-        return $icon.' SP CAMBO'
+        return $icon." SP CAMBO · ".strtoupper(str_replace('_', ' ', $kind))
             ."\n\n".trim((string) $announcement->title)
-            ."\n".trim((string) $announcement->body);
+            ."\n\n".trim((string) $announcement->body);
     }
 }

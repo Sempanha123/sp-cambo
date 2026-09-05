@@ -57,7 +57,13 @@ const errorPresentation = (error: unknown) => {
       retryable: false
     }
   }
-
+  if (spError.code === 'rate_limit_exceeded') {
+    return {
+      title: 'Too many checks',
+      description: 'The checker allows 10 requests per minute. Wait a moment, then try again.',
+      retryable: true
+    }
+  }
   if (spError.isValidation) {
     return {
       title: 'Key format was rejected',
@@ -105,20 +111,6 @@ const performCheck = async (secret: string, mode: 'manual' | 'refresh') => {
     }
   } catch (error) {
     if (version !== requestVersion) return
-
-    // V22.2 silent checker rate limit:
-    // A checker 429 is not a credential failure. Keep the current successful
-    // snapshot (if any), show no warning, and let the normal refresh timer
-    // retry automatically. For a first/manual check, keep the secret only in
-    // component memory so the next refresh can recover without another click.
-    const spError = toSpApiError(error)
-    if (spError.code === 'rate_limit_exceeded') {
-      checkError.value = null
-      refreshWarning.value = ''
-      sessionSecret.value = secret
-      autoRefresh.value = true
-      return
-    }
 
     const presentation = errorPresentation(error)
     if (mode === 'refresh' && keyStatus.value) {
@@ -614,7 +606,7 @@ const stateLabel = (state: string | null | undefined) => {
           color="error"
           variant="subtle"
           icon="i-lucide-circle-alert"
-          title="Verification unavailable"
+          title="This key could not be verified"
           :description="`${checkError.title}: ${checkError.description}`"
         />
 <template v-if="keyStatus">

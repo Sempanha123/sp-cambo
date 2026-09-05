@@ -11,22 +11,6 @@ const FIELDS: Record<InferencePath, ReadonlySet<string>> = {
 
 export type PromptSegment = { digest: string; tokens: number };
 
-export const LOCAL_OUTPUT_CALIBRATION_BPS = 13_000;
-
-/**
- * SP Cambo output-only safety calibration.
- *
- * This uses ONLY the output already measured locally by SP Cambo. Provider and
- * OmniRoute usage counters remain completely irrelevant to customer billing.
- * 13_000 bps = 1.30x local generated-output estimate.
- */
-export function localOutputBilledTokens(tokens: number): number {
-  const safe = Math.max(0, Math.floor(tokens));
-  if (safe === 0) return 0;
-  return Math.ceil((safe * LOCAL_OUTPUT_CALIBRATION_BPS) / 10_000);
-}
-
-
 export type Prepared = {
   publicModel: string;
   requestedMaxOutput: number;
@@ -197,7 +181,7 @@ export function spLocalUsage(inputTokens: number, cacheReadTokens: number, outpu
 
   return {
     input_tokens: Math.max(0, inputTokens),
-    output_tokens: localOutputBilledTokens(outputTokens),
+    output_tokens: Math.max(0, outputTokens),
     cache_read_tokens: Math.max(0, cacheReadTokens),
     cache_write_tokens: 0,
     reasoning_tokens: 0,
@@ -227,7 +211,7 @@ export function spLocalOutputTokensFromSse(frame: string): number {
 export function spLocalUsageFromOutputTokens(inputTokens: number, cacheReadTokens: number, outputTokens: number): Usage {
   return {
     input_tokens: Math.max(0, inputTokens),
-    output_tokens: localOutputBilledTokens(outputTokens),
+    output_tokens: Math.max(0, outputTokens),
     cache_read_tokens: Math.max(0, cacheReadTokens),
     cache_write_tokens: 0,
     reasoning_tokens: 0,
