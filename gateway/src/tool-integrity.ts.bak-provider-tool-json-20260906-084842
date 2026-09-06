@@ -37,7 +37,7 @@ export function normalizeCompleteToolInputs(value: unknown): unknown {
     const raw = unparsedRaw(output.input);
 
     if (raw !== null) {
-      output.input = parseObjectCompat(raw);
+      output.input = parseObject(raw);
     } else if (!record(output.input)) {
       throw new InvalidToolInputError("Anthropic tool_use.input must be a JSON object.");
     }
@@ -197,7 +197,7 @@ function normalizeStreamEvent(value: unknown): unknown {
     const raw = unparsedRaw(output.input);
 
     if (raw !== null) {
-      output.input = parseObjectCompat(raw);
+      output.input = parseObject(raw);
     } else if (output.input !== undefined && !record(output.input)) {
       throw new InvalidToolInputError("Anthropic streamed tool_use.input must be an object.");
     }
@@ -217,180 +217,6 @@ function validateState(state: StreamToolState): void {
   }
 }
 
-/**
- * Parse a completed provider tool-input wrapper.
- *
- * Some compatible providers emit a valid object and then accidentally append
- * one or more of the same top-level fields after the object has already closed:
- *
- *   {"command":"...","description":"List files"},
- *   "description":"List files"}
- *
- * We repair only that deterministic duplicate-tail shape. Any trailing field
- * that is new or has a different value is rejected.
- */
-function parseObjectCompat(raw: string): Record<string, unknown> {
-  try {
-    return parseObject(raw);
-  } catch (originalError) {
-    const repaired = repairDuplicatedTrailingFields(raw);
-
-    if (repaired !== null) {
-      return repaired;
-    }
-
-    throw originalError;
-  }
-}
-
-function repairDuplicatedTrailingFields(raw: string): Record<string, unknown> | null {
-  const boundary = firstCompleteObjectEnd(raw);
-
-  if (boundary === null) return null;
-
-  const headText = raw.slice(0, boundary).trim();
-  const tailText = raw.slice(boundary).trim();
-
-  if (tailText === "" || !tailText.startsWith(",")) {
-    return null;
-  }
-
-  let head: unknown;
-  let tail: unknown;
-
-  try {
-    head = JSON.parse(headText) as unknown;
-    tail = JSON.parse(`{${tailText.slice(1)}`) as unknown;
-  } catch {
-    return null;
-  }
-
-  if (!record(head) || !record(tail) || Object.keys(tail).length === 0) {
-    return null;
-  }
-
-  for (const [key, value] of Object.entries(tail)) {
-    if (!Object.prototype.hasOwnProperty.call(head, key)) {
-      return null;
-    }
-
-    if (!sameJsonValue(head[key], value)) {
-      return null;
-    }
-  }
-
-  return head;
-}
-
-function firstCompleteObjectEnd(raw: string): number | null {
-  let index = 0;
-
-  while (index < raw.length && /\s/u.test(raw[index]!)) {
-    index++;
-  }
-
-  if (raw[index] !== "{") {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (; index < raw.length; index++) {
-    const char = raw[index]!;
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-
-      if (char === '"') {
-        inString = false;
-      }
-
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth++;
-      continue;
-    }
-
-    if (char === "}") {
-      depth--;
-
-      if (depth === 0) {
-        return index + 1;
-      }
-
-      if (depth < 0) {
-        return null;
-      }
-    }
-  }
-
-  return null;
-}
-
-function sameJsonValue(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
-      return false;
-    }
-
-    for (let index = 0; index < left.length; index++) {
-      if (!sameJsonValue(left[index], right[index])) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  if (record(left) || record(right)) {
-    if (!record(left) || !record(right)) {
-      return false;
-    }
-
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-
-    if (leftKeys.length !== rightKeys.length) {
-      return false;
-    }
-
-    for (let index = 0; index < leftKeys.length; index++) {
-      const leftKey = leftKeys[index]!;
-      const rightKey = rightKeys[index]!;
-
-      if (leftKey !== rightKey) {
-        return false;
-      }
-
-      if (!sameJsonValue(left[leftKey], right[rightKey])) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  return false;
-}
 function parseObject(raw: string): Record<string, unknown> {
   let parsed: unknown;
 
