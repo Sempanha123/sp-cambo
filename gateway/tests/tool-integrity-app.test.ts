@@ -239,7 +239,7 @@ it("fails over before malformed streamed Write JSON reaches Claude Code", async 
 
   // The existing generic pre-public-output retry path reports this as an
   // upstream disconnect. The important property is that bad bytes were held.
-  expect(control.rerouteReasons).toEqual(["upstream_disconnect"]);
+  expect(control.rerouteReasons).toEqual(["upstream_invalid_tool_input"]);
 
   expect(response.body).toContain('"name":"Write"');
   expect(response.body).toContain("fallback valid");

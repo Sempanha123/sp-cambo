@@ -202,6 +202,100 @@ describe("Claude tool JSON integrity", () => {
     expect(() => guard.finish()).not.toThrow();
   });
 
+  it("repairs duplicated trailing fields in streamed partial_json before public flush", () => {
+    const original = {
+      command: "pwd",
+      description: "Show directory",
+    };
+    const valid = JSON.stringify(original);
+    const duplicated =
+      `${valid}, "description": ${JSON.stringify(original.description)}}`;
+    const guard = new AnthropicToolStreamGuard();
+    const frames: string[] = [];
+
+    frames.push(sse({
+      type: "content_block_start",
+      index: 0,
+      content_block: {
+        type: "tool_use",
+        id: "tool_stream_duplicate",
+        name: "Bash",
+        input: {},
+      },
+    }));
+
+    for (let offset = 0; offset < duplicated.length; offset += 11) {
+      frames.push(sse({
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "input_json_delta",
+          partial_json: duplicated.slice(offset, offset + 11),
+        },
+      }));
+    }
+
+    frames.push(sse({
+      type: "content_block_stop",
+      index: 0,
+    }));
+    frames.push(sse({
+      type: "message_stop",
+    }));
+
+    for (const frame of frames) {
+      guard.inspect(frame);
+    }
+
+    const rewritten = guard.rewriteBuffered(frames.join(""));
+    const reconstructed = rewritten
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => JSON.parse(line.slice(5).trim()) as any)
+      .filter((event) =>
+        event.type === "content_block_delta"
+        && event.delta?.type === "input_json_delta")
+      .map((event) => event.delta.partial_json)
+      .join("");
+
+    expect(reconstructed).toBe(JSON.stringify(original));
+    expect(JSON.parse(reconstructed)).toEqual(original);
+  });
+
+  it("rejects a changed duplicate tail in streamed partial_json", () => {
+    const original = {
+      command: "pwd",
+      description: "Show directory",
+    };
+    const invalid =
+      `${JSON.stringify(original)}, "description": "Run something else"}`;
+    const guard = new AnthropicToolStreamGuard();
+
+    guard.inspect(sse({
+      type: "content_block_start",
+      index: 0,
+      content_block: {
+        type: "tool_use",
+        id: "tool_stream_bad_duplicate",
+        name: "Bash",
+        input: {},
+      },
+    }));
+
+    guard.inspect(sse({
+      type: "content_block_delta",
+      index: 0,
+      delta: {
+        type: "input_json_delta",
+        partial_json: invalid,
+      },
+    }));
+
+    expect(() => guard.inspect(sse({
+      type: "content_block_stop",
+      index: 0,
+    }))).toThrow(InvalidToolInputError);
+  });
   it("rejects streamed partial_json when the provider truncates it", () => {
     const raw = JSON.stringify(bigWrite()).slice(0, -5);
     const guard = new AnthropicToolStreamGuard();

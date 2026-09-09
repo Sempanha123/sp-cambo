@@ -383,11 +383,8 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const flushHeld = async (): Promise<void> => {
       if (!toolGuard || heldToolFrames.length === 0) return;
 
-      toolGuard.finish();
-
-      for (const frame of heldToolFrames) {
-        await writePublic(frame);
-      }
+      const repaired = toolGuard.rewriteBuffered(heldToolFrames.join(""));
+      await writePublic(repaired);
 
       heldToolFrames.length = 0;
       heldToolBytes = 0;
@@ -429,9 +426,11 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         await holdOrWrite(buffer, localizeSseUsage(buffer, path, localUsage));
       }
       await flushHeld();
-    } catch {
+    } catch (error) {
       void reader.cancel(signal.reason).catch(() => undefined);
-      const reason = abortReason(signal) ?? "upstream_disconnect";
+      const reason = error instanceof InvalidToolInputError
+        ? "upstream_invalid_tool_input"
+        : abortReason(signal) ?? "upstream_disconnect";
 
       if (!bytesSent) {
         // No public byte/header has been flushed, so the outer route loop can

@@ -18,6 +18,7 @@ export class InvalidToolInputError extends Error {
 type StreamToolState = {
   raw: string;
   hadObjectInput: boolean;
+  sawDelta: boolean;
 };
 
 export function normalizeCompleteToolInputs(value: unknown): unknown {
@@ -84,6 +85,7 @@ export function rewriteSseToolInputs(text: string): string {
  */
 export class AnthropicToolStreamGuard {
   private readonly active = new Map<number, StreamToolState>();
+  private readonly repairs = new Map<number, string>();
 
   inspect(frame: string): void {
     for (const line of frame.split(/\r?\n/)) {
@@ -126,6 +128,7 @@ export class AnthropicToolStreamGuard {
         this.active.set(index, {
           raw: raw ?? "",
           hadObjectInput,
+          sawDelta: false,
         });
 
         continue;
@@ -147,6 +150,7 @@ export class AnthropicToolStreamGuard {
           throw new InvalidToolInputError("Tool input delta is missing partial_json.");
         }
 
+        state.sawDelta = true;
         state.raw += delta.partial_json;
 
         if (Buffer.byteLength(state.raw) > MAX_BUFFERED_TOOL_STREAM_BYTES) {
@@ -162,7 +166,12 @@ export class AnthropicToolStreamGuard {
 
         if (!state) continue;
 
-        validateState(state);
+        const repaired = validateState(state);
+
+        if (repaired !== null && state.sawDelta) {
+          this.repairs.set(index, repaired);
+        }
+
         this.active.delete(index);
         continue;
       }
@@ -171,6 +180,82 @@ export class AnthropicToolStreamGuard {
         throw new InvalidToolInputError("Anthropic message ended before a tool block completed.");
       }
     }
+  }
+
+  /**
+   * Rewrite only deterministic duplicate-tail repairs after the complete
+   * tool-enabled stream has been validated.
+   *
+   * Valid streams are returned unchanged. For a repaired stream, canonical
+   * JSON is redistributed over the provider's existing input_json_delta
+   * events, so a large Write/Edit payload does not become one giant SSE line.
+   */
+  rewriteBuffered(text: string): string {
+    this.finish();
+
+    if (this.repairs.size === 0 || text === "") return text;
+
+    const cursors = new Map<number, number>();
+
+    const rewritten = text
+      .split(/(\r?\n)/)
+      .map((part) => {
+        if (!part.startsWith("data:")) return part;
+
+        const data = part.slice(5).trim();
+
+        if (data === "" || data === "[DONE]") return part;
+
+        let event: unknown;
+
+        try {
+          event = JSON.parse(data) as unknown;
+        } catch {
+          return part;
+        }
+
+        if (!record(event) || event.type !== "content_block_delta") return part;
+
+        const delta = event.delta;
+
+        if (!record(delta) || delta.type !== "input_json_delta") return part;
+
+        if (typeof delta.partial_json !== "string") {
+          throw new InvalidToolInputError("Tool input delta is missing partial_json.");
+        }
+
+        const index = eventIndex(event);
+        const canonical = this.repairs.get(index);
+
+        if (canonical === undefined) return part;
+
+        const cursor = cursors.get(index) ?? 0;
+        const end = Math.min(
+          cursor + delta.partial_json.length,
+          canonical.length,
+        );
+
+        cursors.set(index, end);
+
+        return `data: ${JSON.stringify({
+          ...event,
+          delta: {
+            ...delta,
+            partial_json: canonical.slice(cursor, end),
+          },
+        })}`;
+      })
+      .join("");
+
+    for (const [index, canonical] of this.repairs.entries()) {
+      if ((cursors.get(index) ?? 0) !== canonical.length) {
+        throw new InvalidToolInputError(
+          "Repaired tool input could not be emitted safely.",
+        );
+      }
+    }
+
+    return rewritten;
   }
 
   finish(): void {
@@ -206,15 +291,27 @@ function normalizeStreamEvent(value: unknown): unknown {
   return output;
 }
 
-function validateState(state: StreamToolState): void {
+function validateState(state: StreamToolState): string | null {
   if (state.raw !== "") {
-    parseObject(state.raw);
-    return;
+    try {
+      parseObject(state.raw);
+      return null;
+    } catch (originalError) {
+      const repaired = repairDuplicatedTrailingFields(state.raw);
+
+      if (repaired !== null) {
+        return JSON.stringify(repaired);
+      }
+
+      throw originalError;
+    }
   }
 
   if (!state.hadObjectInput) {
     throw new InvalidToolInputError("Anthropic tool block completed without valid input.");
   }
+
+  return null;
 }
 
 /**
