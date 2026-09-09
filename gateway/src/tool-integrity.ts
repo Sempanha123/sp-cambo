@@ -15,16 +15,80 @@ export class InvalidToolInputError extends Error {
   }
 }
 
+export type ToolInputFieldMap = ReadonlyMap<
+  string,
+  ReadonlySet<string> | null
+>;
+
+const EMPTY_TOOL_INPUT_FIELDS: ToolInputFieldMap = new Map();
+
 type StreamToolState = {
   raw: string;
   hadObjectInput: boolean;
   sawDelta: boolean;
   toolName: string | null;
+  allowedFields: ReadonlySet<string> | null;
 };
 
-export function normalizeCompleteToolInputs(value: unknown): unknown {
+/**
+ * Build a case-insensitive map of the top-level input fields declared by the
+ * customer's original tool schemas.
+ *
+ * The map is used only for deterministic provider-compatibility repair. It
+ * never invents missing values: a trailing continuation field is accepted only
+ * when that exact field name was declared by the client for that exact tool.
+ */
+export function buildToolInputFieldMap(
+  body: Record<string, unknown>,
+): ToolInputFieldMap {
+  const map = new Map<string, ReadonlySet<string> | null>();
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+
+  for (const candidate of tools) {
+    if (!record(candidate)) continue;
+
+    let name: string | null = null;
+    let schema: unknown = null;
+
+    if (typeof candidate.name === "string") {
+      name = candidate.name;
+      schema = candidate.input_schema;
+    } else if (
+      record(candidate.function)
+      && typeof candidate.function.name === "string"
+    ) {
+      name = candidate.function.name;
+      schema = candidate.function.parameters;
+    }
+
+    if (!name || name.length > 128 || name.includes("\r") || name.includes("\n") || name.includes("\0")) continue;
+
+    const properties =
+      record(schema) && record(schema.properties)
+        ? new Set(Object.keys(schema.properties))
+        : null;
+
+    const key = name.toLocaleLowerCase("en-US");
+
+    if (map.has(key)) {
+      // Case-insensitive duplicate/collision is ambiguous, so continuation
+      // repair for that tool is disabled.
+      map.set(key, null);
+    } else {
+      map.set(key, properties);
+    }
+  }
+
+  return map;
+}
+
+export function normalizeCompleteToolInputs(
+  value: unknown,
+  toolInputFields: ToolInputFieldMap = EMPTY_TOOL_INPUT_FIELDS,
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeCompleteToolInputs(item));
+    return value.map((item) =>
+      normalizeCompleteToolInputs(item, toolInputFields));
   }
 
   if (!record(value)) return value;
@@ -32,7 +96,7 @@ export function normalizeCompleteToolInputs(value: unknown): unknown {
   const output: Record<string, unknown> = {};
 
   for (const [key, child] of Object.entries(value)) {
-    output[key] = normalizeCompleteToolInputs(child);
+    output[key] = normalizeCompleteToolInputs(child, toolInputFields);
   }
 
   if (output.type === "tool_use") {
@@ -40,7 +104,10 @@ export function normalizeCompleteToolInputs(value: unknown): unknown {
 
     if (raw !== null) {
       const toolName = typeof output.name === "string" ? output.name : null;
-      output.input = parseObjectCompat(raw, toolName);
+      output.input = parseObjectCompat(
+        raw,
+        allowedFieldsForTool(toolName, toolInputFields),
+      );
     } else if (!record(output.input)) {
       throw new InvalidToolInputError("Anthropic tool_use.input must be a JSON object.");
     }
@@ -53,7 +120,10 @@ export function normalizeCompleteToolInputs(value: unknown): unknown {
  * Rewrite only complete tool-input wrappers in SSE JSON.
  * input_json_delta.partial_json remains a string fragment and is not parsed here.
  */
-export function rewriteSseToolInputs(text: string): string {
+export function rewriteSseToolInputs(
+  text: string,
+  toolInputFields: ToolInputFieldMap = EMPTY_TOOL_INPUT_FIELDS,
+): string {
   if (text === "") return text;
 
   return text
@@ -73,7 +143,9 @@ export function rewriteSseToolInputs(text: string): string {
         return part;
       }
 
-      return `data: ${JSON.stringify(normalizeStreamEvent(parsed))}`;
+      return `data: ${JSON.stringify(
+        normalizeStreamEvent(parsed, toolInputFields),
+      )}`;
     })
     .join("");
 }
@@ -88,6 +160,10 @@ export function rewriteSseToolInputs(text: string): string {
 export class AnthropicToolStreamGuard {
   private readonly active = new Map<number, StreamToolState>();
   private readonly repairs = new Map<number, string>();
+
+  constructor(
+    private readonly toolInputFields: ToolInputFieldMap = EMPTY_TOOL_INPUT_FIELDS,
+  ) {}
 
   inspect(frame: string): void {
     for (const line of frame.split(/\r?\n/)) {
@@ -123,6 +199,10 @@ export class AnthropicToolStreamGuard {
         const raw = unparsedRaw(block.input);
         const hadObjectInput = record(block.input) && raw === null;
         const toolName = typeof block.name === "string" ? block.name : null;
+        const allowedFields = allowedFieldsForTool(
+          toolName,
+          this.toolInputFields,
+        );
 
         if (block.input !== undefined && raw === null && !record(block.input)) {
           throw new InvalidToolInputError("Anthropic tool_use.input must be an object.");
@@ -133,6 +213,7 @@ export class AnthropicToolStreamGuard {
           hadObjectInput,
           sawDelta: false,
           toolName,
+          allowedFields,
         });
 
         continue;
@@ -269,9 +350,12 @@ export class AnthropicToolStreamGuard {
   }
 }
 
-function normalizeStreamEvent(value: unknown): unknown {
+function normalizeStreamEvent(
+  value: unknown,
+  toolInputFields: ToolInputFieldMap,
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeStreamEvent(item));
+    return value.map((item) => normalizeStreamEvent(item, toolInputFields));
   }
 
   if (!record(value)) return value;
@@ -279,7 +363,7 @@ function normalizeStreamEvent(value: unknown): unknown {
   const output: Record<string, unknown> = {};
 
   for (const [key, child] of Object.entries(value)) {
-    output[key] = normalizeStreamEvent(child);
+    output[key] = normalizeStreamEvent(child, toolInputFields);
   }
 
   if (output.type === "tool_use") {
@@ -287,7 +371,10 @@ function normalizeStreamEvent(value: unknown): unknown {
 
     if (raw !== null) {
       const toolName = typeof output.name === "string" ? output.name : null;
-      output.input = parseObjectCompat(raw, toolName);
+      output.input = parseObjectCompat(
+        raw,
+        allowedFieldsForTool(toolName, toolInputFields),
+      );
     } else if (output.input !== undefined && !record(output.input)) {
       throw new InvalidToolInputError("Anthropic streamed tool_use.input must be an object.");
     }
@@ -302,7 +389,10 @@ function validateState(state: StreamToolState): string | null {
       parseObject(state.raw);
       return null;
     } catch (originalError) {
-      const repaired = repairDuplicatedTrailingFields(state.raw, state.toolName);
+      const repaired = repairDuplicatedTrailingFields(
+        state.raw,
+        state.allowedFields,
+      );
 
       if (repaired !== null) {
         return JSON.stringify(repaired);
@@ -328,19 +418,19 @@ function validateState(state: StreamToolState): string | null {
  *   {"command":"...","description":"List files"},
  *   "description":"List files"}
  *
- * We always repair deterministic identical duplicate tails. For the Claude Code
- * Edit tool only, we also repair a complete continuation tail made exclusively
- * from known Edit schema fields. Unknown fields, changed duplicate values, and
- * truncated/ambiguous JSON remain rejected.
+ * We always repair deterministic identical duplicate tails. We also repair a
+ * complete continuation tail only when every new top-level field was declared
+ * by the customer's original schema for that exact tool. Unknown fields,
+ * changed duplicate values, and truncated/ambiguous JSON remain rejected.
  */
 function parseObjectCompat(
   raw: string,
-  toolName: string | null = null,
+  allowedFields: ReadonlySet<string> | null = null,
 ): Record<string, unknown> {
   try {
     return parseObject(raw);
   } catch (originalError) {
-    const repaired = repairDuplicatedTrailingFields(raw, toolName);
+    const repaired = repairDuplicatedTrailingFields(raw, allowedFields);
 
     if (repaired !== null) {
       return repaired;
@@ -350,16 +440,9 @@ function parseObjectCompat(
   }
 }
 
-const SAFE_EDIT_TRAILING_CONTINUATION_FIELDS = new Set([
-  "file_path",
-  "old_string",
-  "new_string",
-  "replace_all",
-]);
-
 function repairDuplicatedTrailingFields(
   raw: string,
-  toolName: string | null = null,
+  allowedFields: ReadonlySet<string> | null = null,
 ): Record<string, unknown> | null {
   const boundary = firstCompleteObjectEnd(raw);
 
@@ -386,12 +469,12 @@ function repairDuplicatedTrailingFields(
     return null;
   }
 
-  const normalizedToolName = toolName?.trim().toLowerCase() ?? "";
-  const allowEditContinuation = normalizedToolName === "edit";
   const merged: Record<string, unknown> = { ...head };
 
   for (const [key, value] of Object.entries(tail)) {
     if (Object.prototype.hasOwnProperty.call(head, key)) {
+      // A duplicate is safe only if it is byte-semantically the same JSON
+      // value. Conflicting repeats remain invalid.
       if (!sameJsonValue(head[key], value)) {
         return null;
       }
@@ -399,7 +482,11 @@ function repairDuplicatedTrailingFields(
       continue;
     }
 
-    if (!allowEditContinuation || !SAFE_EDIT_TRAILING_CONTINUATION_FIELDS.has(key)) {
+    // A provider may prematurely close a tool input object and then continue
+    // the SAME object with additional top-level fields. Repair that defect only
+    // when the original client schema proves that this exact field belongs to
+    // this exact tool.
+    if (allowedFields === null || !allowedFields.has(key)) {
       return null;
     }
 
@@ -407,6 +494,17 @@ function repairDuplicatedTrailingFields(
   }
 
   return merged;
+}
+
+function allowedFieldsForTool(
+  toolName: string | null,
+  toolInputFields: ToolInputFieldMap,
+): ReadonlySet<string> | null {
+  if (toolName === null) return null;
+
+  return toolInputFields.get(
+    toolName.toLocaleLowerCase("en-US"),
+  ) ?? null;
 }
 function firstCompleteObjectEnd(raw: string): number | null {
   let index = 0;

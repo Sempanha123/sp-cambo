@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AnthropicToolStreamGuard,
+  buildToolInputFieldMap,
   InvalidToolInputError,
   normalizeCompleteToolInputs,
 } from "../src/tool-integrity.js";
@@ -26,8 +27,30 @@ function reconstructToolJson(text: string): string {
     .join("");
 }
 
-describe("Claude Edit continuation-tail compatibility", () => {
-  it("repairs complete Edit fields appended after a prematurely closed object", () => {
+function anthropicToolFields(
+  name: string,
+  properties: Record<string, unknown>,
+) {
+  return buildToolInputFieldMap({
+    tools: [{
+      name,
+      input_schema: {
+        type: "object",
+        properties,
+      },
+    }],
+  });
+}
+
+describe("schema-aware Claude tool continuation compatibility", () => {
+  it("repairs Edit continuation fields declared by the client schema", () => {
+    const fields = anthropicToolFields("Edit", {
+      file_path: { type: "string" },
+      old_string: { type: "string" },
+      new_string: { type: "string" },
+      replace_all: { type: "boolean" },
+    });
+
     const malformed =
       `{"file_path":"index.html"},`
       + `"old_string":"<title>Rustic Bean Coffee</title>",`
@@ -44,7 +67,7 @@ describe("Claude Edit continuation-tail compatibility", () => {
           len: Buffer.byteLength(malformed),
         },
       },
-    }) as any;
+    }, fields) as any;
 
     expect(result.input).toEqual({
       file_path: "index.html",
@@ -54,13 +77,50 @@ describe("Claude Edit continuation-tail compatibility", () => {
     });
   });
 
-  it("repairs the same Edit continuation shape in streamed partial_json", () => {
+  it("repairs Read continuation fields declared by the client schema", () => {
+    const fields = anthropicToolFields("Read", {
+      file_path: { type: "string" },
+      offset: { type: "number" },
+      limit: { type: "number" },
+    });
+
     const malformed =
       `{"file_path":"index.html"},`
-      + `"old_string":"old",`
-      + `"new_string":"new"}`;
+      + `"offset":1,`
+      + `"limit":20}`;
 
-    const guard = new AnthropicToolStreamGuard();
+    const result = normalizeCompleteToolInputs({
+      type: "tool_use",
+      id: "tool_read_continuation",
+      name: "read",
+      input: {
+        __unparsedToolInput: {
+          raw: malformed,
+          len: Buffer.byteLength(malformed),
+        },
+      },
+    }, fields) as any;
+
+    expect(result.input).toEqual({
+      file_path: "index.html",
+      offset: 1,
+      limit: 20,
+    });
+  });
+
+  it("repairs streamed Bash continuation using its original schema", () => {
+    const fields = anthropicToolFields("Bash", {
+      command: { type: "string" },
+      description: { type: "string" },
+      timeout: { type: "number" },
+    });
+
+    const malformed =
+      `{"command":"node --version"},`
+      + `"description":"Check Node",`
+      + `"timeout":120000}`;
+
+    const guard = new AnthropicToolStreamGuard(fields);
     const frames: string[] = [];
 
     frames.push(sse({
@@ -68,19 +128,19 @@ describe("Claude Edit continuation-tail compatibility", () => {
       index: 0,
       content_block: {
         type: "tool_use",
-        id: "tool_edit_stream_continuation",
-        name: "Edit",
+        id: "tool_bash_stream_continuation",
+        name: "bash",
         input: {},
       },
     }));
 
-    for (let offset = 0; offset < malformed.length; offset += 9) {
+    for (let offset = 0; offset < malformed.length; offset += 11) {
       frames.push(sse({
         type: "content_block_delta",
         index: 0,
         delta: {
           type: "input_json_delta",
-          partial_json: malformed.slice(offset, offset + 9),
+          partial_json: malformed.slice(offset, offset + 11),
         },
       }));
     }
@@ -89,46 +149,49 @@ describe("Claude Edit continuation-tail compatibility", () => {
       type: "content_block_stop",
       index: 0,
     }));
+    frames.push(sse({ type: "message_stop" }));
 
-    frames.push(sse({
-      type: "message_stop",
-    }));
-
-    for (const frame of frames) {
-      guard.inspect(frame);
-    }
+    for (const frame of frames) guard.inspect(frame);
 
     const rewritten = guard.rewriteBuffered(frames.join(""));
     const reconstructed = reconstructToolJson(rewritten);
 
     expect(JSON.parse(reconstructed)).toEqual({
-      file_path: "index.html",
-      old_string: "old",
-      new_string: "new",
+      command: "node --version",
+      description: "Check Node",
+      timeout: 120000,
     });
   });
 
-  it("still rejects an unknown new trailing field", () => {
+  it("still rejects a new field that is not in the original tool schema", () => {
+    const fields = anthropicToolFields("Read", {
+      file_path: { type: "string" },
+    });
+
     const malformed =
       `{"file_path":"index.html"},`
-      + `"old_string":"old",`
-      + `"new_string":"new",`
       + `"unexpected_field":true}`;
 
     expect(() => normalizeCompleteToolInputs({
       type: "tool_use",
-      id: "tool_edit_unknown_tail",
-      name: "Edit",
+      id: "tool_unknown_tail",
+      name: "Read",
       input: {
         __unparsedToolInput: {
           raw: malformed,
           len: Buffer.byteLength(malformed),
         },
       },
-    })).toThrow(InvalidToolInputError);
+    }, fields)).toThrow(InvalidToolInputError);
   });
 
-  it("still rejects a conflicting repeated Edit field", () => {
+  it("still rejects conflicting duplicate values", () => {
+    const fields = anthropicToolFields("Edit", {
+      file_path: { type: "string" },
+      old_string: { type: "string" },
+      new_string: { type: "string" },
+    });
+
     const malformed =
       `{"file_path":"index.html","old_string":"old"},`
       + `"old_string":"CHANGED",`
@@ -136,7 +199,7 @@ describe("Claude Edit continuation-tail compatibility", () => {
 
     expect(() => normalizeCompleteToolInputs({
       type: "tool_use",
-      id: "tool_edit_conflicting_tail",
+      id: "tool_conflicting_tail",
       name: "Edit",
       input: {
         __unparsedToolInput: {
@@ -144,6 +207,27 @@ describe("Claude Edit continuation-tail compatibility", () => {
           len: Buffer.byteLength(malformed),
         },
       },
-    })).toThrow(InvalidToolInputError);
+    }, fields)).toThrow(InvalidToolInputError);
+  });
+
+  it("still rejects truncated JSON even when the schema knows every field", () => {
+    const fields = anthropicToolFields("Write", {
+      file_path: { type: "string" },
+      content: { type: "string" },
+    });
+
+    const malformed = `{"file_path":"index.html","content":"unfinished`;
+
+    expect(() => normalizeCompleteToolInputs({
+      type: "tool_use",
+      id: "tool_truncated",
+      name: "Write",
+      input: {
+        __unparsedToolInput: {
+          raw: malformed,
+          len: Buffer.byteLength(malformed),
+        },
+      },
+    }, fields)).toThrow(InvalidToolInputError);
   });
 });

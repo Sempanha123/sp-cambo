@@ -6,7 +6,7 @@ import { GatewayError, writeError } from "./errors.js";
 import { LocalPromptCache } from "./local-prompt-cache.js";
 import { localizeSseUsage, prepare, restorePublicModel, restorePublicModelInSse, spLocalOutputTokensFromSse, spLocalUsage, spLocalUsageFromOutputTokens, upstreamBody, withLocalUsage } from "./protocol.js";
 import { buildToolNameMap, normalizeToolNames, rewriteSseToolNames, type ToolNameMap } from "./tool-names.js";
-import { AnthropicToolStreamGuard, InvalidToolInputError, MAX_BUFFERED_TOOL_STREAM_BYTES, normalizeCompleteToolInputs, rewriteSseToolInputs } from "./tool-integrity.js";
+import { AnthropicToolStreamGuard, buildToolInputFieldMap, InvalidToolInputError, MAX_BUFFERED_TOOL_STREAM_BYTES, normalizeCompleteToolInputs, rewriteSseToolInputs, type ToolInputFieldMap } from "./tool-integrity.js";
 import type { ControlPlane, Fetch, GatewayConfig, InferencePath, RateStore } from "./types.js";
 import { INFERENCE_PATHS } from "./types.js";
 
@@ -75,6 +75,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const bytes = Buffer.byteLength(raw);
     const prepared = prepare(path, raw, config.defaultMaxOutputTokens);
     const toolNames = buildToolNameMap(prepared.body);
+    const toolInputFields = buildToolInputFieldMap(prepared.body);
     const inspection = await dependencies.controlPlane.inspect(key);
     const keyCap = inspection.limits.max_request_bytes;
     if (bytes > config.maxBodyBytes || (keyCap !== null && bytes > keyCap)) throw new GatewayError(413, "request_too_large", "The request exceeds the allowed size.");
@@ -261,6 +262,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
                   requestStartedAt,
                   controller.signal,
                   toolNames,
+                  toolInputFields,
                   localInput.input_tokens,
                   localInput.cache_read_tokens,
                   prepared.publicModel,
@@ -277,6 +279,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
                 requestStartedAt,
                 controller.signal,
                 toolNames,
+                toolInputFields,
                 localInput.input_tokens,
                 localInput.cache_read_tokens,
                 prepared.publicModel,
@@ -315,7 +318,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } finally { await lease.release(); }
   }
 
-  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<unknown> {
+  async function json(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, toolInputFields: ToolInputFieldMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<unknown> {
     let text: string;
     try {
       text = await abortable(upstream.text(), signal);
@@ -330,7 +333,10 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     let normalizedResponse: unknown;
     try {
       normalizedResponse = restorePublicModel(
-        normalizeToolNames(normalizeCompleteToolInputs(parsed), toolNames),
+        normalizeToolNames(
+          normalizeCompleteToolInputs(parsed, toolInputFields),
+          toolNames,
+        ),
         publicModel,
       );
     } catch (error) {
@@ -354,13 +360,13 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     return reply;
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void, onUpstreamActivity: () => void): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, toolInputFields: ToolInputFieldMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void, onUpstreamActivity: () => void): Promise<void> {
     let buffer = ""; let bytesSent = false; let localOutputTokens = 0; let terminalFrameSeen = false;
     // Hold Anthropic tool-enabled streams until tool JSON integrity is known.
     // This allows the existing route pool to retry before malformed tool input
     // reaches Claude Code.
     const toolGuard = path === "/v1/messages" && toolNames.size > 0
-      ? new AnthropicToolStreamGuard()
+      ? new AnthropicToolStreamGuard(toolInputFields)
       : null;
     const heldToolFrames: string[] = [];
     let heldToolBytes = 0;
@@ -377,7 +383,10 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const writePublic = async (text: string): Promise<void> => {
       if (text === "") return;
       const publicText = restorePublicModelInSse(
-        rewriteSseToolNames(rewriteSseToolInputs(text), toolNames),
+        rewriteSseToolNames(
+          rewriteSseToolInputs(text, toolInputFields),
+          toolNames,
+        ),
         publicModel,
       );
       beginPublicStream();
