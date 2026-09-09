@@ -308,6 +308,12 @@ function validateState(state: StreamToolState): string | null {
         return JSON.stringify(repaired);
       }
 
+      if (originalError instanceof InvalidToolInputError) {
+        throw new InvalidToolInputError(
+          originalError.message + " " + summarizeInvalidToolInputShape(state.raw),
+        );
+      }
+
       throw originalError;
     }
   }
@@ -516,6 +522,48 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
   }
 
   return false;
+}
+function summarizeInvalidToolInputShape(raw: string): string {
+  const bytes = Buffer.byteLength(raw);
+  const trimmed = raw.trim();
+  const boundary = firstCompleteObjectEnd(raw);
+
+  if (boundary === null) {
+    return `[shape bytes=${bytes} complete_object=false starts_object=${trimmed.startsWith("{")} ends_object=${trimmed.endsWith("}")}]`;
+  }
+
+  const headText = raw.slice(0, boundary).trim();
+  const tailText = raw.slice(boundary).trim();
+
+  let headKeys: string[] = [];
+
+  try {
+    const head = JSON.parse(headText) as unknown;
+    if (record(head)) headKeys = Object.keys(head).sort();
+  } catch {
+    // Structural diagnostic only.
+  }
+
+  if (tailText === "") {
+    return `[shape bytes=${bytes} complete_object=true head_keys=${JSON.stringify(headKeys)} tail=false]`;
+  }
+
+  let tailKeys: string[] = [];
+  let tailObject = false;
+
+  if (tailText.startsWith(",")) {
+    try {
+      const tail = JSON.parse(`{${tailText.slice(1)}`) as unknown;
+      if (record(tail)) {
+        tailObject = true;
+        tailKeys = Object.keys(tail).sort();
+      }
+    } catch {
+      // Structural diagnostic only.
+    }
+  }
+
+  return `[shape bytes=${bytes} complete_object=true head_keys=${JSON.stringify(headKeys)} tail=true tail_starts_comma=${tailText.startsWith(",")} tail_object=${tailObject} tail_keys=${JSON.stringify(tailKeys)}]`;
 }
 function parseObject(raw: string): Record<string, unknown> {
   let parsed: unknown;
