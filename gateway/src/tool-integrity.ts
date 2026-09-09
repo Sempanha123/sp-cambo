@@ -553,21 +553,46 @@ function repairDuplicatedTrailingFields(
   const headText = raw.slice(0, boundary).trim();
   const tailText = raw.slice(boundary).trim();
 
-  if (tailText === "" || !tailText.startsWith(",")) {
+  if (tailText === "") {
     return null;
   }
 
   let head: unknown;
-  let tail: unknown;
 
   try {
     head = JSON.parse(headText) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!record(head)) {
+    return null;
+  }
+
+  if (!tailText.startsWith(",")) {
+    // Exact duplicated suffixes are safe to discard because the complete object
+    // already contains every byte being repeated after its closing brace.
+    //
+    // This targets compatible providers that emit overlapping partial_json
+    // chunks, for example:
+    //
+    //   {"command":"echo 120000","description":"Check 120000"}120000"}
+    //
+    // The malformed tail is repaired only when it is byte-for-byte an exact
+    // suffix of the already valid object. Arbitrary garbage or a changed suffix
+    // is still rejected.
+    return headText.endsWith(tailText) ? head : null;
+  }
+
+  let tail: unknown;
+
+  try {
     tail = JSON.parse(`{${tailText.slice(1)}`) as unknown;
   } catch {
     return null;
   }
 
-  if (!record(head) || !record(tail) || Object.keys(tail).length === 0) {
+  if (!record(tail) || Object.keys(tail).length === 0) {
     return null;
   }
 
