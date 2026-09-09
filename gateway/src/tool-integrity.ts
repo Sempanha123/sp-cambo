@@ -383,6 +383,104 @@ function normalizeStreamEvent(
   return output;
 }
 
+function safeToolNameForDiagnostic(toolName: string | null): string {
+  if (toolName === null || toolName === "") return "unknown";
+  return /^[A-Za-z0-9_.:-]{1,128}$/u.test(toolName) ? toolName : "invalid-name";
+}
+
+function structuralCharKind(value: string | undefined): string {
+  if (value === undefined) return "none";
+
+  switch (value) {
+    case ",":
+      return "comma";
+    case "}":
+      return "close_brace";
+    case "{":
+      return "open_brace";
+    case "]":
+      return "close_bracket";
+    case "[":
+      return "open_bracket";
+    case "\"":
+      return "quote";
+    case ":":
+      return "colon";
+    default:
+      if (/\s/u.test(value)) return "whitespace";
+      if (/[0-9-]/u.test(value)) return "numberish";
+      if (/[A-Za-z_$]/u.test(value)) return "wordish";
+      return "other";
+  }
+}
+
+function summarizeInvalidToolInputShapeV2(
+  raw: string,
+  allowedFields: ReadonlySet<string> | null,
+): string {
+  const bytes = Buffer.byteLength(raw);
+  const boundary = firstCompleteObjectEnd(raw);
+
+  if (boundary === null) {
+    return [
+      `bytes=${bytes}`,
+      "complete_object=false",
+      `first=${structuralCharKind(raw.trimStart()[0])}`,
+      `last=${structuralCharKind(raw.trimEnd().at(-1))}`,
+    ].join(" ");
+  }
+
+  const headText = raw.slice(0, boundary).trim();
+  const tailText = raw.slice(boundary).trim();
+
+  let headKeys: string[] = [];
+  try {
+    const head = JSON.parse(headText) as unknown;
+    if (record(head)) headKeys = Object.keys(head).sort();
+  } catch {
+    // Structural diagnostics only.
+  }
+
+  let commaTailKeys: string[] = [];
+  let commaTailObject = false;
+
+  if (tailText.startsWith(",")) {
+    try {
+      const parsedTail = JSON.parse(`{${tailText.slice(1)}`) as unknown;
+      if (record(parsedTail)) {
+        commaTailObject = true;
+        commaTailKeys = Object.keys(parsedTail).sort();
+      }
+    } catch {
+      // Structural diagnostics only.
+    }
+  }
+
+  const tailKeysAllowed =
+    commaTailObject
+    && allowedFields !== null
+    && commaTailKeys.every((key) => allowedFields.has(key));
+
+  const allClosingBraces = tailText !== "" && /^\}+$/u.test(tailText);
+  const allClosingBrackets = tailText !== "" && /^\]+$/u.test(tailText);
+
+  return [
+    `bytes=${bytes}`,
+    "complete_object=true",
+    `head_keys=${JSON.stringify(headKeys)}`,
+    `tail_bytes=${Buffer.byteLength(tailText)}`,
+    `tail_first=${structuralCharKind(tailText[0])}`,
+    `tail_last=${structuralCharKind(tailText.at(-1))}`,
+    `tail_starts_comma=${tailText.startsWith(",")}`,
+    `comma_tail_object=${commaTailObject}`,
+    `comma_tail_keys=${JSON.stringify(commaTailKeys)}`,
+    `comma_tail_keys_allowed=${tailKeysAllowed}`,
+    `allowed_field_count=${allowedFields?.size ?? 0}`,
+    `tail_all_closing_braces=${allClosingBraces}`,
+    `tail_all_closing_brackets=${allClosingBrackets}`,
+  ].join(" ");
+}
+
 function validateState(state: StreamToolState): string | null {
   if (state.raw !== "") {
     try {
@@ -398,7 +496,9 @@ function validateState(state: StreamToolState): string | null {
         return JSON.stringify(repaired);
       }
 
-      throw originalError;
+      throw new InvalidToolInputError(
+        `Tool input raw JSON could not be parsed. [tool=${safeToolNameForDiagnostic(state.toolName)} shape ${summarizeInvalidToolInputShapeV2(state.raw, state.allowedFields)}]`,
+      );
     }
   }
 
@@ -436,7 +536,9 @@ function parseObjectCompat(
       return repaired;
     }
 
-    throw originalError;
+    throw new InvalidToolInputError(
+      `Completed tool input raw JSON could not be parsed. [shape ${summarizeInvalidToolInputShapeV2(raw, allowedFields)}]`,
+    );
   }
 }
 

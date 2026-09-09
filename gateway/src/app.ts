@@ -465,6 +465,11 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     } catch (error) {
       void reader.cancel(signal.reason).catch(() => undefined);
 
+      if (error instanceof InvalidToolInputError) {
+        console.warn(
+          `[SP Cambo tool diagnostic v2] upstream_invalid_tool_input request=${requestId} reservation=${reservationId}: ${error.message}`,
+        );
+      }
 
       const reason = error instanceof InvalidToolInputError
         ? "upstream_invalid_tool_input"
