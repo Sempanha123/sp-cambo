@@ -146,8 +146,29 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
             Math.max(config.upstreamTimeoutMs, 1000),
             600_000,
           );
-          const timeout = setTimeout(() => controller.abort("upstream_timeout"), upstreamTimeoutMs);
+          let publicOutputStarted = false;
+          let timeout: ReturnType<typeof setTimeout> | null = null;
 
+          const clearUpstreamTimeout = (): void => {
+            if (timeout === null) return;
+            clearTimeout(timeout);
+            timeout = null;
+          };
+
+          const refreshUpstreamTimeout = (): void => {
+            // timeout_ms is an inactivity timeout before public output.
+            // Claude tool streams can be actively received while SP Cambo
+            // buffers them for complete JSON integrity validation.
+            if (publicOutputStarted || controller.signal.aborted) return;
+
+            clearUpstreamTimeout();
+            timeout = setTimeout(
+              () => controller.abort("upstream_timeout"),
+              upstreamTimeoutMs,
+            );
+          };
+
+          refreshUpstreamTimeout();
           let upstream: Response;
           try {
             const upstreamOrigin = route.upstream_origin.replace(/\/+$/, "");
@@ -163,8 +184,9 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
             });
 
             upstream = await abortable(fetchPromise, controller.signal);
+            refreshUpstreamTimeout();
           } catch {
-            clearTimeout(timeout);
+            clearUpstreamTimeout();
             clientController.signal.removeEventListener("abort", forwardClientAbort);
 
             const reason = abortReason(controller.signal);
@@ -188,7 +210,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           }
 
           if (!upstream.ok && failoverStatus(upstream.status)) {
-            clearTimeout(timeout);
+            clearUpstreamTimeout();
             clientController.signal.removeEventListener("abort", forwardClientAbort);
             try { await upstream.body?.cancel(); } catch { /* current route is finished */ }
 
@@ -208,17 +230,16 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
           }
 
           if (!upstream.ok) {
-            clearTimeout(timeout);
+            clearUpstreamTimeout();
             clientController.signal.removeEventListener("abort", forwardClientAbort);
             await releaseBestEffort(reservationId);
             return proxyError(reply, upstream, path);
           }
 
-          let publicOutputStarted = false;
           const onPublicOutputStarted = (): void => {
             if (publicOutputStarted) return;
             publicOutputStarted = true;
-            clearTimeout(timeout);
+            clearUpstreamTimeout();
             promptCache.remember(
               inspection.key_id,
               path,
@@ -244,6 +265,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
                   localInput.cache_read_tokens,
                   prepared.publicModel,
                   onPublicOutputStarted,
+                  refreshUpstreamTimeout,
                 );
               }
 
@@ -282,7 +304,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
               throw operationFailure(error.reason);
             }
           } finally {
-            clearTimeout(timeout);
+            clearUpstreamTimeout();
             clientController.signal.removeEventListener("abort", forwardClientAbort);
           }
         }
@@ -332,7 +354,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     return reply;
   }
 
-  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void): Promise<void> {
+  async function stream(reply: FastifyReply, upstream: Response, reservationId: string, path: InferencePath, requestId: string, requestStartedAt: number, signal: AbortSignal, toolNames: ToolNameMap, localInputTokens: number, localCacheReadTokens: number, publicModel: string, onPublicOutputStarted: () => void, onUpstreamActivity: () => void): Promise<void> {
     let buffer = ""; let bytesSent = false; let localOutputTokens = 0; let terminalFrameSeen = false;
     // Hold Anthropic tool-enabled streams until tool JSON integrity is known.
     // This allows the existing route pool to retry before malformed tool input
@@ -391,7 +413,12 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     };
     try {
       streamReadLoop: while (true) {
-        const { value, done } = await abortable(reader.read(), signal); if (done) break;
+        const { value, done } = await abortable(reader.read(), signal);
+        if (done) break;
+
+        if (value.byteLength > 0) {
+          onUpstreamActivity();
+        }
         buffer += decoder.decode(value, { stream: true });
         while (true) {
           const frame = takeSseFrame(buffer);
