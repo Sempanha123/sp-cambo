@@ -39,3 +39,6 @@ backend/storage/app/private/omniroute-bootstrap.json
 
 /APPLY-SP-CAMBO-*.mjs
 /REPAIR-SP-CAMBO-*.mjs
+
+/APPLY-SP-CAMBO-*.mjs
+/REPAIR-SP-CAMBO-*.mjs
