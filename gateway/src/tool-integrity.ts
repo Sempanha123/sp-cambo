@@ -19,6 +19,7 @@ type StreamToolState = {
   raw: string;
   hadObjectInput: boolean;
   sawDelta: boolean;
+  toolName: string | null;
 };
 
 export function normalizeCompleteToolInputs(value: unknown): unknown {
@@ -38,7 +39,8 @@ export function normalizeCompleteToolInputs(value: unknown): unknown {
     const raw = unparsedRaw(output.input);
 
     if (raw !== null) {
-      output.input = parseObjectCompat(raw);
+      const toolName = typeof output.name === "string" ? output.name : null;
+      output.input = parseObjectCompat(raw, toolName);
     } else if (!record(output.input)) {
       throw new InvalidToolInputError("Anthropic tool_use.input must be a JSON object.");
     }
@@ -120,6 +122,7 @@ export class AnthropicToolStreamGuard {
 
         const raw = unparsedRaw(block.input);
         const hadObjectInput = record(block.input) && raw === null;
+        const toolName = typeof block.name === "string" ? block.name : null;
 
         if (block.input !== undefined && raw === null && !record(block.input)) {
           throw new InvalidToolInputError("Anthropic tool_use.input must be an object.");
@@ -129,6 +132,7 @@ export class AnthropicToolStreamGuard {
           raw: raw ?? "",
           hadObjectInput,
           sawDelta: false,
+          toolName,
         });
 
         continue;
@@ -282,7 +286,8 @@ function normalizeStreamEvent(value: unknown): unknown {
     const raw = unparsedRaw(output.input);
 
     if (raw !== null) {
-      output.input = parseObjectCompat(raw);
+      const toolName = typeof output.name === "string" ? output.name : null;
+      output.input = parseObjectCompat(raw, toolName);
     } else if (output.input !== undefined && !record(output.input)) {
       throw new InvalidToolInputError("Anthropic streamed tool_use.input must be an object.");
     }
@@ -297,7 +302,7 @@ function validateState(state: StreamToolState): string | null {
       parseObject(state.raw);
       return null;
     } catch (originalError) {
-      const repaired = repairDuplicatedTrailingFields(state.raw);
+      const repaired = repairDuplicatedTrailingFields(state.raw, state.toolName);
 
       if (repaired !== null) {
         return JSON.stringify(repaired);
@@ -323,14 +328,19 @@ function validateState(state: StreamToolState): string | null {
  *   {"command":"...","description":"List files"},
  *   "description":"List files"}
  *
- * We repair only that deterministic duplicate-tail shape. Any trailing field
- * that is new or has a different value is rejected.
+ * We always repair deterministic identical duplicate tails. For the Claude Code
+ * Edit tool only, we also repair a complete continuation tail made exclusively
+ * from known Edit schema fields. Unknown fields, changed duplicate values, and
+ * truncated/ambiguous JSON remain rejected.
  */
-function parseObjectCompat(raw: string): Record<string, unknown> {
+function parseObjectCompat(
+  raw: string,
+  toolName: string | null = null,
+): Record<string, unknown> {
   try {
     return parseObject(raw);
   } catch (originalError) {
-    const repaired = repairDuplicatedTrailingFields(raw);
+    const repaired = repairDuplicatedTrailingFields(raw, toolName);
 
     if (repaired !== null) {
       return repaired;
@@ -340,7 +350,17 @@ function parseObjectCompat(raw: string): Record<string, unknown> {
   }
 }
 
-function repairDuplicatedTrailingFields(raw: string): Record<string, unknown> | null {
+const SAFE_EDIT_TRAILING_CONTINUATION_FIELDS = new Set([
+  "file_path",
+  "old_string",
+  "new_string",
+  "replace_all",
+]);
+
+function repairDuplicatedTrailingFields(
+  raw: string,
+  toolName: string | null = null,
+): Record<string, unknown> | null {
   const boundary = firstCompleteObjectEnd(raw);
 
   if (boundary === null) return null;
@@ -366,19 +386,28 @@ function repairDuplicatedTrailingFields(raw: string): Record<string, unknown> | 
     return null;
   }
 
+  const normalizedToolName = toolName?.trim().toLowerCase() ?? "";
+  const allowEditContinuation = normalizedToolName === "edit";
+  const merged: Record<string, unknown> = { ...head };
+
   for (const [key, value] of Object.entries(tail)) {
-    if (!Object.prototype.hasOwnProperty.call(head, key)) {
+    if (Object.prototype.hasOwnProperty.call(head, key)) {
+      if (!sameJsonValue(head[key], value)) {
+        return null;
+      }
+
+      continue;
+    }
+
+    if (!allowEditContinuation || !SAFE_EDIT_TRAILING_CONTINUATION_FIELDS.has(key)) {
       return null;
     }
 
-    if (!sameJsonValue(head[key], value)) {
-      return null;
-    }
+    merged[key] = value;
   }
 
-  return head;
+  return merged;
 }
-
 function firstCompleteObjectEnd(raw: string): number | null {
   let index = 0;
 
