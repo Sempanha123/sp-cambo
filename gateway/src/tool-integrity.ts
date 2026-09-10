@@ -21,13 +21,20 @@ export type ToolInputFieldMap = ReadonlyMap<
 >;
 
 const EMPTY_TOOL_INPUT_FIELDS: ToolInputFieldMap = new Map();
+const EMPTY_REQUIRED_TOOL_INPUT_FIELDS: ReadonlySet<string> = new Set();
+const REQUIRED_TOOL_INPUT_FIELDS = new WeakMap<
+  ToolInputFieldMap,
+  ReadonlyMap<string, ReadonlySet<string>>
+>();
 
 type StreamToolState = {
   raw: string;
   hadObjectInput: boolean;
+  initialInput: Record<string, unknown> | null;
   sawDelta: boolean;
   toolName: string | null;
   allowedFields: ReadonlySet<string> | null;
+  requiredFields: ReadonlySet<string>;
 };
 
 /**
@@ -42,6 +49,7 @@ export function buildToolInputFieldMap(
   body: Record<string, unknown>,
 ): ToolInputFieldMap {
   const map = new Map<string, ReadonlySet<string> | null>();
+  const requiredByTool = new Map<string, ReadonlySet<string>>();
   const tools = Array.isArray(body.tools) ? body.tools : [];
 
   for (const candidate of tools) {
@@ -67,18 +75,29 @@ export function buildToolInputFieldMap(
       record(schema) && record(schema.properties)
         ? new Set(Object.keys(schema.properties))
         : null;
+    const requiredFields =
+      record(schema) && Array.isArray(schema.required)
+        ? new Set(
+            schema.required.filter(
+              (field): field is string => typeof field === "string",
+            ),
+          )
+        : new Set<string>();
 
     const key = name.toLocaleLowerCase("en-US");
 
     if (map.has(key)) {
       // Case-insensitive duplicate/collision is ambiguous, so continuation
-      // repair for that tool is disabled.
+      // repair and schema validation for that tool are disabled.
       map.set(key, null);
+      requiredByTool.delete(key);
     } else {
       map.set(key, properties);
+      requiredByTool.set(key, requiredFields);
     }
   }
 
+  REQUIRED_TOOL_INPUT_FIELDS.set(map, requiredByTool);
   return map;
 }
 
@@ -100,17 +119,25 @@ export function normalizeCompleteToolInputs(
   }
 
   if (output.type === "tool_use") {
+    const toolName = typeof output.name === "string" ? output.name : null;
+    const allowedFields = allowedFieldsForTool(toolName, toolInputFields);
+    const requiredFields = requiredFieldsForTool(toolName, toolInputFields);
     const raw = unparsedRaw(output.input);
+    const input = raw !== null
+      ? parseObjectCompat(raw, allowedFields)
+      : output.input;
 
-    if (raw !== null) {
-      const toolName = typeof output.name === "string" ? output.name : null;
-      output.input = parseObjectCompat(
-        raw,
-        allowedFieldsForTool(toolName, toolInputFields),
-      );
-    } else if (!record(output.input)) {
+    if (!record(input)) {
       throw new InvalidToolInputError("Anthropic tool_use.input must be a JSON object.");
     }
+
+    validateToolInputSchema(
+      input,
+      allowedFields,
+      requiredFields,
+      toolName,
+    );
+    output.input = input;
   }
 
   return output;
@@ -197,9 +224,17 @@ export class AnthropicToolStreamGuard {
         }
 
         const raw = unparsedRaw(block.input);
-        const hadObjectInput = record(block.input) && raw === null;
+        const initialInput =
+          record(block.input) && raw === null
+            ? block.input
+            : null;
+        const hadObjectInput = initialInput !== null;
         const toolName = typeof block.name === "string" ? block.name : null;
         const allowedFields = allowedFieldsForTool(
+          toolName,
+          this.toolInputFields,
+        );
+        const requiredFields = requiredFieldsForTool(
           toolName,
           this.toolInputFields,
         );
@@ -211,9 +246,11 @@ export class AnthropicToolStreamGuard {
         this.active.set(index, {
           raw: raw ?? "",
           hadObjectInput,
+          initialInput,
           sawDelta: false,
           toolName,
           allowedFields,
+          requiredFields,
         });
 
         continue;
@@ -483,28 +520,46 @@ function summarizeInvalidToolInputShapeV2(
 
 function validateState(state: StreamToolState): string | null {
   if (state.raw !== "") {
+    let input: Record<string, unknown>;
+    let repaired: Record<string, unknown> | null = null;
+
     try {
-      parseObject(state.raw);
-      return null;
-    } catch (originalError) {
-      const repaired = repairDuplicatedTrailingFields(
+      input = parseObject(state.raw);
+    } catch {
+      repaired = repairDuplicatedTrailingFields(
         state.raw,
         state.allowedFields,
       );
 
-      if (repaired !== null) {
-        return JSON.stringify(repaired);
+      if (repaired === null) {
+        throw new InvalidToolInputError(
+          `Tool input raw JSON could not be parsed. [tool=${safeToolNameForDiagnostic(state.toolName)} shape ${summarizeInvalidToolInputShapeV2(state.raw, state.allowedFields)}]`,
+        );
       }
 
-      throw new InvalidToolInputError(
-        `Tool input raw JSON could not be parsed. [tool=${safeToolNameForDiagnostic(state.toolName)} shape ${summarizeInvalidToolInputShapeV2(state.raw, state.allowedFields)}]`,
-      );
+      input = repaired;
     }
+
+    validateToolInputSchema(
+      input,
+      state.allowedFields,
+      state.requiredFields,
+      state.toolName,
+    );
+
+    return repaired !== null ? JSON.stringify(repaired) : null;
   }
 
-  if (!state.hadObjectInput) {
+  if (!state.hadObjectInput || state.initialInput === null) {
     throw new InvalidToolInputError("Anthropic tool block completed without valid input.");
   }
+
+  validateToolInputSchema(
+    state.initialInput,
+    state.allowedFields,
+    state.requiredFields,
+    state.toolName,
+  );
 
   return null;
 }
@@ -633,6 +688,48 @@ function allowedFieldsForTool(
     toolName.toLocaleLowerCase("en-US"),
   ) ?? null;
 }
+
+function requiredFieldsForTool(
+  toolName: string | null,
+  toolInputFields: ToolInputFieldMap,
+): ReadonlySet<string> {
+  if (toolName === null) return EMPTY_REQUIRED_TOOL_INPUT_FIELDS;
+
+  return REQUIRED_TOOL_INPUT_FIELDS
+    .get(toolInputFields)
+    ?.get(toolName.toLocaleLowerCase("en-US"))
+    ?? EMPTY_REQUIRED_TOOL_INPUT_FIELDS;
+}
+
+function validateToolInputSchema(
+  input: Record<string, unknown>,
+  allowedFields: ReadonlySet<string> | null,
+  requiredFields: ReadonlySet<string>,
+  toolName: string | null,
+): void {
+  if (allowedFields !== null) {
+    const unexpected = Object.keys(input)
+      .filter((field) => !allowedFields.has(field))
+      .sort();
+
+    if (unexpected.length > 0) {
+      throw new InvalidToolInputError(
+        `Tool input contains unexpected fields. [tool=${safeToolNameForDiagnostic(toolName)} unexpected=${JSON.stringify(unexpected)}]`,
+      );
+    }
+  }
+
+  const missing = [...requiredFields]
+    .filter((field) => !Object.prototype.hasOwnProperty.call(input, field))
+    .sort();
+
+  if (missing.length > 0) {
+    throw new InvalidToolInputError(
+      `Tool input is missing required fields. [tool=${safeToolNameForDiagnostic(toolName)} missing=${JSON.stringify(missing)}]`,
+    );
+  }
+}
+
 function firstCompleteObjectEnd(raw: string): number | null {
   let index = 0;
 
