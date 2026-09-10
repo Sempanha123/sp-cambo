@@ -227,14 +227,14 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
             }
 
             await releaseBestEffort(reservationId);
-            return proxyError(reply, upstream, path);
+            return await proxyError(reply, upstream, path);
           }
 
           if (!upstream.ok) {
             clearUpstreamTimeout();
             clientController.signal.removeEventListener("abort", forwardClientAbort);
             await releaseBestEffort(reservationId);
-            return proxyError(reply, upstream, path);
+            return await proxyError(reply, upstream, path);
           }
 
           const onPublicOutputStarted = (): void => {
