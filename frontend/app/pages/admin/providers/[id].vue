@@ -26,6 +26,7 @@ const api = useSpApi()
 const toast = useToast()
 
 const providerId = computed(() => String(route.params.id ?? ''))
+const MAX_CONNECTION_TIMEOUT_MS = 600_000
 
 // Fetch provider
 const provider = await useSpResource(
@@ -105,8 +106,8 @@ const validateCreateForm = (state: ProviderConnectionRevisionInput): FormError[]
     errors.push({ name: 'credential', message: 'Credential is required.' })
   }
 
-  if (state.timeout_ms < 1000 || state.timeout_ms > 60000) {
-    errors.push({ name: 'timeout_ms', message: 'Timeout must be between 1000 and 60000 milliseconds.' })
+  if (state.timeout_ms < 1000 || state.timeout_ms > MAX_CONNECTION_TIMEOUT_MS) {
+    errors.push({ name: 'timeout_ms', message: 'Timeout must be between 1000 and 600000 milliseconds.' })
   }
 
   return errors
@@ -221,8 +222,8 @@ const validateEditRevisionForm = (state: ProviderConnectionRevisionUpdateInput):
     errors.push({ name: 'origin', message: 'Origin must start with http:// or https://' })
   }
 
-  if (state.timeout_ms < 1000 || state.timeout_ms > 60000) {
-    errors.push({ name: 'timeout_ms', message: 'Timeout must be between 1000 and 60000 milliseconds.' })
+  if (state.timeout_ms < 1000 || state.timeout_ms > MAX_CONNECTION_TIMEOUT_MS) {
+    errors.push({ name: 'timeout_ms', message: 'Timeout must be between 1000 and 600000 milliseconds.' })
   }
 
   return errors
@@ -2230,13 +2231,13 @@ useSeoMeta({
             label="Timeout (ms)"
             name="timeout_ms"
             required
-            help="Connection/first-response timeout in milliseconds (1000-60000). Once a streaming response starts, it may continue until the model finishes or the client stops it."
+            help="Connection/first-response timeout in milliseconds (1000-600000). Recommended for production AI routes: 180000-300000. Established streams are not cut off by this timer."
           >
             <UInput
               v-model="createForm.timeout_ms"
               type="number"
               min="1000"
-              max="60000"
+              :max="MAX_CONNECTION_TIMEOUT_MS"
               class="w-full"
             />
           </UFormField>
@@ -2343,13 +2344,13 @@ useSeoMeta({
             label="Timeout (ms)"
             name="timeout_ms"
             required
-            help="Connection/first-response timeout in milliseconds. Established streams are not cut off by this timer."
+            help="Connection/first-response timeout in milliseconds (1000-600000). Recommended for production AI routes: 180000-300000. Established streams are not cut off by this timer."
           >
             <UInput
               v-model="editRevisionForm.timeout_ms"
               type="number"
               min="1000"
-              max="60000"
+              :max="MAX_CONNECTION_TIMEOUT_MS"
               class="w-full"
             />
           </UFormField>

@@ -37,13 +37,13 @@ class AdminProviderRevisionTest extends TestCase
             'origin' => 'https://draft-two.example/',
             'connection_type' => 'omniroute',
             'credential' => '',
-            'timeout_ms' => 45000,
+            'timeout_ms' => 300000,
             'policy_version' => 2,
             'resolve_until' => null,
         ])->assertOk()
             ->assertJsonPath('data.route_version', 2)
             ->assertJsonPath('data.origin', 'https://draft-two.example')
-            ->assertJsonPath('data.timeout_ms', 45000)
+            ->assertJsonPath('data.timeout_ms', 300000)
             ->assertJsonPath('data.policy_version', 2)
             ->assertJsonPath('data.credential_configured', true)
             ->assertJsonPath('data.credential_suffix', '••••cret')
@@ -52,6 +52,25 @@ class AdminProviderRevisionTest extends TestCase
         $revision->refresh();
         $this->assertSame('initial-secret', $revision->credential);
         $this->assertSame(2, $revision->route_version);
+    }
+
+    public function test_admin_cannot_set_a_connection_timeout_above_ten_minutes(): void
+    {
+        $admin = $this->admin();
+        [$provider, $revision] = $this->revision();
+
+        $this->actingAs($admin)->putJson("/api/v1/admin/providers/{$provider->id}/connection-revisions/{$revision->id}", [
+            'route_version' => 1,
+            'origin' => $revision->origin,
+            'connection_type' => $revision->connection_type,
+            'credential' => '',
+            'timeout_ms' => 600001,
+            'policy_version' => 1,
+            'resolve_until' => null,
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('timeout_ms');
+
+        $this->assertSame(30000, $revision->fresh()->timeout_ms);
     }
 
     public function test_editing_a_ready_active_revision_verifies_a_replacement_and_moves_live_references(): void

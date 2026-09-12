@@ -18,6 +18,8 @@ use Illuminate\Validation\Rule;
 
 class ProviderConnectionRevisionController extends Controller
 {
+    private const MAX_TIMEOUT_MS = 600_000;
+
     /**
      * List all provider connection revisions for a provider.
      */
@@ -54,7 +56,7 @@ class ProviderConnectionRevisionController extends Controller
             'origin' => ['required', 'string', 'max:512'],
             'connection_type' => ['required', 'string', 'max:50', Rule::in(ProviderConnectionRevision::CONNECTION_TYPES)],
             'credential' => ['required', 'string'],
-            'timeout_ms' => ['required', 'integer', 'min:1000', 'max:60000'],
+            'timeout_ms' => ['required', 'integer', 'min:1000', 'max:'.self::MAX_TIMEOUT_MS],
             'policy_version' => ['sometimes', 'integer', 'min:1'],
             'resolve_until' => ['nullable', 'date'],
         ]);
@@ -138,7 +140,7 @@ class ProviderConnectionRevisionController extends Controller
             'origin' => ['required', 'string', 'max:512'],
             'connection_type' => ['required', 'string', 'max:50', Rule::in(ProviderConnectionRevision::CONNECTION_TYPES)],
             'credential' => ['nullable', 'string'],
-            'timeout_ms' => ['required', 'integer', 'min:1000', 'max:60000'],
+            'timeout_ms' => ['required', 'integer', 'min:1000', 'max:'.self::MAX_TIMEOUT_MS],
             'policy_version' => ['sometimes', 'integer', 'min:1'],
             'resolve_until' => ['nullable', 'date'],
         ]);
