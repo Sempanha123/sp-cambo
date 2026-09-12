@@ -77,6 +77,44 @@ describe("preflight rejection", () => {
   }
 });
 
+it("keeps one Claude Code session on one opaque route affinity key", async () => {
+  const control = new FakeControlPlane();
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    id: "msg-affinity",
+    model: "private-route",
+    content: [{ type: "text", text: "ok" }],
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+  const [instance] = app(control, fetchMock as typeof fetch);
+
+  const first = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: { ...auth, "x-claude-code-session-id": "session-a" },
+    payload: body,
+  });
+  expect(first.statusCode).toBe(200);
+  const firstAffinity = control.lastPreflight?.route_affinity_key;
+  expect(firstAffinity).toMatch(/^[a-f0-9]{64}$/);
+
+  const second = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: { ...auth, "x-claude-code-session-id": "session-a" },
+    payload: { ...body, messages: [{ role: "user", content: "Second turn" }] },
+  });
+  expect(second.statusCode).toBe(200);
+  expect(control.lastPreflight?.route_affinity_key).toBe(firstAffinity);
+
+  const third = await instance.inject({
+    method: "POST",
+    url: "/v1/messages",
+    headers: { ...auth, "x-claude-code-session-id": "session-b" },
+    payload: body,
+  });
+  expect(third.statusCode).toBe(200);
+  expect(control.lastPreflight?.route_affinity_key).not.toBe(firstAffinity);
+});
+
 it("accepts Claude Code context_management but strips it before private upstream routing", async () => {
   const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
     const sent = JSON.parse(init.body as string);

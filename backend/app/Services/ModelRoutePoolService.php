@@ -12,6 +12,7 @@ use App\Models\ProviderConnectionRevision;
 use App\Models\ProviderRouteHealth;
 use App\Models\Reservation;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class ModelRoutePoolService
@@ -36,6 +37,7 @@ class ModelRoutePoolService
         AiModel $primaryModel,
         array $excludeEntryIds = [],
         ?string $ignoreReservationId = null,
+        ?string $routeAffinityKey = null,
     ): array {
         $pool = ModelRoutePool::query()
             ->where('model_alias_id', $alias->id)
@@ -218,29 +220,62 @@ class ModelRoutePoolService
             );
         }
 
-        $selected = $eligible
-            ->sort(function (array $left, array $right): int {
-                $score = $left['score'] <=> $right['score'];
-                if ($score !== 0) {
-                    return $score;
-                }
+        $affinityCacheKey = $routeAffinityKey === null
+            ? null
+            : "sp-cambo:model-route-affinity:{$pool->id}:{$routeAffinityKey}";
 
-                $active = $left['active'] <=> $right['active'];
-                if ($active !== 0) {
-                    return $active;
-                }
+        $selected = null;
+        if ($affinityCacheKey !== null) {
+            $pinnedEntryId = Cache::get($affinityCacheKey);
+            if (is_numeric($pinnedEntryId)) {
+                $selected = $eligible->first(
+                    fn (array $candidate): bool => (string) $candidate['entry']->id === (string) $pinnedEntryId
+                );
+            }
+        }
 
-                $priority = (int) $left['entry']->priority <=> (int) $right['entry']->priority;
-                if ($priority !== 0) {
-                    return $priority;
-                }
+        if ($selected === null) {
+            $selected = $eligible
+                ->sort(function (array $left, array $right) use ($routeAffinityKey): int {
+                    $score = $left['score'] <=> $right['score'];
+                    if ($score !== 0) {
+                        return $score;
+                    }
 
-                return (int) $left['entry']->id <=> (int) $right['entry']->id;
-            })
-            ->first();
+                    $active = $left['active'] <=> $right['active'];
+                    if ($active !== 0) {
+                        return $active;
+                    }
+
+                    $priority = (int) $left['entry']->priority <=> (int) $right['entry']->priority;
+                    if ($priority !== 0) {
+                        return $priority;
+                    }
+
+                    // Equal-load sessions spread deterministically instead of
+                    // all preferring the lowest entry id.
+                    if ($routeAffinityKey !== null) {
+                        $leftAffinity = hash('sha256', $routeAffinityKey.':'.$left['entry']->id);
+                        $rightAffinity = hash('sha256', $routeAffinityKey.':'.$right['entry']->id);
+                        $affinity = strcmp($leftAffinity, $rightAffinity);
+                        if ($affinity !== 0) {
+                            return $affinity;
+                        }
+                    }
+
+                    return (int) $left['entry']->id <=> (int) $right['entry']->id;
+                })
+                ->first();
+        }
 
         /** @var ModelRoutePoolEntry $entry */
         $entry = $selected['entry'];
+
+        if ($affinityCacheKey !== null) {
+            // Active sessions refresh this TTL on every request. A failover
+            // overwrites the same key so later turns stay on the fallback route.
+            Cache::put($affinityCacheKey, (int) $entry->id, now()->addDays(7));
+        }
 
         return [
             'entry' => $entry,
@@ -379,12 +414,17 @@ class ModelRoutePoolService
                 ->values()
                 ->all();
 
+            $routeAffinityKey = is_string($snapshot['route_affinity_key'] ?? null)
+                ? $snapshot['route_affinity_key']
+                : null;
+
             try {
                 $next = $this->select(
                     $alias,
                     $primaryModel,
                     $excludeEntryIds,
                     (string) $locked->id,
+                    $routeAffinityKey,
                 );
             } catch (InferenceAccessException) {
                 return ['error' => new InferenceAccessException(

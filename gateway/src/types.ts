@@ -97,6 +97,7 @@ export interface ControlPlane {
     request_id: string;
     request_fingerprint: string;
     endpoint: InferencePath;
+    route_affinity_key?: string;
     playground_funding_scope?: "DAILY" | "BALANCE";
   }): Promise<PreflightData>;
   reroute?(reservationId: string, input: {

@@ -68,6 +68,7 @@ class InferenceBillingService
         string $requestId,
         string $requestFingerprint,
         ?string $playgroundFundingScope = null,
+        ?string $routeAffinityKey = null,
     ): array {
         $hardMaxOutput = $this->hardMaxOutput($apiKey, $alias);
         $boundedOutput = min($requestedMaxOutputTokens, $hardMaxOutput);
@@ -77,6 +78,7 @@ class InferenceBillingService
                 || $existing->api_key_id !== $apiKey->id
                 || $existing->public_model_alias !== $alias->public_alias
                 || ($existing->billing_snapshot['request_fingerprint'] ?? null) !== $requestFingerprint
+                || ($routeAffinityKey !== null && ($existing->billing_snapshot['route_affinity_key'] ?? null) !== $routeAffinityKey)
                 || ($playgroundFundingScope !== null && ($existing->billing_snapshot['playground_funding_scope'] ?? null) !== $playgroundFundingScope)) {
                 throw new InferenceIdempotencyException;
             }
@@ -91,9 +93,9 @@ class InferenceBillingService
             ];
         }
 
-        return DB::transaction(function () use ($user, $apiKey, $alias, $estimatedInputTokens, $estimatedCacheReadTokens, $boundedOutput, $hardMaxOutput, $requestId, $requestFingerprint, $playgroundFundingScope): array {
+        return DB::transaction(function () use ($user, $apiKey, $alias, $estimatedInputTokens, $estimatedCacheReadTokens, $boundedOutput, $hardMaxOutput, $requestId, $requestFingerprint, $playgroundFundingScope, $routeAffinityKey): array {
             $primaryModel = $alias->model()->with('provider')->firstOrFail();
-            $route = $this->routePools->select($alias, $primaryModel);
+            $route = $this->routePools->select($alias, $primaryModel, [], null, $routeAffinityKey);
             $model = $route['model'];
             $revision = $route['revision'];
             $routePoolEntryId = $route['entry']?->id;
@@ -173,6 +175,9 @@ class InferenceBillingService
                 foreach ($this->groups($matching) as $group) {
                     $snapshot = $this->snapshot($billingMode, $alias, $group->firstOrFail());
                     $snapshot['request_fingerprint'] = $requestFingerprint;
+                    if ($routeAffinityKey !== null) {
+                        $snapshot['route_affinity_key'] = $routeAffinityKey;
+                    }
                     $snapshot['route_revision_id'] = (string) $revision->id;
                     $snapshot['route_version'] = (int) $revision->route_version;
                     $snapshot['route_pool_entry_id'] = $routePoolEntryId === null ? null : (int) $routePoolEntryId;

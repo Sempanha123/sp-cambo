@@ -1,0 +1,185 @@
+param(
+    [switch]$SkipTests
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+function Get-RepoRoot {
+    $root = (& git rev-parse --show-toplevel 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $root) {
+        throw "Run this script from inside your SP Cambo git repository."
+    }
+    return $root.Trim()
+}
+
+function Decode-Utf8Base64([string]$Value) {
+    return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+}
+
+function Replace-Exact {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Old,
+        [Parameter(Mandatory = $true)][string]$New
+    )
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $text = [System.IO.File]::ReadAllText($Path)
+    $lineEnding = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+
+    $normalized = $text.Replace("`r`n", "`n")
+    $oldNormalized = $Old.Replace("`r`n", "`n")
+    $newNormalized = $New.Replace("`r`n", "`n")
+
+    $index = $normalized.IndexOf($oldNormalized, [System.StringComparison]::Ordinal)
+    if ($index -lt 0) {
+        throw "Expected source block was not found in $Path. Your local file differs from the GitHub main version used to build this updater."
+    }
+
+    $second = $normalized.IndexOf(
+        $oldNormalized,
+        $index + $oldNormalized.Length,
+        [System.StringComparison]::Ordinal
+    )
+    if ($second -ge 0) {
+        throw "Expected source block occurs more than once in $Path. Refusing an ambiguous edit."
+    }
+
+    $updated = $normalized.Substring(0, $index) +
+        $newNormalized +
+        $normalized.Substring($index + $oldNormalized.Length)
+
+    if ($lineEnding -eq "`r`n") {
+        $updated = $updated.Replace("`n", "`r`n")
+    }
+
+    [System.IO.File]::WriteAllText($Path, $updated, $utf8NoBom)
+    Write-Host "updated  $Path" -ForegroundColor Green
+}
+
+$root = Get-RepoRoot
+Set-Location $root
+
+$targets = @(
+    "gateway/src/app.ts",
+    "gateway/src/types.ts",
+    "gateway/src/control-plane.ts",
+    "gateway/tests/app.test.ts",
+    "backend/app/Http/Controllers/Api/V1/Internal/GatewayBillingController.php",
+    "backend/app/Services/InferenceBillingService.php",
+    "backend/app/Services/ModelRoutePoolService.php",
+    "backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php"
+)
+
+foreach ($file in $targets) {
+    if (-not (Test-Path $file)) {
+        throw "Required file not found: $file"
+    }
+}
+
+$dirty = @(& git status --porcelain -- $targets)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read git status."
+}
+if ($dirty.Count -gt 0) {
+    Write-Host ""
+    Write-Host "These target files already have local changes:" -ForegroundColor Yellow
+    $dirty | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    throw "Commit or stash those target-file changes first, then run this updater again."
+}
+
+$originals = @{}
+foreach ($file in $targets) {
+    $originals[$file] = [System.IO.File]::ReadAllText((Join-Path $root $file))
+}
+
+$patchesJson = @'
+[{"path":"gateway/src/types.ts","old_b64":"ICAgIHJlcXVlc3RfZmluZ2VycHJpbnQ6IHN0cmluZzsKICAgIGVuZHBvaW50OiBJbmZlcmVuY2VQYXRoOwogICAgcGxheWdyb3VuZF9mdW5kaW5nX3Njb3BlPzogIkRBSUxZIiB8ICJCQUxBTkNFIjsK","new_b64":"ICAgIHJlcXVlc3RfZmluZ2VycHJpbnQ6IHN0cmluZzsKICAgIGVuZHBvaW50OiBJbmZlcmVuY2VQYXRoOwogICAgcm91dGVfYWZmaW5pdHlfa2V5Pzogc3RyaW5nOwogICAgcGxheWdyb3VuZF9mdW5kaW5nX3Njb3BlPzogIkRBSUxZIiB8ICJCQUxBTkNFIjsK"},{"path":"gateway/src/control-plane.ts","old_b64":"ICAgIHJlcXVlc3RfZmluZ2VycHJpbnQ6IHN0cmluZzsKICAgIGVuZHBvaW50OiBJbmZlcmVuY2VQYXRoOwogICAgcGxheWdyb3VuZF9mdW5kaW5nX3Njb3BlPzogIkRBSUxZIiB8ICJCQUxBTkNFIjsK","new_b64":"ICAgIHJlcXVlc3RfZmluZ2VycHJpbnQ6IHN0cmluZzsKICAgIGVuZHBvaW50OiBJbmZlcmVuY2VQYXRoOwogICAgcm91dGVfYWZmaW5pdHlfa2V5Pzogc3RyaW5nOwogICAgcGxheWdyb3VuZF9mdW5kaW5nX3Njb3BlPzogIkRBSUxZIiB8ICJCQUxBTkNFIjsK"},{"path":"gateway/src/app.ts","old_b64":"ICAgIGNvbnN0IGluc3BlY3Rpb24gPSBhd2FpdCBkZXBlbmRlbmNpZXMuY29udHJvbFBsYW5lLmluc3BlY3Qoa2V5KTsKICAgIGNvbnN0IGtleUNhcCA9IGluc3BlY3Rpb24ubGltaXRzLm1heF9yZXF1ZXN0X2J5dGVzOwo=","new_b64":"ICAgIGNvbnN0IGluc3BlY3Rpb24gPSBhd2FpdCBkZXBlbmRlbmNpZXMuY29udHJvbFBsYW5lLmluc3BlY3Qoa2V5KTsKICAgIGNvbnN0IHJvdXRlQWZmaW5pdHkgPSByb3V0ZUFmZmluaXR5S2V5KHJlcXVlc3QsIGluc3BlY3Rpb24ua2V5X2lkLCBwcmVwYXJlZC5wdWJsaWNNb2RlbCk7CiAgICBjb25zdCBrZXlDYXAgPSBpbnNwZWN0aW9uLmxpbWl0cy5tYXhfcmVxdWVzdF9ieXRlczsK"},{"path":"gateway/src/app.ts","old_b64":"ICAgICAgICByZXF1ZXN0ZWRfbWF4X291dHB1dF90b2tlbnM6IHByZXBhcmVkLnJlcXVlc3RlZE1heE91dHB1dCwgcmVxdWVzdF9ieXRlczogYnl0ZXMsIHJlcXVlc3RfaWQ6IHByZXBhcmVkLnJlcXVlc3RJZCwKICAgICAgICByZXF1ZXN0X2ZpbmdlcnByaW50OiBwcmVwYXJlZC5maW5nZXJwcmludCwgZW5kcG9pbnQ6IHBhdGgsCiAgICAgICAgLi4uKHBsYXlncm91bmRGdW5kaW5nU2NvcGUgPyB7IHBsYXlncm91bmRfZnVuZGluZ19zY29wZTogcGxheWdyb3VuZEZ1bmRpbmdTY29wZSB9IDoge30pLAo=","new_b64":"ICAgICAgICByZXF1ZXN0ZWRfbWF4X291dHB1dF90b2tlbnM6IHByZXBhcmVkLnJlcXVlc3RlZE1heE91dHB1dCwgcmVxdWVzdF9ieXRlczogYnl0ZXMsIHJlcXVlc3RfaWQ6IHByZXBhcmVkLnJlcXVlc3RJZCwKICAgICAgICByZXF1ZXN0X2ZpbmdlcnByaW50OiBwcmVwYXJlZC5maW5nZXJwcmludCwgZW5kcG9pbnQ6IHBhdGgsCiAgICAgICAgLi4uKHJvdXRlQWZmaW5pdHkgPyB7IHJvdXRlX2FmZmluaXR5X2tleTogcm91dGVBZmZpbml0eSB9IDoge30pLAogICAgICAgIC4uLihwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlID8geyBwbGF5Z3JvdW5kX2Z1bmRpbmdfc2NvcGU6IHBsYXlncm91bmRGdW5kaW5nU2NvcGUgfSA6IHt9KSwK"},{"path":"gateway/src/app.ts","old_b64":"ZnVuY3Rpb24gZnVuZGluZ1Njb3BlKHJlcXVlc3Q6IEZhc3RpZnlSZXF1ZXN0KTogIkRBSUxZIiB8ICJCQUxBTkNFIiB8IHVuZGVmaW5lZCB7Cg==","new_b64":"ZnVuY3Rpb24gcm91dGVBZmZpbml0eUtleShyZXF1ZXN0OiBGYXN0aWZ5UmVxdWVzdCwga2V5SWQ6IHN0cmluZywgcHVibGljTW9kZWw6IHN0cmluZyk6IHN0cmluZyB8IHVuZGVmaW5lZCB7CiAgY29uc3QgcmF3ID0gcmVxdWVzdC5oZWFkZXJzWyJ4LWNsYXVkZS1jb2RlLXNlc3Npb24taWQiXSA/PyByZXF1ZXN0LmhlYWRlcnNbIngtc3AtY2FtYm8tc2Vzc2lvbi1pZCJdOwogIGlmICh0eXBlb2YgcmF3ICE9PSAic3RyaW5nIikgcmV0dXJuIHVuZGVmaW5lZDsKCiAgY29uc3Qgc2Vzc2lvbiA9IHJhdy50cmltKCk7CiAgaWYgKHNlc3Npb24gPT09ICIiIHx8IHNlc3Npb24ubGVuZ3RoID4gNTEyKSByZXR1cm4gdW5kZWZpbmVkOwoKICAvLyBUaGUgY29udHJvbCBwbGFuZSByZWNlaXZlcyBvbmx5IGFuIG9wYXF1ZSBwZXIta2V5L3Blci1tb2RlbCBkaWdlc3QsIG5ldmVyCiAgLy8gdGhlIGN1c3RvbWVyJ3MgcmF3IENMSSBzZXNzaW9uIGlkZW50aWZpZXIuCiAgcmV0dXJuIGNyZWF0ZUhhc2goInNoYTI1NiIpCiAgICAudXBkYXRlKGAke2tleUlkfVwwJHtwdWJsaWNNb2RlbH1cMCR7c2Vzc2lvbn1gKQogICAgLmRpZ2VzdCgiaGV4Iik7Cn0KCmZ1bmN0aW9uIGZ1bmRpbmdTY29wZShyZXF1ZXN0OiBGYXN0aWZ5UmVxdWVzdCk6ICJEQUlMWSIgfCAiQkFMQU5DRSIgfCB1bmRlZmluZWQgewo="},{"path":"backend/app/Http/Controllers/Api/V1/Internal/GatewayBillingController.php","old_b64":"ICAgICAgICAgICAgJ3JlcXVlc3RfZmluZ2VycHJpbnQnID0+IFsncmVxdWlyZWQnLCAnc3RyaW5nJywgJ3NpemU6NjQnLCAncmVnZXg6L15bYS1mMC05XXs2NH0kLyddLAogICAgICAgICAgICAnZW5kcG9pbnQnID0+IFsncmVxdWlyZWQnLCAnc3RyaW5nJywgJ2luOi92MS9tZXNzYWdlcywvdjEvbWVzc2FnZXMvY291bnRfdG9rZW5zLC92MS9yZXNwb25zZXMsL3YxL2NoYXQvY29tcGxldGlvbnMnXSwKICAgICAgICAgICAgJ3BsYXlncm91bmRfZnVuZGluZ19zY29wZScgPT4gWydudWxsYWJsZScsICdzdHJpbmcnLCAnaW46REFJTFksQkFMQU5DRSddLAo=","new_b64":"ICAgICAgICAgICAgJ3JlcXVlc3RfZmluZ2VycHJpbnQnID0+IFsncmVxdWlyZWQnLCAnc3RyaW5nJywgJ3NpemU6NjQnLCAncmVnZXg6L15bYS1mMC05XXs2NH0kLyddLAogICAgICAgICAgICAnZW5kcG9pbnQnID0+IFsncmVxdWlyZWQnLCAnc3RyaW5nJywgJ2luOi92MS9tZXNzYWdlcywvdjEvbWVzc2FnZXMvY291bnRfdG9rZW5zLC92MS9yZXNwb25zZXMsL3YxL2NoYXQvY29tcGxldGlvbnMnXSwKICAgICAgICAgICAgJ3JvdXRlX2FmZmluaXR5X2tleScgPT4gWydudWxsYWJsZScsICdzdHJpbmcnLCAnc2l6ZTo2NCcsICdyZWdleDovXlthLWYwLTldezY0fSQvJ10sCiAgICAgICAgICAgICdwbGF5Z3JvdW5kX2Z1bmRpbmdfc2NvcGUnID0+IFsnbnVsbGFibGUnLCAnc3RyaW5nJywgJ2luOkRBSUxZLEJBTEFOQ0UnXSwK"},{"path":"backend/app/Http/Controllers/Api/V1/Internal/GatewayBillingController.php","old_b64":"ICAgICAgICAgICAgICAgICRpbnB1dFsncmVxdWVzdF9maW5nZXJwcmludCddLAogICAgICAgICAgICAgICAgJGlucHV0WydwbGF5Z3JvdW5kX2Z1bmRpbmdfc2NvcGUnXSA/PyBudWxsLAogICAgICAgICAgICApOwo=","new_b64":"ICAgICAgICAgICAgICAgICRpbnB1dFsncmVxdWVzdF9maW5nZXJwcmludCddLAogICAgICAgICAgICAgICAgJGlucHV0WydwbGF5Z3JvdW5kX2Z1bmRpbmdfc2NvcGUnXSA/PyBudWxsLAogICAgICAgICAgICAgICAgJGlucHV0Wydyb3V0ZV9hZmZpbml0eV9rZXknXSA/PyBudWxsLAogICAgICAgICAgICApOwo="},{"path":"backend/app/Services/InferenceBillingService.php","old_b64":"ICAgICAgICBzdHJpbmcgJHJlcXVlc3RJZCwKICAgICAgICBzdHJpbmcgJHJlcXVlc3RGaW5nZXJwcmludCwKICAgICAgICA/c3RyaW5nICRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlID0gbnVsbCwKICAgICk6IGFycmF5IHsK","new_b64":"ICAgICAgICBzdHJpbmcgJHJlcXVlc3RJZCwKICAgICAgICBzdHJpbmcgJHJlcXVlc3RGaW5nZXJwcmludCwKICAgICAgICA/c3RyaW5nICRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlID0gbnVsbCwKICAgICAgICA/c3RyaW5nICRyb3V0ZUFmZmluaXR5S2V5ID0gbnVsbCwKICAgICk6IGFycmF5IHsK"},{"path":"backend/app/Services/InferenceBillingService.php","old_b64":"ICAgICAgICAgICAgICAgIHx8ICRleGlzdGluZy0+cHVibGljX21vZGVsX2FsaWFzICE9PSAkYWxpYXMtPnB1YmxpY19hbGlhcwogICAgICAgICAgICAgICAgfHwgKCRleGlzdGluZy0+YmlsbGluZ19zbmFwc2hvdFsncmVxdWVzdF9maW5nZXJwcmludCddID8/IG51bGwpICE9PSAkcmVxdWVzdEZpbmdlcnByaW50CiAgICAgICAgICAgICAgICB8fCAoJHBsYXlncm91bmRGdW5kaW5nU2NvcGUgIT09IG51bGwgJiYgKCRleGlzdGluZy0+YmlsbGluZ19zbmFwc2hvdFsncGxheWdyb3VuZF9mdW5kaW5nX3Njb3BlJ10gPz8gbnVsbCkgIT09ICRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlKSkgewo=","new_b64":"ICAgICAgICAgICAgICAgIHx8ICRleGlzdGluZy0+cHVibGljX21vZGVsX2FsaWFzICE9PSAkYWxpYXMtPnB1YmxpY19hbGlhcwogICAgICAgICAgICAgICAgfHwgKCRleGlzdGluZy0+YmlsbGluZ19zbmFwc2hvdFsncmVxdWVzdF9maW5nZXJwcmludCddID8/IG51bGwpICE9PSAkcmVxdWVzdEZpbmdlcnByaW50CiAgICAgICAgICAgICAgICB8fCAoJHJvdXRlQWZmaW5pdHlLZXkgIT09IG51bGwgJiYgKCRleGlzdGluZy0+YmlsbGluZ19zbmFwc2hvdFsncm91dGVfYWZmaW5pdHlfa2V5J10gPz8gbnVsbCkgIT09ICRyb3V0ZUFmZmluaXR5S2V5KQogICAgICAgICAgICAgICAgfHwgKCRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlICE9PSBudWxsICYmICgkZXhpc3RpbmctPmJpbGxpbmdfc25hcHNob3RbJ3BsYXlncm91bmRfZnVuZGluZ19zY29wZSddID8/IG51bGwpICE9PSAkcGxheWdyb3VuZEZ1bmRpbmdTY29wZSkpIHsK"},{"path":"backend/app/Services/InferenceBillingService.php","old_b64":"ICAgICAgICByZXR1cm4gREI6OnRyYW5zYWN0aW9uKGZ1bmN0aW9uICgpIHVzZSAoJHVzZXIsICRhcGlLZXksICRhbGlhcywgJGVzdGltYXRlZElucHV0VG9rZW5zLCAkZXN0aW1hdGVkQ2FjaGVSZWFkVG9rZW5zLCAkYm91bmRlZE91dHB1dCwgJGhhcmRNYXhPdXRwdXQsICRyZXF1ZXN0SWQsICRyZXF1ZXN0RmluZ2VycHJpbnQsICRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlKTogYXJyYXkgewogICAgICAgICAgICAkcHJpbWFyeU1vZGVsID0gJGFsaWFzLT5tb2RlbCgpLT53aXRoKCdwcm92aWRlcicpLT5maXJzdE9yRmFpbCgpOwogICAgICAgICAgICAkcm91dGUgPSAkdGhpcy0+cm91dGVQb29scy0+c2VsZWN0KCRhbGlhcywgJHByaW1hcnlNb2RlbCk7Cg==","new_b64":"ICAgICAgICByZXR1cm4gREI6OnRyYW5zYWN0aW9uKGZ1bmN0aW9uICgpIHVzZSAoJHVzZXIsICRhcGlLZXksICRhbGlhcywgJGVzdGltYXRlZElucHV0VG9rZW5zLCAkZXN0aW1hdGVkQ2FjaGVSZWFkVG9rZW5zLCAkYm91bmRlZE91dHB1dCwgJGhhcmRNYXhPdXRwdXQsICRyZXF1ZXN0SWQsICRyZXF1ZXN0RmluZ2VycHJpbnQsICRwbGF5Z3JvdW5kRnVuZGluZ1Njb3BlLCAkcm91dGVBZmZpbml0eUtleSk6IGFycmF5IHsKICAgICAgICAgICAgJHByaW1hcnlNb2RlbCA9ICRhbGlhcy0+bW9kZWwoKS0+d2l0aCgncHJvdmlkZXInKS0+Zmlyc3RPckZhaWwoKTsKICAgICAgICAgICAgJHJvdXRlID0gJHRoaXMtPnJvdXRlUG9vbHMtPnNlbGVjdCgkYWxpYXMsICRwcmltYXJ5TW9kZWwsIFtdLCBudWxsLCAkcm91dGVBZmZpbml0eUtleSk7Cg=="},{"path":"backend/app/Services/InferenceBillingService.php","old_b64":"ICAgICAgICAgICAgICAgICAgICAkc25hcHNob3QgPSAkdGhpcy0+c25hcHNob3QoJGJpbGxpbmdNb2RlLCAkYWxpYXMsICRncm91cC0+Zmlyc3RPckZhaWwoKSk7CiAgICAgICAgICAgICAgICAgICAgJHNuYXBzaG90WydyZXF1ZXN0X2ZpbmdlcnByaW50J10gPSAkcmVxdWVzdEZpbmdlcnByaW50OwogICAgICAgICAgICAgICAgICAgICRzbmFwc2hvdFsncm91dGVfcmV2aXNpb25faWQnXSA9IChzdHJpbmcpICRyZXZpc2lvbi0+aWQ7Cg==","new_b64":"ICAgICAgICAgICAgICAgICAgICAkc25hcHNob3QgPSAkdGhpcy0+c25hcHNob3QoJGJpbGxpbmdNb2RlLCAkYWxpYXMsICRncm91cC0+Zmlyc3RPckZhaWwoKSk7CiAgICAgICAgICAgICAgICAgICAgJHNuYXBzaG90WydyZXF1ZXN0X2ZpbmdlcnByaW50J10gPSAkcmVxdWVzdEZpbmdlcnByaW50OwogICAgICAgICAgICAgICAgICAgIGlmICgkcm91dGVBZmZpbml0eUtleSAhPT0gbnVsbCkgewogICAgICAgICAgICAgICAgICAgICAgICAkc25hcHNob3RbJ3JvdXRlX2FmZmluaXR5X2tleSddID0gJHJvdXRlQWZmaW5pdHlLZXk7CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgICRzbmFwc2hvdFsncm91dGVfcmV2aXNpb25faWQnXSA9IChzdHJpbmcpICRyZXZpc2lvbi0+aWQ7Cg=="},{"path":"backend/app/Services/ModelRoutePoolService.php","old_b64":"dXNlIElsbHVtaW5hdGVcU3VwcG9ydFxDb2xsZWN0aW9uOwp1c2UgSWxsdW1pbmF0ZVxTdXBwb3J0XEZhY2FkZXNcREI7Cg==","new_b64":"dXNlIElsbHVtaW5hdGVcU3VwcG9ydFxDb2xsZWN0aW9uOwp1c2UgSWxsdW1pbmF0ZVxTdXBwb3J0XEZhY2FkZXNcQ2FjaGU7CnVzZSBJbGx1bWluYXRlXFN1cHBvcnRcRmFjYWRlc1xEQjsK"},{"path":"backend/app/Services/ModelRoutePoolService.php","old_b64":"ICAgICAgICBBaU1vZGVsICRwcmltYXJ5TW9kZWwsCiAgICAgICAgYXJyYXkgJGV4Y2x1ZGVFbnRyeUlkcyA9IFtdLAogICAgICAgID9zdHJpbmcgJGlnbm9yZVJlc2VydmF0aW9uSWQgPSBudWxsLAogICAgKTogYXJyYXkgewo=","new_b64":"ICAgICAgICBBaU1vZGVsICRwcmltYXJ5TW9kZWwsCiAgICAgICAgYXJyYXkgJGV4Y2x1ZGVFbnRyeUlkcyA9IFtdLAogICAgICAgID9zdHJpbmcgJGlnbm9yZVJlc2VydmF0aW9uSWQgPSBudWxsLAogICAgICAgID9zdHJpbmcgJHJvdXRlQWZmaW5pdHlLZXkgPSBudWxsLAogICAgKTogYXJyYXkgewo="},{"path":"backend/app/Services/ModelRoutePoolService.php","old_b64":"ICAgICAgICAkc2VsZWN0ZWQgPSAkZWxpZ2libGUKICAgICAgICAgICAgLT5zb3J0KGZ1bmN0aW9uIChhcnJheSAkbGVmdCwgYXJyYXkgJHJpZ2h0KTogaW50IHsKICAgICAgICAgICAgICAgICRzY29yZSA9ICRsZWZ0WydzY29yZSddIDw9PiAkcmlnaHRbJ3Njb3JlJ107CiAgICAgICAgICAgICAgICBpZiAoJHNjb3JlICE9PSAwKSB7CiAgICAgICAgICAgICAgICAgICAgcmV0dXJuICRzY29yZTsKICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICAkYWN0aXZlID0gJGxlZnRbJ2FjdGl2ZSddIDw9PiAkcmlnaHRbJ2FjdGl2ZSddOwogICAgICAgICAgICAgICAgaWYgKCRhY3RpdmUgIT09IDApIHsKICAgICAgICAgICAgICAgICAgICByZXR1cm4gJGFjdGl2ZTsKICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICAkcHJpb3JpdHkgPSAoaW50KSAkbGVmdFsnZW50cnknXS0+cHJpb3JpdHkgPD0+IChpbnQpICRyaWdodFsnZW50cnknXS0+cHJpb3JpdHk7CiAgICAgICAgICAgICAgICBpZiAoJHByaW9yaXR5ICE9PSAwKSB7CiAgICAgICAgICAgICAgICAgICAgcmV0dXJuICRwcmlvcml0eTsKICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICByZXR1cm4gKGludCkgJGxlZnRbJ2VudHJ5J10tPmlkIDw9PiAoaW50KSAkcmlnaHRbJ2VudHJ5J10tPmlkOwogICAgICAgICAgICB9KQogICAgICAgICAgICAtPmZpcnN0KCk7CgogICAgICAgIC8qKiBAdmFyIE1vZGVsUm91dGVQb29sRW50cnkgJGVudHJ5ICovCiAgICAgICAgJGVudHJ5ID0gJHNlbGVjdGVkWydlbnRyeSddOwoKICAgICAgICByZXR1cm4gWwo=","new_b64":"ICAgICAgICAkYWZmaW5pdHlDYWNoZUtleSA9ICRyb3V0ZUFmZmluaXR5S2V5ID09PSBudWxsCiAgICAgICAgICAgID8gbnVsbAogICAgICAgICAgICA6ICJzcC1jYW1ibzptb2RlbC1yb3V0ZS1hZmZpbml0eTp7JHBvb2wtPmlkfTp7JHJvdXRlQWZmaW5pdHlLZXl9IjsKCiAgICAgICAgJHNlbGVjdGVkID0gbnVsbDsKICAgICAgICBpZiAoJGFmZmluaXR5Q2FjaGVLZXkgIT09IG51bGwpIHsKICAgICAgICAgICAgJHBpbm5lZEVudHJ5SWQgPSBDYWNoZTo6Z2V0KCRhZmZpbml0eUNhY2hlS2V5KTsKICAgICAgICAgICAgaWYgKGlzX251bWVyaWMoJHBpbm5lZEVudHJ5SWQpKSB7CiAgICAgICAgICAgICAgICAkc2VsZWN0ZWQgPSAkZWxpZ2libGUtPmZpcnN0KAogICAgICAgICAgICAgICAgICAgIGZuIChhcnJheSAkY2FuZGlkYXRlKTogYm9vbCA9PiAoc3RyaW5nKSAkY2FuZGlkYXRlWydlbnRyeSddLT5pZCA9PT0gKHN0cmluZykgJHBpbm5lZEVudHJ5SWQKICAgICAgICAgICAgICAgICk7CiAgICAgICAgICAgIH0KICAgICAgICB9CgogICAgICAgIGlmICgkc2VsZWN0ZWQgPT09IG51bGwpIHsKICAgICAgICAgICAgJHNlbGVjdGVkID0gJGVsaWdpYmxlCiAgICAgICAgICAgICAgICAtPnNvcnQoZnVuY3Rpb24gKGFycmF5ICRsZWZ0LCBhcnJheSAkcmlnaHQpIHVzZSAoJHJvdXRlQWZmaW5pdHlLZXkpOiBpbnQgewogICAgICAgICAgICAgICAgICAgICRzY29yZSA9ICRsZWZ0WydzY29yZSddIDw9PiAkcmlnaHRbJ3Njb3JlJ107CiAgICAgICAgICAgICAgICAgICAgaWYgKCRzY29yZSAhPT0gMCkgewogICAgICAgICAgICAgICAgICAgICAgICByZXR1cm4gJHNjb3JlOwogICAgICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICAgICAgJGFjdGl2ZSA9ICRsZWZ0WydhY3RpdmUnXSA8PT4gJHJpZ2h0WydhY3RpdmUnXTsKICAgICAgICAgICAgICAgICAgICBpZiAoJGFjdGl2ZSAhPT0gMCkgewogICAgICAgICAgICAgICAgICAgICAgICByZXR1cm4gJGFjdGl2ZTsKICAgICAgICAgICAgICAgICAgICB9CgogICAgICAgICAgICAgICAgICAgICRwcmlvcml0eSA9IChpbnQpICRsZWZ0WydlbnRyeSddLT5wcmlvcml0eSA8PT4gKGludCkgJHJpZ2h0WydlbnRyeSddLT5wcmlvcml0eTsKICAgICAgICAgICAgICAgICAgICBpZiAoJHByaW9yaXR5ICE9PSAwKSB7CiAgICAgICAgICAgICAgICAgICAgICAgIHJldHVybiAkcHJpb3JpdHk7CiAgICAgICAgICAgICAgICAgICAgfQoKICAgICAgICAgICAgICAgICAgICAvLyBFcXVhbC1sb2FkIHNlc3Npb25zIHNwcmVhZCBkZXRlcm1pbmlzdGljYWxseSBpbnN0ZWFkIG9mCiAgICAgICAgICAgICAgICAgICAgLy8gYWxsIHByZWZlcnJpbmcgdGhlIGxvd2VzdCBlbnRyeSBpZC4KICAgICAgICAgICAgICAgICAgICBpZiAoJHJvdXRlQWZmaW5pdHlLZXkgIT09IG51bGwpIHsKICAgICAgICAgICAgICAgICAgICAgICAgJGxlZnRBZmZpbml0eSA9IGhhc2goJ3NoYTI1NicsICRyb3V0ZUFmZmluaXR5S2V5Lic6Jy4kbGVmdFsnZW50cnknXS0+aWQpOwogICAgICAgICAgICAgICAgICAgICAgICAkcmlnaHRBZmZpbml0eSA9IGhhc2goJ3NoYTI1NicsICRyb3V0ZUFmZmluaXR5S2V5Lic6Jy4kcmlnaHRbJ2VudHJ5J10tPmlkKTsKICAgICAgICAgICAgICAgICAgICAgICAgJGFmZmluaXR5ID0gc3RyY21wKCRsZWZ0QWZmaW5pdHksICRyaWdodEFmZmluaXR5KTsKICAgICAgICAgICAgICAgICAgICAgICAgaWYgKCRhZmZpbml0eSAhPT0gMCkgewogICAgICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuICRhZmZpbml0eTsKICAgICAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIH0KCiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIChpbnQpICRsZWZ0WydlbnRyeSddLT5pZCA8PT4gKGludCkgJHJpZ2h0WydlbnRyeSddLT5pZDsKICAgICAgICAgICAgICAgIH0pCiAgICAgICAgICAgICAgICAtPmZpcnN0KCk7CiAgICAgICAgfQoKICAgICAgICAvKiogQHZhciBNb2RlbFJvdXRlUG9vbEVudHJ5ICRlbnRyeSAqLwogICAgICAgICRlbnRyeSA9ICRzZWxlY3RlZFsnZW50cnknXTsKCiAgICAgICAgaWYgKCRhZmZpbml0eUNhY2hlS2V5ICE9PSBudWxsKSB7CiAgICAgICAgICAgIC8vIEFjdGl2ZSBzZXNzaW9ucyByZWZyZXNoIHRoaXMgVFRMIG9uIGV2ZXJ5IHJlcXVlc3QuIEEgZmFpbG92ZXIKICAgICAgICAgICAgLy8gb3ZlcndyaXRlcyB0aGUgc2FtZSBrZXkgc28gbGF0ZXIgdHVybnMgc3RheSBvbiB0aGUgZmFsbGJhY2sgcm91dGUuCiAgICAgICAgICAgIENhY2hlOjpwdXQoJGFmZmluaXR5Q2FjaGVLZXksIChpbnQpICRlbnRyeS0+aWQsIG5vdygpLT5hZGREYXlzKDcpKTsKICAgICAgICB9CgogICAgICAgIHJldHVybiBbCg=="},{"path":"backend/app/Services/ModelRoutePoolService.php","old_b64":"ICAgICAgICAgICAgdHJ5IHsKICAgICAgICAgICAgICAgICRuZXh0ID0gJHRoaXMtPnNlbGVjdCgKICAgICAgICAgICAgICAgICAgICAkYWxpYXMsCiAgICAgICAgICAgICAgICAgICAgJHByaW1hcnlNb2RlbCwKICAgICAgICAgICAgICAgICAgICAkZXhjbHVkZUVudHJ5SWRzLAogICAgICAgICAgICAgICAgICAgIChzdHJpbmcpICRsb2NrZWQtPmlkLAogICAgICAgICAgICAgICAgKTsK","new_b64":"ICAgICAgICAgICAgJHJvdXRlQWZmaW5pdHlLZXkgPSBpc19zdHJpbmcoJHNuYXBzaG90Wydyb3V0ZV9hZmZpbml0eV9rZXknXSA/PyBudWxsKQogICAgICAgICAgICAgICAgPyAkc25hcHNob3RbJ3JvdXRlX2FmZmluaXR5X2tleSddCiAgICAgICAgICAgICAgICA6IG51bGw7CgogICAgICAgICAgICB0cnkgewogICAgICAgICAgICAgICAgJG5leHQgPSAkdGhpcy0+c2VsZWN0KAogICAgICAgICAgICAgICAgICAgICRhbGlhcywKICAgICAgICAgICAgICAgICAgICAkcHJpbWFyeU1vZGVsLAogICAgICAgICAgICAgICAgICAgICRleGNsdWRlRW50cnlJZHMsCiAgICAgICAgICAgICAgICAgICAgKHN0cmluZykgJGxvY2tlZC0+aWQsCiAgICAgICAgICAgICAgICAgICAgJHJvdXRlQWZmaW5pdHlLZXksCiAgICAgICAgICAgICAgICApOwo="},{"path":"gateway/tests/app.test.ts","old_b64":"aXQoImFjY2VwdHMgQ2xhdWRlIENvZGUgY29udGV4dF9tYW5hZ2VtZW50IGJ1dCBzdHJpcHMgaXQgYmVmb3JlIHByaXZhdGUgdXBzdHJlYW0gcm91dGluZyIsIGFzeW5jICgpID0+IHsK","new_b64":"aXQoImtlZXBzIG9uZSBDbGF1ZGUgQ29kZSBzZXNzaW9uIG9uIG9uZSBvcGFxdWUgcm91dGUgYWZmaW5pdHkga2V5IiwgYXN5bmMgKCkgPT4gewogIGNvbnN0IGNvbnRyb2wgPSBuZXcgRmFrZUNvbnRyb2xQbGFuZSgpOwogIGNvbnN0IGZldGNoTW9jayA9IHZpLmZuKGFzeW5jICgpID0+IG5ldyBSZXNwb25zZShKU09OLnN0cmluZ2lmeSh7CiAgICBpZDogIm1zZy1hZmZpbml0eSIsCiAgICBtb2RlbDogInByaXZhdGUtcm91dGUiLAogICAgY29udGVudDogW3sgdHlwZTogInRleHQiLCB0ZXh0OiAib2siIH1dLAogIH0pLCB7IHN0YXR1czogMjAwLCBoZWFkZXJzOiB7ICJjb250ZW50LXR5cGUiOiAiYXBwbGljYXRpb24vanNvbiIgfSB9KSk7CiAgY29uc3QgW2luc3RhbmNlXSA9IGFwcChjb250cm9sLCBmZXRjaE1vY2sgYXMgdHlwZW9mIGZldGNoKTsKCiAgY29uc3QgZmlyc3QgPSBhd2FpdCBpbnN0YW5jZS5pbmplY3QoewogICAgbWV0aG9kOiAiUE9TVCIsCiAgICB1cmw6ICIvdjEvbWVzc2FnZXMiLAogICAgaGVhZGVyczogeyAuLi5hdXRoLCAieC1jbGF1ZGUtY29kZS1zZXNzaW9uLWlkIjogInNlc3Npb24tYSIgfSwKICAgIHBheWxvYWQ6IGJvZHksCiAgfSk7CiAgZXhwZWN0KGZpcnN0LnN0YXR1c0NvZGUpLnRvQmUoMjAwKTsKICBjb25zdCBmaXJzdEFmZmluaXR5ID0gY29udHJvbC5sYXN0UHJlZmxpZ2h0Py5yb3V0ZV9hZmZpbml0eV9rZXk7CiAgZXhwZWN0KGZpcnN0QWZmaW5pdHkpLnRvTWF0Y2goL15bYS1mMC05XXs2NH0kLyk7CgogIGNvbnN0IHNlY29uZCA9IGF3YWl0IGluc3RhbmNlLmluamVjdCh7CiAgICBtZXRob2Q6ICJQT1NUIiwKICAgIHVybDogIi92MS9tZXNzYWdlcyIsCiAgICBoZWFkZXJzOiB7IC4uLmF1dGgsICJ4LWNsYXVkZS1jb2RlLXNlc3Npb24taWQiOiAic2Vzc2lvbi1hIiB9LAogICAgcGF5bG9hZDogeyAuLi5ib2R5LCBtZXNzYWdlczogW3sgcm9sZTogInVzZXIiLCBjb250ZW50OiAiU2Vjb25kIHR1cm4iIH1dIH0sCiAgfSk7CiAgZXhwZWN0KHNlY29uZC5zdGF0dXNDb2RlKS50b0JlKDIwMCk7CiAgZXhwZWN0KGNvbnRyb2wubGFzdFByZWZsaWdodD8ucm91dGVfYWZmaW5pdHlfa2V5KS50b0JlKGZpcnN0QWZmaW5pdHkpOwoKICBjb25zdCB0aGlyZCA9IGF3YWl0IGluc3RhbmNlLmluamVjdCh7CiAgICBtZXRob2Q6ICJQT1NUIiwKICAgIHVybDogIi92MS9tZXNzYWdlcyIsCiAgICBoZWFkZXJzOiB7IC4uLmF1dGgsICJ4LWNsYXVkZS1jb2RlLXNlc3Npb24taWQiOiAic2Vzc2lvbi1iIiB9LAogICAgcGF5bG9hZDogYm9keSwKICB9KTsKICBleHBlY3QodGhpcmQuc3RhdHVzQ29kZSkudG9CZSgyMDApOwogIGV4cGVjdChjb250cm9sLmxhc3RQcmVmbGlnaHQ/LnJvdXRlX2FmZmluaXR5X2tleSkubm90LnRvQmUoZmlyc3RBZmZpbml0eSk7Cn0pOwoKaXQoImFjY2VwdHMgQ2xhdWRlIENvZGUgY29udGV4dF9tYW5hZ2VtZW50IGJ1dCBzdHJpcHMgaXQgYmVmb3JlIHByaXZhdGUgdXBzdHJlYW0gcm91dGluZyIsIGFzeW5jICgpID0+IHsK"},{"path":"backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php","old_b64":"ICAgICAgICBNb2RlbFJvdXRlUG9vbEVudHJ5OjpxdWVyeSgpLT5jcmVhdGUoWwogICAgICAgICAgICAnbW9kZWxfcm91dGVfcG9vbF9pZCcgPT4gJHBvb2wtPmlkLAogICAgICAgICAgICAnYWlfbW9kZWxfaWQnID0+ICRtb2RlbC0+aWQsCiAgICAgICAgICAgICdwcm92aWRlcl9jb25uZWN0aW9uX3JldmlzaW9uX2lkJyA9PiAkc2Vjb25kLT5pZCwKICAgICAgICAgICAgJ2VuYWJsZWQnID0+IHRydWUsCiAgICAgICAgICAgICd3ZWlnaHQnID0+IDEwMCwKICAgICAgICAgICAgJ21heF9jb25jdXJyZW5jeScgPT4gMTAsCiAgICAgICAgICAgICdwcmlvcml0eScgPT4gMTAwLAogICAgICAgIF0pOwoKICAgICAgICAkc2VsZWN0ZWQgPSBhcHAoTW9kZWxSb3V0ZVBvb2xTZXJ2aWNlOjpjbGFzcyktPnNlbGVjdCgkYWxpYXMsICRtb2RlbCk7Cg==","new_b64":"ICAgICAgICAkbG93ZXJXZWlnaHQgPSBNb2RlbFJvdXRlUG9vbEVudHJ5OjpxdWVyeSgpLT5jcmVhdGUoWwogICAgICAgICAgICAnbW9kZWxfcm91dGVfcG9vbF9pZCcgPT4gJHBvb2wtPmlkLAogICAgICAgICAgICAnYWlfbW9kZWxfaWQnID0+ICRtb2RlbC0+aWQsCiAgICAgICAgICAgICdwcm92aWRlcl9jb25uZWN0aW9uX3JldmlzaW9uX2lkJyA9PiAkc2Vjb25kLT5pZCwKICAgICAgICAgICAgJ2VuYWJsZWQnID0+IHRydWUsCiAgICAgICAgICAgICd3ZWlnaHQnID0+IDEwMCwKICAgICAgICAgICAgJ21heF9jb25jdXJyZW5jeScgPT4gMTAsCiAgICAgICAgICAgICdwcmlvcml0eScgPT4gMTAwLAogICAgICAgIF0pOwoKICAgICAgICAkYWZmaW5pdHkgPSBoYXNoKCdzaGEyNTYnLCAnd2VpZ2h0ZWQtcm91dGUtYWZmaW5pdHknKTsKICAgICAgICAkc2VydmljZSA9IGFwcChNb2RlbFJvdXRlUG9vbFNlcnZpY2U6OmNsYXNzKTsKICAgICAgICAkc2VsZWN0ZWQgPSAkc2VydmljZS0+c2VsZWN0KCRhbGlhcywgJG1vZGVsLCBbXSwgbnVsbCwgJGFmZmluaXR5KTsK"},{"path":"backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php","old_b64":"ICAgICAgICAkdGhpcy0+YXNzZXJ0U2FtZSgoc3RyaW5nKSAkaGlnaGVyV2VpZ2h0LT5pZCwgKHN0cmluZykgJHNlbGVjdGVkWydlbnRyeSddPy0+aWQpOwogICAgICAgICR0aGlzLT5hc3NlcnRTYW1lKChzdHJpbmcpICRmaXJzdC0+aWQsIChzdHJpbmcpICRzZWxlY3RlZFsncmV2aXNpb24nXS0+aWQpOwogICAgfQoKICAgIHB1YmxpYyBmdW5jdGlvbiB0ZXN0X2ZhaWxvdmVyX3BlcnNpc3RzX3JvdXRlX2ZhaWx1cmVfd2hlbl9ub19hbHRlcm5hdGVfcm91dGVfZXhpc3RzKCk6IHZvaWQK","new_b64":"ICAgICAgICAkdGhpcy0+YXNzZXJ0U2FtZSgoc3RyaW5nKSAkaGlnaGVyV2VpZ2h0LT5pZCwgKHN0cmluZykgJHNlbGVjdGVkWydlbnRyeSddPy0+aWQpOwogICAgICAgICR0aGlzLT5hc3NlcnRTYW1lKChzdHJpbmcpICRmaXJzdC0+aWQsIChzdHJpbmcpICRzZWxlY3RlZFsncmV2aXNpb24nXS0+aWQpOwoKICAgICAgICAvLyBNYWtlIHRoZSBwaW5uZWQgcm91dGUgYnVzaWVyLiBOb3JtYWwgd2VpZ2h0ZWQgbGVhc3QtY29ubmVjdGlvbnMgd291bGQKICAgICAgICAvLyBub3cgcHJlZmVyIHRoZSBvdGhlciByb3V0ZSwgYnV0IHRoaXMgaGVhbHRoeSBzZXNzaW9uIHN0YXlzIG9uIFIxLgogICAgICAgICRyZXNlcnZhdGlvbiA9IFJlc2VydmF0aW9uOjpxdWVyeSgpLT5jcmVhdGUoWwogICAgICAgICAgICAndXNlcl9pZCcgPT4gVXNlcjo6ZmFjdG9yeSgpLT5jcmVhdGUoKS0+aWQsCiAgICAgICAgICAgICdwcm92aWRlcl9jb25uZWN0aW9uX3JldmlzaW9uX2lkJyA9PiAkZmlyc3QtPmlkLAogICAgICAgICAgICAnbW9kZWxfcm91dGVfcG9vbF9lbnRyeV9pZCcgPT4gJGhpZ2hlcldlaWdodC0+aWQsCiAgICAgICAgICAgICdwdWJsaWNfbW9kZWxfYWxpYXMnID0+ICRhbGlhcy0+cHVibGljX2FsaWFzLAogICAgICAgICAgICAnYmlsbGluZ19tb2RlJyA9PiAnVE9LRU5fUVVPVEEnLAogICAgICAgICAgICAncmVzZXJ2ZWRfdW5pdHMnID0+IDEsCiAgICAgICAgICAgICdiaWxsaW5nX3NuYXBzaG90JyA9PiBbCiAgICAgICAgICAgICAgICAncm91dGVfYWZmaW5pdHlfa2V5JyA9PiAkYWZmaW5pdHksCiAgICAgICAgICAgICAgICAnaW50ZXJuYWxfbW9kZWxfaWQnID0+ICRtb2RlbC0+aW50ZXJuYWxfbW9kZWxfaWQsCiAgICAgICAgICAgICAgICAncm91dGVfaGlzdG9yeScgPT4gW1sKICAgICAgICAgICAgICAgICAgICAnZW50cnlfaWQnID0+IChpbnQpICRoaWdoZXJXZWlnaHQtPmlkLAogICAgICAgICAgICAgICAgICAgICdyZXZpc2lvbl9pZCcgPT4gKHN0cmluZykgJGZpcnN0LT5pZCwKICAgICAgICAgICAgICAgICAgICAnc2VsZWN0ZWRfYXQnID0+IG5vdygpLT50b0F0b21TdHJpbmcoKSwKICAgICAgICAgICAgICAgIF1dLAogICAgICAgICAgICBdLAogICAgICAgICAgICAnc3RhdHVzJyA9PiAnQUNUSVZFJywKICAgICAgICAgICAgJ2lkZW1wb3RlbmN5X2tleScgPT4gJ3dlaWdodGVkLXJvdXRlLWFmZmluaXR5LWFjdGl2ZScsCiAgICAgICAgICAgICdleHBpcmVzX2F0JyA9PiBub3coKS0+YWRkTWludXRlcygxNSksCiAgICAgICAgXSk7CgogICAgICAgICRzdGlja3kgPSAkc2VydmljZS0+c2VsZWN0KCRhbGlhcywgJG1vZGVsLCBbXSwgbnVsbCwgJGFmZmluaXR5KTsKICAgICAgICAkdGhpcy0+YXNzZXJ0U2FtZSgoc3RyaW5nKSAkaGlnaGVyV2VpZ2h0LT5pZCwgKHN0cmluZykgJHN0aWNreVsnZW50cnknXT8tPmlkKTsKCiAgICAgICAgLy8gSWYgUjEgZmFpbHMgYmVmb3JlIHB1YmxpYyBvdXRwdXQsIGZhaWwgb3ZlciB0byBSMiBhbmQgcmViaW5kIHRoZSBzYW1lCiAgICAgICAgLy8gYWZmaW5pdHkgc28gbGF0ZXIgdHVybnMgc3RheSBvbiBSMiBpbnN0ZWFkIG9mIGJvdW5jaW5nIGJhY2sgdG8gUjEuCiAgICAgICAgJG5leHQgPSAkc2VydmljZS0+ZmFpbG92ZXIoJHJlc2VydmF0aW9uLCAndXBzdHJlYW1faHR0cF81MDMnLCA1MDMpOwogICAgICAgICR0aGlzLT5hc3NlcnRTYW1lKChzdHJpbmcpICRsb3dlcldlaWdodC0+aWQsIChzdHJpbmcpICRuZXh0WydlbnRyeSddLT5pZCk7CiAgICAgICAgJHRoaXMtPmFzc2VydFNhbWUoKHN0cmluZykgJHNlY29uZC0+aWQsIChzdHJpbmcpICRuZXh0WydyZXZpc2lvbiddLT5pZCk7CgogICAgICAgICRyZWJvdW5kID0gJHNlcnZpY2UtPnNlbGVjdCgkYWxpYXMsICRtb2RlbCwgW10sIG51bGwsICRhZmZpbml0eSk7CiAgICAgICAgJHRoaXMtPmFzc2VydFNhbWUoKHN0cmluZykgJGxvd2VyV2VpZ2h0LT5pZCwgKHN0cmluZykgJHJlYm91bmRbJ2VudHJ5J10/LT5pZCk7CiAgICAgICAgJHRoaXMtPmFzc2VydFNhbWUoKHN0cmluZykgJHNlY29uZC0+aWQsIChzdHJpbmcpICRyZWJvdW5kWydyZXZpc2lvbiddLT5pZCk7CiAgICB9CgogICAgcHVibGljIGZ1bmN0aW9uIHRlc3RfZmFpbG92ZXJfcGVyc2lzdHNfcm91dGVfZmFpbHVyZV93aGVuX25vX2FsdGVybmF0ZV9yb3V0ZV9leGlzdHMoKTogdm9pZAo="}]
+'@
+$patches = $patchesJson | ConvertFrom-Json
+
+try {
+    foreach ($patch in $patches) {
+        Replace-Exact `
+            -Path ([string]$patch.path) `
+            -Old (Decode-Utf8Base64 ([string]$patch.old_b64)) `
+            -New (Decode-Utf8Base64 ([string]$patch.new_b64))
+    }
+}
+catch {
+    Write-Host ""
+    Write-Host "Patch failed. Restoring all target files." -ForegroundColor Red
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    foreach ($file in $targets) {
+        [System.IO.File]::WriteAllText(
+            (Join-Path $root $file),
+            [string]$originals[$file],
+            $utf8NoBom
+        )
+    }
+    throw
+}
+
+Write-Host ""
+Write-Host "Conversation-sticky route patch applied." -ForegroundColor Cyan
+Write-Host "  Same Claude Code session -> same healthy R1/R2 revision"
+Write-Host "  New sessions -> existing weighted load balancing, with stable tie distribution"
+Write-Host "  Pre-stream route failure -> failover and rebind session to fallback"
+Write-Host "  No session header -> old behavior remains unchanged"
+
+if (-not $SkipTests) {
+    Write-Host ""
+    Write-Host "Running available checks..." -ForegroundColor Cyan
+
+    if ((Get-Command pnpm -ErrorAction SilentlyContinue) -and (Test-Path "gateway/node_modules")) {
+        Push-Location "gateway"
+        try {
+            & pnpm typecheck
+            if ($LASTEXITCODE -ne 0) { throw "Gateway typecheck failed." }
+
+            & pnpm test -- app.test.ts
+            if ($LASTEXITCODE -ne 0) { throw "Gateway app tests failed." }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    else {
+        Write-Host "skip gateway tests: pnpm or gateway/node_modules is missing" -ForegroundColor Yellow
+    }
+
+    if ((Get-Command php -ErrorAction SilentlyContinue) -and (Test-Path "backend/vendor/autoload.php")) {
+        Push-Location "backend"
+        try {
+            & php artisan test --filter=AdminModelRoutePoolTest
+            if ($LASTEXITCODE -ne 0) { throw "Backend route-pool tests failed." }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    else {
+        Write-Host "skip backend tests: php or backend/vendor is missing" -ForegroundColor Yellow
+    }
+}
+
+Write-Host ""
+& git diff --check
+if ($LASTEXITCODE -ne 0) {
+    throw "git diff --check failed."
+}
+
+Write-Host ""
+Write-Host "Changed files:" -ForegroundColor Cyan
+& git status --short -- $targets
+
+Write-Host ""
+Write-Host "Review:" -ForegroundColor Cyan
+Write-Host "  git diff -- gateway/src backend/app gateway/tests/app.test.ts backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php"
+
+Write-Host ""
+Write-Host "When satisfied:" -ForegroundColor Cyan
+Write-Host '  git add gateway/src/app.ts gateway/src/types.ts gateway/src/control-plane.ts gateway/tests/app.test.ts backend/app/Http/Controllers/Api/V1/Internal/GatewayBillingController.php backend/app/Services/InferenceBillingService.php backend/app/Services/ModelRoutePoolService.php backend/tests/Feature/Api/V1/AdminModelRoutePoolTest.php'
+Write-Host '  git commit -m "Add conversation-sticky route affinity"'
+Write-Host '  git push origin main'

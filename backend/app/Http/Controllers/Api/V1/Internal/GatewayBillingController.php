@@ -101,6 +101,7 @@ class GatewayBillingController extends Controller
             'request_id' => ['required', 'string', 'max:191'],
             'request_fingerprint' => ['required', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
             'endpoint' => ['required', 'string', 'in:/v1/messages,/v1/messages/count_tokens,/v1/responses,/v1/chat/completions'],
+            'route_affinity_key' => ['nullable', 'string', 'size:64', 'regex:/^[a-f0-9]{64}$/'],
             'playground_funding_scope' => ['nullable', 'string', 'in:DAILY,BALANCE'],
         ]);
         $key = $this->activeKey($input['customer_key'], $secrets);
@@ -125,6 +126,7 @@ class GatewayBillingController extends Controller
                 $input['request_id'],
                 $input['request_fingerprint'],
                 $input['playground_funding_scope'] ?? null,
+                $input['route_affinity_key'] ?? null,
             );
             $reservation = $result['reservation'];
             ApiRequestLog::query()->firstOrCreate(['reservation_id' => $reservation->id], [

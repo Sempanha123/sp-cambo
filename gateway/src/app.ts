@@ -77,6 +77,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
     const toolNames = buildToolNameMap(prepared.body);
     const toolInputFields = buildToolInputFieldMap(prepared.body);
     const inspection = await dependencies.controlPlane.inspect(key);
+    const routeAffinity = routeAffinityKey(request, inspection.key_id, prepared.publicModel);
     const keyCap = inspection.limits.max_request_bytes;
     if (bytes > config.maxBodyBytes || (keyCap !== null && bytes > keyCap)) throw new GatewayError(413, "request_too_large", "The request exceeds the allowed size.");
     // /v1/messages/count_tokens is a local utility endpoint. It validates the
@@ -109,6 +110,7 @@ export function buildApp(config: GatewayConfig, dependencies: Dependencies): Fas
         estimated_cache_read_tokens: localInput.cache_read_tokens,
         requested_max_output_tokens: prepared.requestedMaxOutput, request_bytes: bytes, request_id: prepared.requestId,
         request_fingerprint: prepared.fingerprint, endpoint: path,
+        ...(routeAffinity ? { route_affinity_key: routeAffinity } : {}),
         ...(playgroundFundingScope ? { playground_funding_scope: playgroundFundingScope } : {}),
       });
       reservationId = preflight.reservation_id;
@@ -669,6 +671,20 @@ function takeSseFrame(buffer: string): { complete: string; remainder: string } |
   if (boundary === -1) return null;
   const end = boundary + delimiterLength;
   return { complete: buffer.slice(0, end), remainder: buffer.slice(end) };
+}
+
+function routeAffinityKey(request: FastifyRequest, keyId: string, publicModel: string): string | undefined {
+  const raw = request.headers["x-claude-code-session-id"] ?? request.headers["x-sp-cambo-session-id"];
+  if (typeof raw !== "string") return undefined;
+
+  const session = raw.trim();
+  if (session === "" || session.length > 512) return undefined;
+
+  // The control plane receives only an opaque per-key/per-model digest, never
+  // the customer's raw CLI session identifier.
+  return createHash("sha256")
+    .update(`${keyId}\0${publicModel}\0${session}`)
+    .digest("hex");
 }
 
 function fundingScope(request: FastifyRequest): "DAILY" | "BALANCE" | undefined {

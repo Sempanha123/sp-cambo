@@ -155,7 +155,7 @@ class AdminModelRoutePoolTest extends TestCase
             'priority' => 100,
         ]);
 
-        ModelRoutePoolEntry::query()->create([
+        $lowerWeight = ModelRoutePoolEntry::query()->create([
             'model_route_pool_id' => $pool->id,
             'ai_model_id' => $model->id,
             'provider_connection_revision_id' => $second->id,
@@ -165,10 +165,48 @@ class AdminModelRoutePoolTest extends TestCase
             'priority' => 100,
         ]);
 
-        $selected = app(ModelRoutePoolService::class)->select($alias, $model);
+        $affinity = hash('sha256', 'weighted-route-affinity');
+        $service = app(ModelRoutePoolService::class);
+        $selected = $service->select($alias, $model, [], null, $affinity);
 
         $this->assertSame((string) $higherWeight->id, (string) $selected['entry']?->id);
         $this->assertSame((string) $first->id, (string) $selected['revision']->id);
+
+        // Make the pinned route busier. Normal weighted least-connections would
+        // now prefer the other route, but this healthy session stays on R1.
+        $reservation = Reservation::query()->create([
+            'user_id' => User::factory()->create()->id,
+            'provider_connection_revision_id' => $first->id,
+            'model_route_pool_entry_id' => $higherWeight->id,
+            'public_model_alias' => $alias->public_alias,
+            'billing_mode' => 'TOKEN_QUOTA',
+            'reserved_units' => 1,
+            'billing_snapshot' => [
+                'route_affinity_key' => $affinity,
+                'internal_model_id' => $model->internal_model_id,
+                'route_history' => [[
+                    'entry_id' => (int) $higherWeight->id,
+                    'revision_id' => (string) $first->id,
+                    'selected_at' => now()->toAtomString(),
+                ]],
+            ],
+            'status' => 'ACTIVE',
+            'idempotency_key' => 'weighted-route-affinity-active',
+            'expires_at' => now()->addMinutes(15),
+        ]);
+
+        $sticky = $service->select($alias, $model, [], null, $affinity);
+        $this->assertSame((string) $higherWeight->id, (string) $sticky['entry']?->id);
+
+        // If R1 fails before public output, fail over to R2 and rebind the same
+        // affinity so later turns stay on R2 instead of bouncing back to R1.
+        $next = $service->failover($reservation, 'upstream_http_503', 503);
+        $this->assertSame((string) $lowerWeight->id, (string) $next['entry']->id);
+        $this->assertSame((string) $second->id, (string) $next['revision']->id);
+
+        $rebound = $service->select($alias, $model, [], null, $affinity);
+        $this->assertSame((string) $lowerWeight->id, (string) $rebound['entry']?->id);
+        $this->assertSame((string) $second->id, (string) $rebound['revision']->id);
     }
 
     public function test_failover_persists_route_failure_when_no_alternate_route_exists(): void
