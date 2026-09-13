@@ -128,8 +128,8 @@ class TelegramStorefrontUiService
         $km = $this->isKhmer($account);
 
         $text = $km
-            ? "{$this->familyIcon($family)} {$label}\n\nជ្រើសកញ្ចប់ 👇\n⏳ សុពលភាព និង 📦 ស្តុក បង្ហាញនៅលើប៊ូតុងនីមួយៗ។"
-            : "{$this->familyIcon($family)} {$label} PACKAGES\n\nChoose a package 👇\n⏳ Validity and 📦 stock are shown on every package button.";
+            ? "{$this->familyIcon($family)} {$label}\n\nជ្រើសកញ្ចប់ 👇\n📦 បង្ហាញស្តុកនៅលើប៊ូតុងនីមួយៗ។"
+            : "{$this->familyIcon($family)} {$label} PACKAGES\n\nChoose a package 👇\n📦 Stock is shown on every package button.";
 
         // Exactly one package button per row, up to 10 rows per page.
         $keyboard = [];
@@ -335,14 +335,13 @@ class TelegramStorefrontUiService
         $family = trim((string) ($package->family_label ?: $package->name));
         $family = preg_replace('/\s+(credits?|tokens?)$/i', '', $family) ?: $family;
         $family = mb_substr($family, 0, 12);
-        $validity = '⏳'.$this->durationLabel((int) $package->duration_seconds);
         $stock = '📦'.$this->stockButtonLabel($package);
 
         if ($this->isCreditPackage($package)) {
-            return '💳 '.$family.' '.$this->creditDisplay($package).' · '.$this->packagePrice($package).' · '.$validity.' · '.$stock;
+            return '💳 '.$family.' '.$this->creditDisplay($package).' · '.$this->packagePrice($package).' · '.$stock;
         }
 
-        return '🪙 '.$family.' '.$this->compactUnits((int) $package->advertised_units).' · '.$this->packagePrice($package).' · '.$validity.' · '.$stock;
+        return '🪙 '.$family.' '.$this->compactUnits((int) $package->advertised_units).' · '.$this->packagePrice($package).' · '.$stock;
     }
 
     private function stockButtonLabel(Package $package): string
