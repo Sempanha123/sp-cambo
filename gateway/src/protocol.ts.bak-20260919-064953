@@ -68,12 +68,6 @@ export function prepare(path: InferencePath, raw: string, defaultMaxOutput: numb
 
 export function upstreamBody(path: InferencePath, prepared: Prepared, internalModel: string, hardMax: number): string {
   const body: Record<string, unknown> = { ...prepared.body, model: internalModel };
-
-  // Always make stream mode explicit to the private upstream.
-  // Prevent OmniRoute from choosing its own stream default when omitted.
-  if (path !== "/v1/messages/count_tokens") {
-    body.stream = prepared.streaming;
-  }
   // Claude Code may send Anthropic-only compatibility extensions even when a
   // customer routes the Anthropic Messages API to a non-Anthropic private model.
   // Accept these fields at SP Cambo's public edge, then remove them before the
