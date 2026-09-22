@@ -83,6 +83,37 @@ describe('public API key checker contract', () => {
     expect(page.text()).not.toContain('This key could not be verified')
   })
 
+  it('renders token-backed SP Credits instead of incorrectly saying No balance', async () => {
+    const page = await submitKey({
+      ...activeResponse(),
+      package: 'Codex $100 Credits',
+      quota_remaining: '133107',
+      sp_credit_remaining: '1.33107',
+      credit_remaining: null,
+      credit_balances: []
+    })
+
+    const text = page.text()
+    expect(text).toMatch(/Quota remaining\s*133,107/)
+    expect(text).toMatch(/Credit remaining\s*1\.33107 Credits/)
+    expect(text).not.toMatch(/Credit remaining\s*No balance/)
+  })
+
+  it('renders zero SP Credits when the token-backed credit lot is exhausted', async () => {
+    const page = await submitKey({
+      ...activeResponse(),
+      package: 'Codex $100 Credits',
+      quota_remaining: '0',
+      sp_credit_remaining: '0',
+      credit_remaining: null,
+      credit_balances: []
+    })
+
+    const text = page.text()
+    expect(text).toMatch(/Quota remaining\s*0/)
+    expect(text).toMatch(/Credit remaining\s*0 Credits/)
+  })
+
   it('renders zero quota as zero and keeps credit/spend as exact money objects', async () => {
     const page = await submitKey(activeResponse())
     const text = page.text()

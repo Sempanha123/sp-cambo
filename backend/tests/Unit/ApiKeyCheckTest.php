@@ -171,6 +171,39 @@ class ApiKeyCheckTest extends TestCase
         $response->assertJsonPath('data.package', 'Token Test, Credit Test');
     }
 
+    public function test_check_reports_token_backed_sp_credit_remaining_and_zero_when_exhausted(): void
+    {
+        $user = User::factory()->create();
+        $alias = $this->alias();
+        $issued = $this->issueKey($user, $alias);
+
+        $lot = $this->grant($user, $alias, 'TOKEN_QUOTA', 10_000_000, [
+            'package_kind' => 'SP_CREDITS',
+            'display_units' => 100,
+            'display_unit_label' => 'Credits',
+            'sp_credit_billable_units' => 100_000,
+        ]);
+        $lot->forceFill([
+            'package_name' => 'Codex $100 Credits',
+            'remaining_units' => 133_107,
+            'reserved_units' => 0,
+        ])->save();
+
+        $response = $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])->assertOk();
+
+        $response->assertJsonPath('data.package', 'Codex $100 Credits');
+        $response->assertJsonPath('data.quota_remaining', '133107');
+        $response->assertJsonPath('data.sp_credit_remaining', '1.33107');
+        $response->assertJsonPath('data.credit_remaining', null);
+
+        $lot->forceFill(['remaining_units' => 0, 'reserved_units' => 0])->save();
+
+        $this->postJson('/api/v1/keys/check', ['api_key' => $issued['secret']])
+            ->assertOk()
+            ->assertJsonPath('data.quota_remaining', '0')
+            ->assertJsonPath('data.sp_credit_remaining', '0');
+    }
+
     public function test_check_excludes_entitlements_outside_the_key_model_scope(): void
     {
         $user = User::factory()->create();

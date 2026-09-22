@@ -175,6 +175,7 @@ class ApiKeyController extends Controller
                 'exponent' => (int) ($lot->currency_exponent ?? 6),
             ])->all()
         );
+        $spCreditRemaining = $this->spCreditRemaining($tokenLots);
 
         $usageTotals = UsageRecord::query()
             ->where('user_id', $key->user_id)
@@ -349,6 +350,7 @@ class ApiKeyController extends Controller
             'total_spend' => count($spend) === 1 ? $spend[0] : null,
             'total_spend_by_currency' => $spend,
             'quota_remaining' => $quotaRemaining,
+            'sp_credit_remaining' => $spCreditRemaining,
             'credit_remaining' => count($creditBalances) === 1 ? $creditBalances[0] : null,
             'credit_balances' => $creditBalances,
             'recent_requests' => $recentRequests,
@@ -402,7 +404,7 @@ class ApiKeyController extends Controller
         $rows = $rowsQuery
             ->orderBy('created_at')
             ->orderBy('id')
-            ->get(['id', 'billing_mode', 'original_units', 'remaining_units', 'reserved_units', 'unit_label', 'currency', 'currency_exponent', 'package_name', 'source_type', 'allowed_model_aliases', 'activated_at', 'expires_at', 'access_scope', 'bound_api_key_id', 'fulfillment_claim_id']);
+            ->get(['id', 'billing_mode', 'original_units', 'remaining_units', 'reserved_units', 'unit_label', 'currency', 'currency_exponent', 'package_name', 'source_type', 'allowed_model_aliases', 'billing_snapshot', 'activated_at', 'expires_at', 'access_scope', 'bound_api_key_id', 'fulfillment_claim_id']);
 
         $filtered = $rows->filter(function (EntitlementLot $lot) use ($key, $isPlaygroundKey, $allowedAliases): bool {
             $scope = strtoupper((string) ($lot->access_scope ?: 'ACCOUNT'));
@@ -432,6 +434,59 @@ class ApiKeyController extends Controller
         })->values();
 
         return new \Illuminate\Database\Eloquent\Collection($filtered->all());
+    }
+
+    /**
+     * SP Credits are token-backed TOKEN_QUOTA packages. Convert only lots whose
+     * immutable billing snapshot identifies package_kind=SP_CREDITS.
+     *
+     * The decimal is returned as a string so quota display never depends on float
+     * arithmetic. Current catalog packages use 100,000 billable Tokens per Credit.
+     */
+    private function spCreditRemaining(iterable $tokenLots): ?string
+    {
+        $scale = 1_000_000;
+        $scaledTotal = 0;
+        $hasSpCreditLot = false;
+
+        foreach ($tokenLots as $lot) {
+            if (! $lot instanceof EntitlementLot) {
+                continue;
+            }
+
+            $snapshot = is_array($lot->billing_snapshot) ? $lot->billing_snapshot : [];
+            $rules = is_array($snapshot['billing_rules'] ?? null) ? $snapshot['billing_rules'] : [];
+
+            if (($rules['package_kind'] ?? null) !== 'SP_CREDITS') {
+                continue;
+            }
+
+            $billableUnitsPerCredit = (int) ($rules['sp_credit_billable_units'] ?? 0);
+            if ($billableUnitsPerCredit <= 0) {
+                continue;
+            }
+
+            $hasSpCreditLot = true;
+            $remaining = max(0, (int) $lot->remaining_units - (int) $lot->reserved_units);
+
+            $wholeCredits = intdiv($remaining, $billableUnitsPerCredit);
+            $remainder = $remaining % $billableUnitsPerCredit;
+            $scaledTotal += ($wholeCredits * $scale)
+                + intdiv($remainder * $scale, $billableUnitsPerCredit);
+        }
+
+        if (! $hasSpCreditLot) {
+            return null;
+        }
+
+        $whole = intdiv($scaledTotal, $scale);
+        $fraction = $scaledTotal % $scale;
+
+        if ($fraction === 0) {
+            return (string) $whole;
+        }
+
+        return $whole.'.'.rtrim(str_pad((string) $fraction, 6, '0', STR_PAD_LEFT), '0');
     }
 
     /** @param array<int, array{minor:int,currency:string,exponent:int}> $rows */

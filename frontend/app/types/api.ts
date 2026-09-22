@@ -181,6 +181,8 @@ export interface PublicApiKeyStatus {
   created_at?: string
   expires_at?: string | null
   quota_remaining?: string | null
+  /** Token-backed SP Credit display balance; separate from real money CREDIT_BALANCE. */
+  sp_credit_remaining?: string | null
   credit_remaining?: MoneyAmount | null
   credit_balances?: MoneyAmount[]
   tokens_used?: { input: string, output: string, total: string, cached_input?: string, saved?: string, billed?: string, savings_rate_percent?: number }

@@ -260,6 +260,33 @@ const formatMoneySet = (single: MoneyAmount | null | undefined, grouped: MoneyAm
   return '—'
 }
 
+const formatSpCredits = (value: string | null | undefined): string | null => {
+  if (value === null || value === undefined) return null
+
+  const raw = String(value).trim()
+  const match = raw.match(/^(\d+)(?:\.(\d+))?$/)
+  if (!match) return `${raw} Credits`
+
+  const wholeRaw = match[1] || '0'
+  const fraction = (match[2] || '').replace(/0+$/, '')
+  const whole = wholeRaw.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const display = `${whole}${fraction ? `.${fraction}` : ''}`
+  const singular = wholeRaw === '1' && fraction === ''
+
+  return `${display} ${singular ? 'Credit' : 'Credits'}`
+}
+
+const creditRemainingLabel = computed(() => {
+  const spCredits = formatSpCredits(keyStatus.value?.sp_credit_remaining)
+  if (spCredits !== null) return spCredits
+
+  if (keyStatus.value?.credit_remaining || keyStatus.value?.credit_balances?.length) {
+    return formatMoneySet(keyStatus.value.credit_remaining, keyStatus.value.credit_balances)
+  }
+
+  return 'No balance'
+})
+
 const fundingLabel = computed(() => {
   switch (keyStatus.value?.funding_source) {
     case 'account': return 'Account balance'
@@ -724,7 +751,7 @@ const stateLabel = (state: string | null | undefined) => {
                 label="Credit remaining"
                 icon="i-lucide-wallet"
                 tone="success"
-                :value="keyStatus.credit_remaining || keyStatus.credit_balances?.length ? formatMoneySet(keyStatus.credit_remaining, keyStatus.credit_balances) : 'No balance'"
+                :value="creditRemainingLabel"
               />
               <SpMetric
                 label="Total Tokens"
