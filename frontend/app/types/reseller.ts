@@ -55,9 +55,22 @@ export interface ResellerAllocation {
   created_at: string
 }
 
+export interface ResellerAllocationCustomerBalance {
+  original_units: string
+  remaining_units: string
+  reserved_units: string
+  available_units: string
+  used_units: string
+  status: string | null
+  expires_at: string | null
+  target_entitlement_lot_ids: string[]
+}
+
 export interface ResellerAllocationHistoryItem extends ResellerAllocation {
   idempotency_key: string
   reason: string
+  /** Live balance of the entitlement lot(s) created for this exact sale. */
+  customer_balance: ResellerAllocationCustomerBalance | null
 }
 
 export interface ResellerAllocationQuery {

@@ -70,19 +70,76 @@ class ResellerCustomerReportingController extends Controller
                 $targets
             ): array {
                 $allocation = $transfer->allocations->first();
-                $target = $allocation
-                    ? $targets->get((string) $allocation->target_entitlement_lot_id)
-                    : null;
+
+                /*
+                 * One historical transfer may have produced more than one target
+                 * entitlement lot when it was funded from several source lots.
+                 * Package-level sales normally have one target lot, but summing all
+                 * targets keeps "remaining" correct for both old and new sales.
+                 */
+                $targetLots = $transfer->allocations
+                    ->map(fn ($row) =>
+                        $targets->get((string) $row->target_entitlement_lot_id)
+                    )
+                    ->filter();
+
+                $target = $targetLots->first();
 
                 $packageAllocation =
                     $transfer->public_model_alias
                     === ResellerAllocationService::PACKAGE_SCOPE_SENTINEL;
 
-                $aliases = $target?->allowed_model_aliases ?? (
-                    $packageAllocation
-                        ? []
-                        : [$transfer->public_model_alias]
+                $aliases = $targetLots
+                    ->flatMap(fn (EntitlementLot $lot) =>
+                        $lot->allowed_model_aliases ?? []
+                    )
+                    ->filter(fn ($alias) =>
+                        is_string($alias) && trim($alias) !== ''
+                    )
+                    ->map(fn (string $alias): string => trim($alias))
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                if ($aliases === [] && ! $packageAllocation) {
+                    $aliases = [$transfer->public_model_alias];
+                }
+
+                $customerOriginal = $targetLots->sum(
+                    fn (EntitlementLot $lot): int => (int) $lot->original_units
                 );
+                $customerRemaining = $targetLots->sum(
+                    fn (EntitlementLot $lot): int => (int) $lot->remaining_units
+                );
+                $customerReserved = $targetLots->sum(
+                    fn (EntitlementLot $lot): int => (int) $lot->reserved_units
+                );
+                $customerAvailable = $targetLots->sum(
+                    fn (EntitlementLot $lot): int => max(
+                        0,
+                        (int) $lot->remaining_units - (int) $lot->reserved_units
+                    )
+                );
+                $customerUsed = max(0, $customerOriginal - $customerRemaining);
+
+                $statuses = $targetLots
+                    ->pluck('status')
+                    ->map(fn ($status): string => (string) $status)
+                    ->unique()
+                    ->values();
+
+                $customerStatus = $statuses->count() === 1
+                    ? $statuses->first()
+                    : ($statuses->isEmpty() ? null : 'MIXED');
+
+                $nextExpiry = $targetLots
+                    ->filter(fn (EntitlementLot $lot): bool =>
+                        $lot->expires_at !== null
+                    )
+                    ->sortBy(fn (EntitlementLot $lot) =>
+                        $lot->expires_at?->getTimestamp() ?? PHP_INT_MAX
+                    )
+                    ->first()?->expires_at?->toAtomString();
 
                 return [
                     'id' => $transfer->id,
@@ -98,6 +155,22 @@ class ResellerCustomerReportingController extends Controller
                         : $transfer->public_model_alias,
                     'allowed_model_aliases' => array_values($aliases),
                     'units' => (string) $transfer->units,
+                    'customer_balance' => $targetLots->isEmpty()
+                        ? null
+                        : [
+                            'original_units' => (string) $customerOriginal,
+                            'remaining_units' => (string) $customerRemaining,
+                            'reserved_units' => (string) $customerReserved,
+                            'available_units' => (string) $customerAvailable,
+                            'used_units' => (string) $customerUsed,
+                            'status' => $customerStatus,
+                            'expires_at' => $nextExpiry,
+                            'target_entitlement_lot_ids' => $targetLots
+                                ->pluck('id')
+                                ->map(fn ($id): string => (string) $id)
+                                ->values()
+                                ->all(),
+                        ],
                     'idempotency_key' => $transfer->idempotency_key,
                     'reason' => $transfer->reason,
                     'created_at' => $transfer->created_at->toAtomString(),

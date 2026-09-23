@@ -888,6 +888,90 @@ const submitLifecycle = async () => {
                     <p class="text-xs text-dimmed">units sold</p>
                   </div>
                 </div>
+
+                <!-- Live customer balance for this exact sale. -->
+                <div
+                  v-if="transfer.customer_balance"
+                  class="mt-4 border-t border-default pt-4"
+                >
+                  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div class="rounded-lg bg-elevated/50 p-3">
+                      <p class="text-[11px] uppercase tracking-wide text-dimmed">
+                        Sold
+                      </p>
+                      <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
+                        {{ formatCompactUnits(transfer.customer_balance.original_units) }}
+                      </p>
+                    </div>
+
+                    <div class="rounded-lg bg-elevated/50 p-3">
+                      <p class="text-[11px] uppercase tracking-wide text-dimmed">
+                        Customer remaining
+                      </p>
+                      <p class="sp-numeric mt-1 text-sm font-semibold text-success">
+                        {{ formatCompactUnits(transfer.customer_balance.remaining_units) }}
+                      </p>
+                    </div>
+
+                    <div class="rounded-lg bg-elevated/50 p-3">
+                      <p class="text-[11px] uppercase tracking-wide text-dimmed">
+                        Used
+                      </p>
+                      <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
+                        {{ formatCompactUnits(transfer.customer_balance.used_units) }}
+                      </p>
+                    </div>
+
+                    <div class="rounded-lg bg-elevated/50 p-3">
+                      <p class="text-[11px] uppercase tracking-wide text-dimmed">
+                        Reserved
+                      </p>
+                      <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
+                        {{ formatCompactUnits(transfer.customer_balance.reserved_units) }}
+                      </p>
+                    </div>
+                  </div>
+
+                  <UProgress
+                    class="mt-3"
+                    :model-value="percentOfUnits(
+                      transfer.customer_balance.remaining_units,
+                      transfer.customer_balance.original_units
+                    ) ?? 0"
+                    :max="100"
+                    size="sm"
+                    :aria-label="`${formatUnits(transfer.customer_balance.remaining_units)} units remaining from this sale`"
+                  />
+
+                  <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                    <span>
+                      {{ percentOfUnits(
+                        transfer.customer_balance.remaining_units,
+                        transfer.customer_balance.original_units
+                      ) ?? 0 }}% remaining
+                    </span>
+
+                    <span v-if="transfer.customer_balance.status">
+                      Status: {{ transfer.customer_balance.status }}
+                    </span>
+
+                    <span v-if="transfer.customer_balance.expires_at">
+                      Expires {{ formatDateTime(transfer.customer_balance.expires_at) }}
+                    </span>
+
+                    <span v-if="transfer.customer_balance.reserved_units !== '0'">
+                      Available now:
+                      {{ formatCompactUnits(transfer.customer_balance.available_units) }}
+                    </span>
+                  </div>
+                </div>
+
+                <p
+                  v-else
+                  class="mt-4 border-t border-default pt-3 text-xs text-muted"
+                >
+                  Current customer balance is not available for this older sale.
+                </p>
               </li>
             </ul>
           </SpAsyncSection>
