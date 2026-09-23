@@ -77,55 +77,6 @@ const availableUnitsForLot = (lot: EntitlementLot): string => {
   return (available > 0n ? available : 0n).toString()
 }
 
-const cleanCreditLabel = (value: string): string =>
-  value.replace(/\$(?=\d[\d,]*(?:\.\d+)?\s+Credits?\b)/gi, '')
-
-const displayAvailableForLot = (lot: EntitlementLot): string =>
-  lot.display?.available ?? availableUnitsForLot(lot)
-
-const displayUnitForLot = (lot: EntitlementLot): string =>
-  lot.display?.unit_label ?? lot.unit_label
-
-const rawUnitsToDisplay = (rawUnits: string, scaleUnits: string): string => {
-  try {
-    const raw = BigInt(rawUnits || '0')
-    const scale = BigInt(scaleUnits || '1')
-    if (scale <= 1n) return raw.toString()
-
-    const whole = raw / scale
-    const remainder = raw % scale
-    if (remainder === 0n) return whole.toString()
-
-    const precision = Math.max(0, String(scale).length - 1)
-    const fraction = remainder.toString().padStart(precision, '0').replace(/0+$/, '')
-    return `${whole}.${fraction}`
-  } catch {
-    return rawUnits
-  }
-}
-
-const displayLotQuantity = (lot: EntitlementLot, rawUnits?: string): string => {
-  if (lot.display) {
-    const value = rawUnits === undefined
-      ? lot.display.available
-      : rawUnitsToDisplay(rawUnits, lot.display.raw_units_per_display_unit)
-    return formatDecimalQuantity(value, lot.display.unit_label)
-  }
-
-  return `${formatUnits(rawUnits ?? availableUnitsForLot(lot))} ${lot.unit_label}`
-}
-
-const transferDisplayValue = (
-  rawUnits: string,
-  display?: ResellerAllocation['display'] | null
-): string => {
-  if (!display) return formatCompactUnits(rawUnits)
-  return formatDecimalQuantity(
-    rawUnitsToDisplay(rawUnits, display.raw_units_per_display_unit),
-    display.unit_label
-  )
-}
-
 /**
  * IMPORTANT:
  * Show ONE row/card per purchased reseller package lot.
@@ -146,7 +97,7 @@ const packageInventory = computed(() =>
 
 const packageOptions = computed(() =>
   packageInventory.value.map(lot => ({
-    label: `${cleanCreditLabel(lot.package_name)} — ${displayLotQuantity(lot)} remaining`,
+    label: `${lot.package_name} — ${formatUnits(availableUnitsForLot(lot))} ${lot.unit_label} remaining`,
     value: lot.id
   }))
 )
@@ -182,18 +133,6 @@ const selectedAvailableUnits = computed(() =>
   selectedPackage.value ? availableUnitsForLot(selectedPackage.value) : '0'
 )
 
-const selectedAvailableDisplay = computed(() =>
-  selectedPackage.value?.display?.available ?? selectedAvailableUnits.value
-)
-
-const selectedDisplayUnit = computed(() =>
-  selectedPackage.value?.display?.unit_label ?? selectedPackage.value?.unit_label ?? 'units'
-)
-
-const selectedSupportsFractions = computed(() =>
-  (selectedPackage.value?.display?.raw_units_per_display_unit ?? '1') !== '1'
-)
-
 const mintAllocationKey = () => {
   try {
     allocationKey.value = newIdempotencyKey('package-sale')
@@ -227,28 +166,23 @@ const validateAllocation = (state: PackageAllocationForm): FormError[] => {
   }
 
   const digits = state.units.trim()
-  const validQuantity = selectedSupportsFractions.value
-    ? /^\d+(?:\.\d{1,5})?$/.test(digits)
-    : /^\d+$/.test(digits)
 
   if (!digits) {
-    errors.push({ name: 'units', message: `Enter how many ${selectedDisplayUnit.value} to sell.` })
-  } else if (!validQuantity) {
+    errors.push({ name: 'units', message: 'Enter how many units to sell.' })
+  } else if (!/^\d+$/.test(digits)) {
     errors.push({
       name: 'units',
-      message: selectedSupportsFractions.value
-        ? 'Enter a positive amount with up to 5 decimal places.'
-        : 'Enter a whole number with no commas or decimal point.'
+      message: 'Enter a whole number with no commas or decimal point.'
     })
-  } else if (compareDecimalQuantities(digits, '0') <= 0) {
-    errors.push({ name: 'units', message: 'Sell more than zero.' })
+  } else if (compareUnits(digits, '1') < 0) {
+    errors.push({ name: 'units', message: 'Sell at least one unit.' })
   } else if (
     selectedPackage.value
-    && compareDecimalQuantities(digits, selectedAvailableDisplay.value) > 0
+    && compareUnits(digits, selectedAvailableUnits.value) > 0
   ) {
     errors.push({
       name: 'units',
-      message: `Only ${formatDecimalQuantity(selectedAvailableDisplay.value, selectedDisplayUnit.value)} remain in this package.`
+      message: `Only ${formatUnits(selectedAvailableUnits.value)} ${selectedPackage.value.unit_label} remain in this package.`
     })
   }
 
@@ -287,7 +221,7 @@ const submitAllocation = async () => {
         method: 'POST',
         body: {
           inventory_lot_id: allocation.value.inventory_lot_id,
-          display_units: allocation.value.units.trim(),
+          units: Number(allocation.value.units.trim()),
           idempotency_key: idempotencyKey,
           reason: allocation.value.reason.trim()
         }
@@ -304,9 +238,7 @@ const submitAllocation = async () => {
 
     toast.add({
       title: 'Package quota sold',
-      description: `${result.display?.sold
-        ? formatDecimalQuantity(result.display.sold, result.display.unit_label)
-        : formatUnits(result.units)} from ${result.package_name ?? 'the package'} are now in ${customer.value?.name ?? 'the customer'}'s account and share the package's included models.`,
+      description: `${formatUnits(result.units)} units from ${result.package_name ?? 'the package'} are now in ${customer.value?.name ?? 'the customer'}'s account and share the package's included models.`,
       color: 'success',
       icon: 'i-lucide-package-check'
     })
@@ -807,7 +739,7 @@ const submitLifecycle = async () => {
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
                       <h3 class="truncate font-medium text-highlighted">
-                        {{ cleanCreditLabel(lot.package_name) }}
+                        {{ lot.package_name }}
                       </h3>
                       <UBadge
                         color="primary"
@@ -826,10 +758,10 @@ const submitLifecycle = async () => {
 
                   <div class="shrink-0 text-right">
                     <p class="sp-numeric text-xl font-semibold text-highlighted">
-                      {{ displayLotQuantity(lot) }}
+                      {{ formatCompactUnits(availableUnitsForLot(lot)) }}
                     </p>
                     <p class="text-xs text-dimmed">
-                      remaining
+                      {{ lot.unit_label }} remaining
                     </p>
                   </div>
                 </div>
@@ -913,7 +845,7 @@ const submitLifecycle = async () => {
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-2">
                       <p class="font-medium text-highlighted">
-                        {{ transfer.package_name ? cleanCreditLabel(transfer.package_name) : (transfer.public_model_alias ?? 'Quota allocation') }}
+                        {{ transfer.package_name ?? transfer.public_model_alias ?? 'Quota allocation' }}
                       </p>
 
                       <UBadge
@@ -945,9 +877,9 @@ const submitLifecycle = async () => {
 
                   <div class="shrink-0 text-right">
                     <p class="sp-numeric text-base font-semibold text-highlighted">
-                      {{ transfer.display?.sold ? formatDecimalQuantity(transfer.display.sold, transfer.display.unit_label) : formatCompactUnits(transfer.units) }}
+                      {{ formatCompactUnits(transfer.units) }}
                     </p>
-                    <p class="text-xs text-dimmed">sold</p>
+                    <p class="text-xs text-dimmed">units sold</p>
                   </div>
                 </div>
 
@@ -962,7 +894,7 @@ const submitLifecycle = async () => {
                         Sold
                       </p>
                       <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
-                        {{ transfer.customer_balance.display ? transferDisplayValue(transfer.customer_balance.original_units, transfer.customer_balance.display) : formatCompactUnits(transfer.customer_balance.original_units) }}
+                        {{ formatCompactUnits(transfer.customer_balance.original_units) }}
                       </p>
                     </div>
 
@@ -971,7 +903,7 @@ const submitLifecycle = async () => {
                         Customer remaining
                       </p>
                       <p class="sp-numeric mt-1 text-sm font-semibold text-success">
-                        {{ transfer.customer_balance.display ? transferDisplayValue(transfer.customer_balance.remaining_units, transfer.customer_balance.display) : formatCompactUnits(transfer.customer_balance.remaining_units) }}
+                        {{ formatCompactUnits(transfer.customer_balance.remaining_units) }}
                       </p>
                     </div>
 
@@ -980,7 +912,7 @@ const submitLifecycle = async () => {
                         Used
                       </p>
                       <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
-                        {{ transfer.customer_balance.display ? transferDisplayValue(transfer.customer_balance.used_units, transfer.customer_balance.display) : formatCompactUnits(transfer.customer_balance.used_units) }}
+                        {{ formatCompactUnits(transfer.customer_balance.used_units) }}
                       </p>
                     </div>
 
@@ -989,7 +921,7 @@ const submitLifecycle = async () => {
                         Reserved
                       </p>
                       <p class="sp-numeric mt-1 text-sm font-semibold text-highlighted">
-                        {{ transfer.customer_balance.display ? transferDisplayValue(transfer.customer_balance.reserved_units, transfer.customer_balance.display) : formatCompactUnits(transfer.customer_balance.reserved_units) }}
+                        {{ formatCompactUnits(transfer.customer_balance.reserved_units) }}
                       </p>
                     </div>
                   </div>
@@ -1184,10 +1116,10 @@ const submitLifecycle = async () => {
           >
             <div class="flex items-center justify-between gap-3">
               <p class="font-medium text-highlighted">
-                {{ cleanCreditLabel(selectedPackage.package_name) }}
+                {{ selectedPackage.package_name }}
               </p>
               <p class="sp-numeric text-sm font-semibold text-highlighted">
-                {{ formatDecimalQuantity(selectedAvailableDisplay, selectedDisplayUnit) }} remaining
+                {{ formatUnits(selectedAvailableUnits) }} remaining
               </p>
             </div>
 
@@ -1206,15 +1138,15 @@ const submitLifecycle = async () => {
           </div>
 
           <UFormField
-            :label="`${selectedDisplayUnit} to sell`"
+            label="Units to sell"
             name="units"
             required
           >
             <UInput
               v-model="allocation.units"
-              :inputmode="selectedSupportsFractions ? 'decimal' : 'numeric'"
+              inputmode="numeric"
               autocomplete="off"
-              :placeholder="selectedSupportsFractions ? '10' : '1000000'"
+              placeholder="1000000"
               class="w-full"
             />
           </UFormField>
@@ -1228,7 +1160,7 @@ const submitLifecycle = async () => {
             <UTextarea
               v-model="allocation.reason"
               :rows="3"
-              :placeholder="selectedSupportsFractions ? 'Customer purchased ten Credits.' : 'Customer purchased package quota.'"
+              placeholder="Customer purchased one million tokens."
               class="w-full"
             />
           </UFormField>
@@ -1238,7 +1170,7 @@ const submitLifecycle = async () => {
             color="neutral"
             variant="subtle"
             title="Shared package balance"
-            description="One shared package balance is sold across every included model. Credit packages are sold and displayed in Credits; Token packages stay in Tokens."
+            description="Selling 1M from a 9-model Claude package gives the customer 1M total, not 1M for each model."
           />
 
           <div class="flex justify-end gap-2">

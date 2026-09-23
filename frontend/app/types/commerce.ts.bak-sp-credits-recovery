@@ -301,7 +301,6 @@ export interface ApiKeyDetails {
   key: ApiKeySummary
   balance_source: 'loading' | 'no_spendable_balance' | 'legacy_account_entitlements' | 'dedicated_and_legacy_entitlements'
   token_quota_remaining: string | null
-  sp_credit_remaining?: string | null
   credit_balances: MoneyAmount[]
   funding_status?: 'deferred' | 'ready' | 'unavailable'
   funding_message?: string | null
@@ -323,7 +322,6 @@ export interface ApiKeyDetails {
     activated_at: string | null
     expires_at: string | null
     days_remaining: number | null
-    display?: QuotaDisplay | null
   }>
   server_time: string
 }
@@ -344,7 +342,6 @@ export interface ApiKeyStatusReport {
   expires_at: string | null
   allowed_model_aliases: string[]
   token_quota_remaining: string | null
-  sp_credit_remaining?: string | null
   credit_remaining: MoneyAmount | null
   credit_balances?: MoneyAmount[]
   limits: ApiKeySummary['limits']

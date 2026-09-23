@@ -8,7 +8,6 @@ use App\Models\ResellerCustomer;
 use App\Models\ResellerTransfer;
 use App\Models\UsageRecord;
 use App\Services\ResellerAllocationService;
-use App\Support\SpCredits;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -123,18 +122,6 @@ class ResellerCustomerReportingController extends Controller
                 );
                 $customerUsed = max(0, $customerOriginal - $customerRemaining);
 
-                $display = $target === null
-                    ? null
-                    : SpCredits::displayLot(
-                        $target,
-                        (int) $transfer->units,
-                        [
-                            'original_units' => $customerOriginal,
-                            'remaining_units' => $customerRemaining,
-                            'reserved_units' => $customerReserved,
-                        ]
-                    );
-
                 $statuses = $targetLots
                     ->pluck('status')
                     ->map(fn ($status): string => (string) $status)
@@ -161,16 +148,13 @@ class ResellerCustomerReportingController extends Controller
                     'inventory_lot_id' => $packageAllocation && $allocation
                         ? (string) $allocation->source_entitlement_lot_id
                         : null,
-                    'package_name' => $target?->package_name === null
-                        ? null
-                        : SpCredits::cleanLabel((string) $target->package_name),
+                    'package_name' => $target?->package_name,
                     'billing_mode' => $transfer->billing_mode,
                     'public_model_alias' => $packageAllocation
                         ? null
                         : $transfer->public_model_alias,
                     'allowed_model_aliases' => array_values($aliases),
                     'units' => (string) $transfer->units,
-                    'display' => $display,
                     'customer_balance' => $targetLots->isEmpty()
                         ? null
                         : [
@@ -181,7 +165,6 @@ class ResellerCustomerReportingController extends Controller
                             'used_units' => (string) $customerUsed,
                             'status' => $customerStatus,
                             'expires_at' => $nextExpiry,
-                            'display' => $display,
                             'target_entitlement_lot_ids' => $targetLots
                                 ->pluck('id')
                                 ->map(fn ($id): string => (string) $id)

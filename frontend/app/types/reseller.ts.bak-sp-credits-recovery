@@ -1,4 +1,4 @@
-import type { ApiKeyStatus, QuotaDisplay } from '~/types/commerce'
+import type { ApiKeyStatus } from '~/types/commerce'
 
 export type ResellerCustomerStatus = 'ACTIVE' | 'SUSPENDED' | 'CLOSED'
 
@@ -36,10 +36,7 @@ export interface ResellerAllocationInput {
 /** Preferred package-level allocation: one shared balance across all models in the lot. */
 export interface ResellerPackageAllocationInput {
   inventory_lot_id: string
-  /** Preferred customer-facing package quantity, e.g. "10" Credits. */
-  display_units?: string
-  /** Legacy raw settlement units; keep only for backward-compatible integrations. */
-  units?: number
+  units: number
   idempotency_key: string
   reason: string
 }
@@ -54,7 +51,6 @@ export interface ResellerAllocation {
   public_model_alias: string | null
   allowed_model_aliases: string[]
   units: string
-  display?: QuotaDisplay | null
   expires_at?: string | null
   created_at: string
 }
@@ -68,7 +64,6 @@ export interface ResellerAllocationCustomerBalance {
   status: string | null
   expires_at: string | null
   target_entitlement_lot_ids: string[]
-  display?: QuotaDisplay | null
 }
 
 export interface ResellerAllocationHistoryItem extends ResellerAllocation {

@@ -579,7 +579,7 @@ const stateLabel = (state: string | null | undefined) => {
                   v-for="item in [
                     { icon: 'i-lucide-badge-check', title: 'Credential state', text: 'Active, disabled, expired or revoked.' },
                     { icon: 'i-lucide-boxes', title: 'Models and limits', text: 'Context window, output cap and key overrides.' },
-                    { icon: 'i-lucide-wallet-cards', title: 'Spendable balance', text: 'Token quota, SP Credits, and wallet credit are shown separately.' },
+                    { icon: 'i-lucide-wallet-cards', title: 'Spendable balance', text: 'Token quota and exact currency-scaled credit.' },
                     { icon: 'i-lucide-activity', title: 'Local metering', text: 'Usage, reuse savings and recent request states.' }
                   ]"
                   :key="item.title"

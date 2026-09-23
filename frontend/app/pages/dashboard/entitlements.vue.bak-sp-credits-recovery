@@ -318,14 +318,14 @@ const refreshAll = () => {
               <div>
                 <dt class="text-dimmed">Purchased</dt>
                 <dd class="sp-numeric text-default">
-                  {{ lotDisplayAmount(lot, 'original') }}
+                  {{ formatUnits(lot.original_units) }}
                 </dd>
               </div>
 
               <div>
                 <dt class="text-dimmed">Reserved</dt>
                 <dd class="sp-numeric text-default">
-                  {{ lotDisplayAmount(lot, 'reserved') }}
+                  {{ formatUnits(lot.reserved_units) }}
                 </dd>
               </div>
 
@@ -538,7 +538,7 @@ const refreshAll = () => {
               {{ customerUnitLabel(lot.package_name) }}
             </p>
             <p class="text-xs text-muted">
-              {{ lotDisplayAmount(lot, 'original') }}
+              {{ formatUnits(lot.original_units) }} {{ customerUnitLabel(lot.unit_label) }}
             </p>
           </div>
 
@@ -587,7 +587,7 @@ const refreshAll = () => {
               {{ customerUnitLabel(lot.package_name) }}
             </p>
             <p class="text-xs text-muted">
-              {{ lotDisplayAmount(lot, 'original') }} purchased
+              {{ formatUnits(lot.original_units) }} purchased
             </p>
           </div>
 

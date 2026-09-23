@@ -36,7 +36,10 @@ export interface ResellerAllocationInput {
 /** Preferred package-level allocation: one shared balance across all models in the lot. */
 export interface ResellerPackageAllocationInput {
   inventory_lot_id: string
-  units: number
+  /** Preferred customer-facing package quantity, e.g. "10" Credits. */
+  display_units?: string
+  /** Legacy raw settlement units; keep only for backward-compatible integrations. */
+  units?: number
   idempotency_key: string
   reason: string
 }

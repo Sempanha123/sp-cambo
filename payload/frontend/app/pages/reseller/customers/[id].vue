@@ -1212,7 +1212,7 @@ const submitLifecycle = async () => {
           >
             <UInput
               v-model="allocation.units"
-              inputmode="numeric"
+              :inputmode="selectedSupportsFractions ? 'decimal' : 'numeric'"
               autocomplete="off"
               :placeholder="selectedSupportsFractions ? '10' : '1000000'"
               class="w-full"
@@ -1228,7 +1228,7 @@ const submitLifecycle = async () => {
             <UTextarea
               v-model="allocation.reason"
               :rows="3"
-              placeholder="Customer purchased one million tokens."
+              :placeholder="selectedSupportsFractions ? 'Customer purchased ten Credits.' : 'Customer purchased package quota.'"
               class="w-full"
             />
           </UFormField>

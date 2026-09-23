@@ -15,8 +15,12 @@ useSeoMeta({
 const api = useSpApi()
 const route = useRoute()
 
-const formatSpCredits = (value: string | null | undefined) =>
-  value == null ? '—' : formatDecimalQuantity(value, 'Credits')
+const formatSpCredits = (value: string | null | undefined) => {
+  if (value == null) return '—'
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '—'
+  return `$${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 })}`
+}
 
 const modelUi = (alias: string) => modelPresentation(alias)
 
@@ -315,7 +319,7 @@ const stateLabel = (state: string | null | undefined) => {
           v-if="summary.data.value"
           class="space-y-4"
         >
-          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+          <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <SpMetric
               label="Available Tokens"
               icon="i-lucide-wallet-cards"
@@ -324,20 +328,11 @@ const stateLabel = (state: string | null | undefined) => {
               hint="Current spendable Token balance"
             />
             <SpMetric
-              label="Available Credits"
-              icon="i-lucide-wallet-cards"
-              tone="success"
-              :value="balance.data.value?.sp_credit_quota
-                ? formatSpCredits(balance.data.value.sp_credit_quota.remaining)
-                : '0 Credits'"
-              hint="Current spendable SP Credit balance"
-            />
-            <SpMetric
               label="Saved by cache"
               icon="i-lucide-sparkles"
               tone="success"
               :value="formatUnits(summary.data.value.saved_tokens)"
-              :hint="`${formatUnits(summary.data.value.saved_tokens)} Tokens kept through smart reuse`"
+              :hint="`${formatSpCredits(summary.data.value.credits_saved)} Credits kept through cache reuse`"
             />
             <SpMetric
               label="Charged Tokens"
@@ -480,6 +475,10 @@ const stateLabel = (state: string | null | undefined) => {
                   <div class="text-right">
                     <dt class="whitespace-nowrap text-[11px] leading-4 text-dimmed">Saved by cache</dt>
                     <dd class="sp-numeric text-sm font-semibold leading-5 text-success">{{ formatUnits(entry.saved_tokens) }}</dd>
+                  </div>
+                  <div class="text-right">
+                    <dt class="text-[11px] leading-4 text-dimmed">Credits</dt>
+                    <dd class="sp-numeric text-sm font-semibold leading-5 text-primary">{{ formatSpCredits(entry.sp_credits_used) }}</dd>
                   </div>
                   <div class="text-right">
                     <dt class="text-[11px] leading-4 text-dimmed">Wallet</dt>
