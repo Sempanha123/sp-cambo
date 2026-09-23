@@ -1,0 +1,19 @@
+Apply these two small edits to frontend/app/composables/useSpApi.ts
+
+1) In the reseller type import, add:
+  ResellerPackageAllocationInput,
+
+So the import contains both:
+  ResellerAllocationInput,
+  ResellerPackageAllocationInput,
+
+2) Inside `reseller: { ... }`, directly after the existing `allocate:` method, add:
+
+      allocatePackage: (customerId: string, input: ResellerPackageAllocationInput) =>
+        request<ResellerAllocation>(`/reseller/customers/${apiSegment(customerId)}/allocations`, {
+          method: 'POST',
+          body: { ...input }
+        }),
+
+The backend intentionally uses the SAME /allocations endpoint.
+`inventory_lot_id` tells it to do package-level multi-model allocation.

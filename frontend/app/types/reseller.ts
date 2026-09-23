@@ -24,6 +24,7 @@ export interface ResellerCustomerStatusUpdateInput {
   reason: string
 }
 
+/** Legacy single-model allocation. */
 export interface ResellerAllocationInput {
   billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
   public_model_alias: string
@@ -32,12 +33,25 @@ export interface ResellerAllocationInput {
   reason: string
 }
 
+/** Preferred package-level allocation: one shared balance across all models in the lot. */
+export interface ResellerPackageAllocationInput {
+  inventory_lot_id: string
+  units: number
+  idempotency_key: string
+  reason: string
+}
+
 export interface ResellerAllocation {
   id: string
   customer_id: string
+  allocation_kind: 'MODEL' | 'PACKAGE'
+  inventory_lot_id: string | null
+  package_name: string | null
   billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
-  public_model_alias: string
+  public_model_alias: string | null
+  allowed_model_aliases: string[]
   units: string
+  expires_at?: string | null
   created_at: string
 }
 

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\EntitlementLot;
 use App\Models\ResellerCustomer;
 use App\Models\ResellerTransfer;
 use App\Models\UsageRecord;
+use App\Services\ResellerAllocationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +20,10 @@ class ResellerCustomerReportingController extends Controller
     {
         $data = $request->validate([
             'limit' => ['sometimes', 'integer', 'between:1,100'],
-            'billing_mode' => ['sometimes', Rule::in(['TOKEN_QUOTA', 'CREDIT_BALANCE'])],
+            'billing_mode' => [
+                'sometimes',
+                Rule::in(['TOKEN_QUOTA', 'CREDIT_BALANCE']),
+            ],
             'model' => ['sometimes', 'string', 'max:100'],
         ]);
 
@@ -27,6 +32,7 @@ class ResellerCustomerReportingController extends Controller
         $query = ResellerTransfer::query()
             ->where('reseller_user_id', $request->user()->id)
             ->where('customer_user_id', $managed->customer_user_id)
+            ->with('allocations')
             ->latest('created_at')
             ->latest('id');
 
@@ -34,6 +40,10 @@ class ResellerCustomerReportingController extends Controller
             $query->where('billing_mode', $data['billing_mode']);
         }
 
+        /*
+         * Historical model-scoped transfers can still be filtered directly.
+         * Package-level transfers are reported with their full model list below.
+         */
         if (isset($data['model'])) {
             $query->where('public_model_alias', $data['model']);
         }
@@ -41,17 +51,58 @@ class ResellerCustomerReportingController extends Controller
         $limit = (int) ($data['limit'] ?? 50);
         $rows = $query->limit($limit)->get();
 
+        $targetIds = $rows
+            ->flatMap(fn (ResellerTransfer $transfer) =>
+                $transfer->allocations->pluck('target_entitlement_lot_id')
+            )
+            ->filter()
+            ->unique()
+            ->values();
+
+        $targets = EntitlementLot::query()
+            ->whereIn('id', $targetIds)
+            ->get()
+            ->keyBy(fn (EntitlementLot $lot): string => (string) $lot->id);
+
         return response()->json([
-            'data' => $rows->map(fn (ResellerTransfer $transfer): array => [
-                'id' => $transfer->id,
-                'customer_id' => (string) $managed->id,
-                'billing_mode' => $transfer->billing_mode,
-                'public_model_alias' => $transfer->public_model_alias,
-                'units' => (string) $transfer->units,
-                'idempotency_key' => $transfer->idempotency_key,
-                'reason' => $transfer->reason,
-                'created_at' => $transfer->created_at->toAtomString(),
-            ])->values(),
+            'data' => $rows->map(function (ResellerTransfer $transfer) use (
+                $managed,
+                $targets
+            ): array {
+                $allocation = $transfer->allocations->first();
+                $target = $allocation
+                    ? $targets->get((string) $allocation->target_entitlement_lot_id)
+                    : null;
+
+                $packageAllocation =
+                    $transfer->public_model_alias
+                    === ResellerAllocationService::PACKAGE_SCOPE_SENTINEL;
+
+                $aliases = $target?->allowed_model_aliases ?? (
+                    $packageAllocation
+                        ? []
+                        : [$transfer->public_model_alias]
+                );
+
+                return [
+                    'id' => $transfer->id,
+                    'customer_id' => (string) $managed->id,
+                    'allocation_kind' => $packageAllocation ? 'PACKAGE' : 'MODEL',
+                    'inventory_lot_id' => $packageAllocation && $allocation
+                        ? (string) $allocation->source_entitlement_lot_id
+                        : null,
+                    'package_name' => $target?->package_name,
+                    'billing_mode' => $transfer->billing_mode,
+                    'public_model_alias' => $packageAllocation
+                        ? null
+                        : $transfer->public_model_alias,
+                    'allowed_model_aliases' => array_values($aliases),
+                    'units' => (string) $transfer->units,
+                    'idempotency_key' => $transfer->idempotency_key,
+                    'reason' => $transfer->reason,
+                    'created_at' => $transfer->created_at->toAtomString(),
+                ];
+            })->values(),
             'meta' => [
                 'limit' => $limit,
                 'count' => $rows->count(),
@@ -74,6 +125,7 @@ class ResellerCustomerReportingController extends Controller
         $to = isset($data['to'])
             ? CarbonImmutable::parse($data['to'])->utc()
             : CarbonImmutable::now('UTC');
+
         $from = isset($data['from'])
             ? CarbonImmutable::parse($data['from'])->utc()
             : $to->subDays(30);
@@ -160,6 +212,7 @@ class ResellerCustomerReportingController extends Controller
             ->values();
 
         $limit = (int) ($data['limit'] ?? 25);
+
         $recent = (clone $base)
             ->latest('settled_at')
             ->latest('id')
@@ -177,11 +230,13 @@ class ResellerCustomerReportingController extends Controller
                 'reasoning_tokens' => (string) $record->reasoning_tokens,
                 'total_tokens' => (string) $record->total_tokens,
                 'metered_units' => (string) $record->metered_units,
-                'credit_charge' => $record->credit_charge_minor === null ? null : [
-                    'minor' => (string) $record->credit_charge_minor,
-                    'currency' => $record->currency,
-                    'exponent' => (int) ($record->currency_exponent ?? 2),
-                ],
+                'credit_charge' => $record->credit_charge_minor === null
+                    ? null
+                    : [
+                        'minor' => (string) $record->credit_charge_minor,
+                        'currency' => $record->currency,
+                        'exponent' => (int) ($record->currency_exponent ?? 2),
+                    ],
                 'settled_at' => $record->settled_at->toAtomString(),
             ])
             ->values();
@@ -213,8 +268,10 @@ class ResellerCustomerReportingController extends Controller
         ]);
     }
 
-    private function managedCustomer(Request $request, string $managedId): ResellerCustomer
-    {
+    private function managedCustomer(
+        Request $request,
+        string $managedId
+    ): ResellerCustomer {
         return ResellerCustomer::query()
             ->where('reseller_user_id', $request->user()->id)
             ->findOrFail($managedId);
