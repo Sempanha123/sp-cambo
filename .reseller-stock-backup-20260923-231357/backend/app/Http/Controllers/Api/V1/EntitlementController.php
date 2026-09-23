@@ -13,9 +13,7 @@ class EntitlementController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $lots = $this->user($request)->entitlementLots()->where(function ($access): void {
-            $access->whereNull('access_scope')->orWhere('access_scope', '!=', 'RESELLER');
-        })->with('boundApiKey:id,label,prefix,last_four')->orderByRaw('expires_at IS NULL')->orderBy('expires_at')->orderBy('created_at')->get();
+        $lots = $this->user($request)->entitlementLots()->with('boundApiKey:id,label,prefix,last_four')->orderByRaw('expires_at IS NULL')->orderBy('expires_at')->orderBy('created_at')->get();
 
         return response()->json(['data' => $lots->map(fn (EntitlementLot $lot) => $this->lot($lot))->values()]);
     }
@@ -26,8 +24,7 @@ class EntitlementController extends Controller
         $lots = $user->entitlementLots()
             ->where('status', 'ACTIVE')
             ->where(function ($access): void {
-                $access->whereNull('access_scope')
-                    ->orWhereIn('access_scope', ['ACCOUNT', 'PLAYGROUND', 'API_KEY']);
+                $access->whereNull('access_scope')->orWhere('access_scope', '!=', 'UNASSIGNED');
             })
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->get();

@@ -237,10 +237,10 @@ useSeoMeta({
 /** ------------------------------------------------------------- inventory */
 
 /**
- * Dedicated reseller stock only. Personal purchases, Playground daily quota,
- * referral rewards and promotions never appear here and cannot fund a transfer.
+ * The reseller's own lots. An allocation moves units out of these, so the form
+ * reads them to show what can actually be funded before anything is submitted.
  */
-const inventory = await useSpResource('reseller:inventory', () => api.reseller.inventory(), { server: false })
+const inventory = await useSpResource('reseller:inventory', () => api.account.entitlements(), { server: false })
 const models = await useSpResource('catalog:models', () => api.catalog.models(), { server: false })
 
 /**
@@ -1291,7 +1291,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             name="public_model_alias"
             required
             :help="aliasOptions.length === 0
-              ? 'You hold no reseller stock for this billing mode. Ask the SP Cambo operator to add reseller inventory first.'
+              ? 'You hold no lots for this billing mode. Switch mode, or buy quota first.'
               : 'Only models you currently hold inventory for are listed.'"
           >
             <USelectMenu

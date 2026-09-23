@@ -24,8 +24,8 @@ const lot = (overrides: Partial<EntitlementLot> & { id: string }): EntitlementLo
   expires_at: null,
   allowed_model_aliases: ['sp-fast'],
   status: 'ACTIVE',
-  source: 'RESELLER_STOCK',
-  access_scope: 'RESELLER',
+  source: 'ORDER',
+  access_scope: 'ACCOUNT',
   fulfillment_claim_id: null,
   bound_api_key: null,
   ...overrides
@@ -60,11 +60,6 @@ describe('isLotAllocatable', () => {
     for (const status of ['DEPLETED', 'EXPIRED', 'REVOKED', 'PENDING'] as const) {
       expect(isLotAllocatable(lot({ id: 'a', status }), NOW)).toBe(false)
     }
-  })
-
-  it('rejects personal purchases and Playground quota even when active', () => {
-    expect(isLotAllocatable(lot({ id: 'purchase', source: 'ORDER', access_scope: 'ACCOUNT' }), NOW)).toBe(false)
-    expect(isLotAllocatable(lot({ id: 'daily', source: 'PLAYGROUND_DAILY', access_scope: 'PLAYGROUND' }), NOW)).toBe(false)
   })
 })
 

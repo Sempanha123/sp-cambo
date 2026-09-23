@@ -16,7 +16,6 @@ use App\Http\Controllers\Api\V1\Admin\ProviderController;
 use App\Http\Controllers\Api\V1\Admin\ProviderModelController;
 use App\Http\Controllers\Api\V1\Admin\RedeemCodeController as AdminRedeemCodeController;
 use App\Http\Controllers\Api\V1\Admin\ReferralController as AdminReferralController;
-use App\Http\Controllers\Api\V1\Admin\ResellerStockController as AdminResellerStockController;
 use App\Http\Controllers\Api\V1\Admin\SystemHealthController as AdminSystemHealthController;
 use App\Http\Controllers\Api\V1\Admin\TelegramStoreController;
 use App\Http\Controllers\Api\V1\ApiKeyController;
@@ -43,7 +42,6 @@ use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\ResellerCustomerController;
 use App\Http\Controllers\Api\V1\ResellerCustomerKeyController;
 use App\Http\Controllers\Api\V1\ResellerCustomerReportingController;
-use App\Http\Controllers\Api\V1\ResellerInventoryController;
 use App\Http\Controllers\Api\V1\ResellerManagementKeyController;
 use App\Http\Controllers\Api\V1\StatusController;
 use App\Http\Controllers\Api\V1\TelegramWebhookController;
@@ -142,8 +140,6 @@ Route::prefix('v1')->group(function (): void {
         Route::post('access/api-keys', [AdminAccessController::class, 'storeKey'])->middleware('throttle:10,1');
         Route::patch('access/api-keys/{apiKey}/status', [AdminAccessController::class, 'updateKeyStatus'])->middleware('throttle:20,1');
         Route::post('access/entitlements/{entitlementLot}/expire', [AdminAccessController::class, 'expireEntitlement'])->middleware('throttle:20,1');
-        Route::get('resellers/{reseller}/stock', [AdminResellerStockController::class, 'index']);
-        Route::post('resellers/{reseller}/stock', [AdminResellerStockController::class, 'store'])->middleware('throttle:20,1');
         Route::post('operations/reservations/{reservation}/release-confirmed', [AdminOperationsController::class, 'releaseReconciliation'])->middleware('throttle:10,1');
     });
 
@@ -160,7 +156,6 @@ Route::prefix('v1')->group(function (): void {
     });
 
     Route::middleware(['auth:sanctum', 'account.active', 'permission:reseller.manage'])->prefix('reseller')->group(function (): void {
-        Route::get('inventory', ResellerInventoryController::class);
         Route::get('customers', [ResellerCustomerController::class, 'index']);
         Route::post('customers', [ResellerCustomerController::class, 'store'])->middleware('throttle:10,1');
         Route::patch('customers/{resellerCustomer}/status', [ResellerCustomerController::class, 'updateStatus'])->middleware('throttle:20,1');
@@ -176,7 +171,6 @@ Route::prefix('v1')->group(function (): void {
     });
 
     Route::middleware(['management.auth', 'throttle:60,1'])->prefix('reseller-management')->group(function (): void {
-        Route::get('inventory', ResellerInventoryController::class)->middleware('management.scope:allocations:read');
         Route::get('customers', [ResellerCustomerController::class, 'index'])->middleware('management.scope:customers:read');
         Route::post('customers', [ResellerCustomerController::class, 'store'])->middleware('management.scope:customers:write');
         Route::patch('customers/{resellerCustomer}/status', [ResellerCustomerController::class, 'updateStatus'])->middleware('management.scope:customers:write');

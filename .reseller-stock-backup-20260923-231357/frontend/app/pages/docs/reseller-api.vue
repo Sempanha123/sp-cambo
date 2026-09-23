@@ -40,7 +40,7 @@ const scopeRows = [
   { scope: 'customers:write', endpoints: ['POST /customers', 'PATCH /customers/{id}/status'] },
   { scope: 'keys:read', endpoints: ['GET /customers/{id}/api-keys'] },
   { scope: 'keys:write', endpoints: ['POST /customers/{id}/api-keys', 'POST /customers/{id}/api-keys/{keyId}/revoke'] },
-  { scope: 'allocations:read', endpoints: ['GET /inventory', 'GET /customers/{id}/allocations'] },
+  { scope: 'allocations:read', endpoints: ['GET /customers/{id}/allocations'] },
   { scope: 'allocations:write', endpoints: ['POST /customers/{id}/allocations'] },
   { scope: 'usage:read', endpoints: ['GET /customers/{id}/usage'] }
 ]
@@ -462,22 +462,12 @@ const errorRows = [
       Allocating quota
     </h2>
 
-    <h3 id="reseller-inventory">
-      <code>GET /inventory</code>
-    </h3>
-    <p>
-      Requires <code>allocations:read</code>. Returns only dedicated <code>RESELLER_STOCK</code>
-      inventory. Personal purchases, Playground daily quota, referral rewards and promotions are
-      deliberately excluded and cannot fund a reseller transfer.
-    </p>
-
     <h3 id="create-allocation">
       <code>POST /customers/{id}/allocations</code>
     </h3>
     <p>
       Requires <code>allocations:write</code>. This is a <strong>transfer, not a purchase</strong>: the
-      units come only out of dedicated reseller stock already assigned to your reseller account.
-      Your personal balance is never used.
+      units come out of entitlement you already own and are not billed again.
     </p>
     <SpCodeBlock
       filename="bash"

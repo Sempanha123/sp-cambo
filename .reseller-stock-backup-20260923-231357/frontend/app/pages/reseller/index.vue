@@ -287,9 +287,14 @@ const activeCount = computed(() => (customers.data.value ?? []).filter(item => i
       </SpAsyncSection>
 
       <p class="text-sm text-muted">
-        Allocations use dedicated reseller inventory only. Your personal purchases, Playground daily quota,
-        referral rewards and promotions stay private to your own account. Ask the SP Cambo operator to add
-        reseller token or credit stock before allocating to customers.
+        Allocations move units out of your own inventory rather than buying new ones. Top up in
+        <NuxtLink
+          to="/dashboard/buy"
+          class="text-primary underline decoration-dotted underline-offset-4"
+        >
+          buy tokens &amp; credits
+        </NuxtLink>
+        before allocating.
       </p>
     </section>
 

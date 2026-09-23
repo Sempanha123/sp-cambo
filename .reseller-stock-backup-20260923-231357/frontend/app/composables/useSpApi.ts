@@ -779,7 +779,6 @@ export function useSpApi() {
      * permission. Every route is tenant-isolated; another reseller's ids 404.
      */
     reseller: {
-      inventory: () => request<EntitlementLot[]>('/reseller/inventory', { collection: true }),
       customers: () => request<ResellerCustomer[]>('/reseller/customers', { collection: true }),
       createCustomer: (input: ResellerCustomerInput) =>
         request<ResellerCustomer>('/reseller/customers', { method: 'POST', body: { ...input } }),

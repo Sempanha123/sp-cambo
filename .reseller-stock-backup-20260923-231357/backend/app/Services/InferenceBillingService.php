@@ -113,8 +113,7 @@ class InferenceBillingService
                 ->where('user_id', $user->id)
                 ->where('status', 'ACTIVE')
                 ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-                ->whereJsonContains('allowed_model_aliases', $alias->public_alias)
-                ->where('source_type', '!=', 'RESELLER_STOCK');
+                ->whereJsonContains('allowed_model_aliases', $alias->public_alias);
 
             if ($isPlaygroundKey) {
                 if ($playgroundScope === 'BALANCE') {

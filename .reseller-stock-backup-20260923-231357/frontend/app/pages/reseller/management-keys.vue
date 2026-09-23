@@ -41,9 +41,11 @@ const keys = await useSpResource('reseller:management-keys', () => api.reseller.
  * which is honest — rather than being silently dropped from the picker.
  *
  * `authorises` lists the `/reseller-management` endpoints each scope gates, read
- * off the `management.scope:` middleware in `routes/api.php`. Read-only
- * allocation scope also exposes the reseller's dedicated inventory so automation
- * can check stock before it attempts a transfer.
+ * off the `management.scope:` middleware in `routes/api.php`. Two of the seven
+ * gate nothing: the control plane will grant them, but no route reads them, so a
+ * key holding only those can call nothing at all. That is stated plainly here —
+ * a reseller who ticks "Read usage", gets a key and then sees no usage endpoint
+ * to call would reasonably conclude the key was broken.
  */
 const SCOPE_COPY: Record<ResellerManagementScope, { label: string, description: string, write: boolean, authorises: string[] }> = {
   'customers:read': {
@@ -78,12 +80,9 @@ const SCOPE_COPY: Record<ResellerManagementScope, { label: string, description: 
   },
   'allocations:read': {
     label: 'Read allocations',
-    description: 'Read dedicated reseller inventory and quota transfers you previously made.',
+    description: 'List quota transfers you previously made to a managed customer.',
     write: false,
-    authorises: [
-      'GET /reseller-management/inventory',
-      'GET /reseller-management/customers/{id}/allocations'
-    ]
+    authorises: ['GET /reseller-management/customers/{id}/allocations']
   },
   'allocations:write': {
     label: 'Allocate quota',

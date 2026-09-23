@@ -68,7 +68,6 @@ describe('documented reseller capabilities', () => {
   it('documents allocation history and usage reads', async () => {
     const text = await render()
 
-    expect(text).toContain('GET /inventory')
     expect(text).toContain('GET /customers/{id}/allocations')
     expect(text).toContain('GET /customers/{id}/usage')
     expect(text).not.toContain('No usage endpoint')

@@ -46,7 +46,7 @@ class ResellerApiTest extends TestCase
     public function test_reseller_can_create_customer_and_allocate_only_own_inventory(): void
     {
         $reseller = $this->reseller();
-        app(EntitlementService::class)->grant($reseller, ['source_type' => 'RESELLER_STOCK', 'source_id' => 'inventory', 'package_name' => 'Inventory', 'family_label' => 'Claude', 'billing_mode' => 'TOKEN_QUOTA', 'original_units' => 100, 'unit_label' => 'tokens', 'allowed_model_aliases' => ['claude-coding'], 'billing_snapshot' => [], 'access_scope' => 'RESELLER', 'expires_at' => now()->addDay()], 'reseller-api:inventory');
+        app(EntitlementService::class)->grant($reseller, ['source_type' => 'ADMIN_GRANT', 'source_id' => 'inventory', 'package_name' => 'Inventory', 'family_label' => 'Claude', 'billing_mode' => 'TOKEN_QUOTA', 'original_units' => 100, 'unit_label' => 'tokens', 'allowed_model_aliases' => ['claude-coding'], 'billing_snapshot' => [], 'expires_at' => now()->addDay()], 'reseller-api:inventory');
         $created = $this->actingAs($reseller)->postJson('/api/v1/reseller/customers', ['name' => 'Managed User', 'email' => 'managed@example.test', 'password' => 'Strong!Password123', 'password_confirmation' => 'Strong!Password123', 'label' => 'Customer A'])->assertCreated()->assertJsonMissingPath('data.password');
         $managedId = $created->json('data.id');
         $this->actingAs($reseller)->postJson("/api/v1/reseller/customers/{$managedId}/allocations", ['billing_mode' => 'TOKEN_QUOTA', 'public_model_alias' => 'claude-coding', 'units' => 40, 'idempotency_key' => 'api-allocation-1', 'reason' => 'Customer purchased forty token units.'])->assertCreated()->assertJsonPath('data.units', '40');
@@ -58,7 +58,7 @@ class ResellerApiTest extends TestCase
     public function test_allocation_replay_is_idempotent_and_changed_input_is_a_stable_conflict(): void
     {
         $reseller = $this->reseller();
-        app(EntitlementService::class)->grant($reseller, ['source_type' => 'RESELLER_STOCK', 'source_id' => 'inventory', 'package_name' => 'Inventory', 'family_label' => 'Claude', 'billing_mode' => 'TOKEN_QUOTA', 'original_units' => 100, 'unit_label' => 'tokens', 'allowed_model_aliases' => ['claude-coding'], 'billing_snapshot' => [], 'access_scope' => 'RESELLER', 'expires_at' => now()->addDay()], 'reseller-api:idempotency-inventory');
+        app(EntitlementService::class)->grant($reseller, ['source_type' => 'ADMIN_GRANT', 'source_id' => 'inventory', 'package_name' => 'Inventory', 'family_label' => 'Claude', 'billing_mode' => 'TOKEN_QUOTA', 'original_units' => 100, 'unit_label' => 'tokens', 'allowed_model_aliases' => ['claude-coding'], 'billing_snapshot' => [], 'expires_at' => now()->addDay()], 'reseller-api:idempotency-inventory');
         $managedId = $this->actingAs($reseller)->postJson('/api/v1/reseller/customers', ['name' => 'Replay User', 'email' => 'replay@example.test', 'password' => 'Strong!Password123', 'password_confirmation' => 'Strong!Password123', 'label' => 'Replay'])->assertCreated()->json('data.id');
         $payload = ['billing_mode' => 'TOKEN_QUOTA', 'public_model_alias' => 'claude-coding', 'units' => 40, 'idempotency_key' => 'allocation-replay-1', 'reason' => 'Customer purchased forty token units.'];
 
@@ -338,7 +338,7 @@ class ResellerApiTest extends TestCase
         $attacker = $this->reseller();
 
         app(EntitlementService::class)->grant($reseller, [
-            'source_type' => 'RESELLER_STOCK',
+            'source_type' => 'ADMIN_GRANT',
             'source_id' => 'reporting-inventory',
             'package_name' => 'Reporting inventory',
             'family_label' => 'Claude',
@@ -347,7 +347,6 @@ class ResellerApiTest extends TestCase
             'unit_label' => 'tokens',
             'allowed_model_aliases' => ['claude-coding'],
             'billing_snapshot' => [],
-            'access_scope' => 'RESELLER',
             'expires_at' => now()->addDay(),
         ], 'reseller-api:reporting-inventory');
 
@@ -388,63 +387,6 @@ class ResellerApiTest extends TestCase
         $this->withToken($attackerSecret)
             ->getJson("/api/v1/reseller-management/customers/{$managedId}/usage")
             ->assertNotFound();
-    }
-
-    public function test_personal_entitlements_cannot_fund_reseller_allocations_and_inventory_is_stock_only(): void
-    {
-        $reseller = $this->reseller();
-        [$managedId] = $this->managedCustomer($reseller, 'stock-isolation@example.test');
-
-        app(EntitlementService::class)->grant($reseller, [
-            'source_type' => 'ORDER',
-            'source_id' => 'personal-order',
-            'package_name' => 'Personal purchase',
-            'family_label' => 'Claude',
-            'billing_mode' => 'TOKEN_QUOTA',
-            'original_units' => 100,
-            'unit_label' => 'tokens',
-            'allowed_model_aliases' => ['claude-coding'],
-            'billing_snapshot' => [],
-            'access_scope' => 'ACCOUNT',
-            'expires_at' => now()->addDay(),
-        ], 'reseller-api:personal-order');
-
-        $this->actingAs($reseller)->getJson('/api/v1/reseller/inventory')
-            ->assertOk()
-            ->assertJsonCount(0, 'data');
-
-        $this->actingAs($reseller)->postJson("/api/v1/reseller/customers/{$managedId}/allocations", [
-            'billing_mode' => 'TOKEN_QUOTA',
-            'public_model_alias' => 'claude-coding',
-            'units' => 1,
-            'idempotency_key' => 'personal-lot-must-not-transfer',
-            'reason' => 'Personal purchases must never fund reseller allocation.',
-        ])->assertPaymentRequired()->assertJsonPath('code', 'insufficient_tokens');
-
-        app(EntitlementService::class)->grant($reseller, [
-            'source_type' => 'RESELLER_STOCK',
-            'source_id' => 'dedicated-stock',
-            'package_name' => 'Reseller stock',
-            'family_label' => 'Reseller inventory',
-            'billing_mode' => 'TOKEN_QUOTA',
-            'original_units' => 100,
-            'unit_label' => 'tokens',
-            'allowed_model_aliases' => ['claude-coding'],
-            'billing_snapshot' => [],
-            'access_scope' => 'RESELLER',
-            'expires_at' => now()->addDay(),
-        ], 'reseller-api:dedicated-stock');
-
-        $this->actingAs($reseller)->getJson('/api/v1/reseller/inventory')
-            ->assertOk()
-            ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.source', 'RESELLER_STOCK')
-            ->assertJsonPath('data.0.access_scope', 'RESELLER');
-
-        $readSecret = $this->managementSecret($reseller, ['allocations:read']);
-        $this->withToken($readSecret)->getJson('/api/v1/reseller-management/inventory')
-            ->assertOk()
-            ->assertJsonCount(1, 'data');
     }
 
     /** @return array{0: string, 1: User} */

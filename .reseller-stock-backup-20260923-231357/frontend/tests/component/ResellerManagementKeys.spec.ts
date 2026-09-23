@@ -14,8 +14,15 @@ import ManagementKeysPage from '~/pages/reseller/management-keys.vue'
  * the choice made in this dialog is the only one the reseller gets. That makes the
  * *accuracy of what each scope claims to authorise* the guarantee worth protecting.
  *
- * Allocation and usage read scopes are live. `allocations:read` also exposes
- * dedicated reseller inventory so automation can check stock before transferring.
+ * Two of the seven scopes the control plane grants — `allocations:read` and
+ * `usage:read` — are read by no route in `routes/api.php`. A key holding only those
+ * is issued happily and then refused by every endpoint with `insufficient_scope`,
+ * which reads as a broken key rather than as a scope that does nothing. The page
+ * must say so before the key is created, not after.
+ *
+ * These tests fail if the backend gains the missing endpoints, which is the point:
+ * the day `usage:read` starts authorising something, this page must stop saying it
+ * does not.
  */
 
 /** What the mocked control plane will answer with, set per test. */
@@ -116,7 +123,6 @@ describe('scope disclosure', () => {
     expect(body).toContain('GET /reseller-management/customers')
     expect(body).toContain('POST /reseller-management/customers')
     expect(body).toContain('PATCH /reseller-management/customers/{id}/status')
-    expect(body).toContain('GET /reseller-management/inventory')
     expect(body).toContain('GET /reseller-management/customers/{id}/allocations')
     expect(body).toContain('POST /reseller-management/customers/{id}/allocations')
     expect(body).toContain('GET /reseller-management/customers/{id}/usage')

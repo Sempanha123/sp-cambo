@@ -6,8 +6,9 @@ import { lotExpiryMs } from './entitlementState'
  * What a reseller can fund, derived from the reseller's own entitlement lots.
  *
  * `ResellerAllocationService::allocate` draws units out of the reseller's lots
- * only from dedicated `RESELLER_STOCK` lots in `RESELLER` access scope,
- * then applies the same billing mode, active/unexpired and model-alias filters. It then takes `remaining_units - reserved_units` from each, soonest
+ * with exactly this filter: same `billing_mode`, `status = ACTIVE`, `expires_at`
+ * null or in the future, and `allowed_model_aliases` containing the requested
+ * alias. It then takes `remaining_units - reserved_units` from each, soonest
  * expiry first, and refuses the whole transfer with a 402 if the total is short.
  *
  * Mirroring that filter here lets the allocation form tell a reseller what they
@@ -50,10 +51,6 @@ export function lotAvailableUnits(lot: EntitlementLot): string {
  * only ever affects what the form previews, never what is transferred.
  */
 export function isLotAllocatable(lot: EntitlementLot, nowMs: number): boolean {
-  if (lot.source !== 'RESELLER_STOCK' || lot.access_scope !== 'RESELLER') {
-    return false
-  }
-
   if (lot.status !== 'ACTIVE') {
     return false
   }

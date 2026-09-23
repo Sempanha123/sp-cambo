@@ -25,16 +25,6 @@ class EffectiveAccessService
         $lots = EntitlementLot::query()
             ->where('user_id', $user->id)
             ->where('status', 'ACTIVE')
-            ->where('source_type', '!=', 'PLAYGROUND_DAILY')
-            ->where('source_type', '!=', 'RESELLER_STOCK')
-            ->where(function ($access) use ($key): void {
-                $access->whereNull('access_scope')
-                    ->orWhere('access_scope', 'ACCOUNT')
-                    ->orWhere(function ($dedicated) use ($key): void {
-                        $dedicated->where('access_scope', 'API_KEY')
-                            ->where('bound_api_key_id', $key->id);
-                    });
-            })
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->whereJsonContains('allowed_model_aliases', $alias->public_alias)
             ->orderByRaw('expires_at IS NULL')

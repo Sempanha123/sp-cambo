@@ -255,7 +255,7 @@ export interface EntitlementLot {
    * printing a raw enum name at a customer.
    */
   source: string
-  access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED' | 'RESELLER'
+  access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED'
   fulfillment_claim_id: string | null
   bound_api_key: { id: string, label: string, masked_key: string } | null
 }
@@ -297,7 +297,7 @@ export interface ApiKeyDetails {
     id: string
     package_name: string
     source: string
-    access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED' | 'RESELLER'
+    access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED'
     dedicated_to_this_key: boolean
     billing_mode: BillingMode
     original_units: string
