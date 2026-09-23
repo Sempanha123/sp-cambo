@@ -212,7 +212,6 @@ const placeOrder = async () => {
 }
 
 const customerLabel = (value: string | null | undefined) => (value ?? '')
-  .replace(/\$(?=\d[\d,]*(?:\.\d+)?\s+Credits?\b)/gi, '')
   .replaceAll('SP Tokens', 'Tokens')
   .replaceAll('SP Credits', 'Credits')
   .replaceAll('SP billable tokens', 'Tokens')
@@ -222,7 +221,7 @@ const packageGrantLabel = (item: PublicPackage): string => {
   if (item.display_units && item.display_unit_label) {
     const label = customerLabel(item.display_unit_label)
     const creditLabel = BigInt(item.display_units) === 1n ? 'Credit' : 'Credits'
-    return label === 'Credits' ? `${formatUnits(item.display_units)} ${creditLabel}` : `${formatUnits(item.display_units)} ${label}`
+    return label === 'Credits' ? `$${formatUnits(item.display_units)} ${creditLabel}` : `${formatUnits(item.display_units)} ${label}`
   }
 
   if (item.billing_mode === 'CREDIT_BALANCE' && item.credit_amount) {
@@ -294,7 +293,7 @@ const quantityOptions = [1, 2, 3, 5, 10].map(value => ({ label: `${value}×`, va
               <div>
                 <p class="text-sm font-semibold text-highlighted">Smart reuse included with every package</p>
                 <p class="mt-1 text-xs leading-5 text-muted">Repeated prompt context can be recognized automatically and charged at 25% of the normal Token rate, helping long chats, coding sessions and agent workflows cost less while keeping pricing predictable.</p>
-                <p class="mt-1 text-[11px] leading-4 text-dimmed">New input/output is metered normally. Larger bundles have a lower effective purchase price. Credits are prepaid SP Cambo usage balance. They decrease with exact local metering and are not USD cash or withdrawable value.</p>
+                <p class="mt-1 text-[11px] leading-4 text-dimmed">New input/output is metered normally. Larger bundles have a lower effective purchase price. $1 Credit = 100,000 billable Tokens. Credits are platform usage credits, not withdrawable cash.</p>
               </div>
             </div>
           </div>

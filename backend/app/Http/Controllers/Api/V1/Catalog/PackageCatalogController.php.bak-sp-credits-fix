@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1\Catalog;
 
 use App\Http\Controllers\Controller;
 use App\Models\Package;
-use App\Support\SpCredits;
 use Illuminate\Http\JsonResponse;
 
 class PackageCatalogController extends Controller
@@ -19,8 +18,8 @@ class PackageCatalogController extends Controller
         return response()->json(['data' => $packages->map(fn (Package $package) => [
             'id' => (string) $package->id,
             'slug' => $package->slug,
-            'name' => SpCredits::cleanLabel((string) $package->name),
-            'subtitle' => $package->subtitle === null ? null : SpCredits::cleanLabel((string) $package->subtitle),
+            'name' => $package->name,
+            'subtitle' => $package->subtitle,
             'badge' => $package->badge,
             'billing_mode' => $package->billing_mode,
             'fulfillment_target' => 'ACCOUNT',

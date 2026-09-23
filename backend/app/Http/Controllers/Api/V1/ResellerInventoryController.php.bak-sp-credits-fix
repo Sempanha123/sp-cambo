@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\EntitlementLot;
 use App\Services\ResellerStockService;
-use App\Support\SpCredits;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -38,7 +37,7 @@ class ResellerInventoryController extends Controller
             'data' => $lots->map(fn (EntitlementLot $lot): array => [
                 'id' => (string) $lot->id,
                 'billing_mode' => (string) $lot->billing_mode,
-                'package_name' => SpCredits::cleanLabel((string) $lot->package_name),
+                'package_name' => (string) $lot->package_name,
                 'family_label' => (string) $lot->family_label,
                 'original_units' => (string) $lot->original_units,
                 'remaining_units' => (string) $lot->remaining_units,
@@ -59,7 +58,6 @@ class ResellerInventoryController extends Controller
                 'access_scope' => (string) ($lot->access_scope ?? 'ACCOUNT'),
                 'fulfillment_claim_id' => $lot->fulfillment_claim_id,
                 'bound_api_key' => null,
-                'display' => SpCredits::displayLot($lot),
             ])->values(),
         ]);
     }

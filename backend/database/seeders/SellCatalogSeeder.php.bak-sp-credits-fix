@@ -18,7 +18,7 @@ class SellCatalogSeeder extends Seeder
     private const PROVIDER_SLUG = 'omniroute-primary';
     private const DAY = 86_400;
     private const LONG_CREDIT_VALIDITY = 365 * self::DAY;
-    private const SP_CREDIT_UNITS = 100_000; // 1 displayed SP Credit = 100k exact settlement sub-units.
+    private const SP_CREDIT_UNITS = 100_000; // $1 displayed Credit = 100k locally metered Tokens.
     private const PACKAGE_MINIMUM_MARGIN_BPS = 1_000;
     private const PACKAGE_PRICE_MARKUP_BPS = 1_000; // Small +10% retail increase over V20.6.
 
@@ -825,7 +825,7 @@ class SellCatalogSeeder extends Seeder
                 $label = $profile['label'];
                 $packages[] = $this->creditQuotaPackage(
                     "{$routeKey}-credit-{$credits}",
-                    "{$label} ".number_format($credits)." ".($credits === 1 ? "Credit" : "Credits"),
+                    "{$label} $".number_format($credits)." ".($credits === 1 ? "Credit" : "Credits"),
                     $label,
                     $credits,
                     $prices[$credits],
@@ -1036,7 +1036,7 @@ class SellCatalogSeeder extends Seeder
         return [
             'slug' => $slug,
             'name' => $name,
-            'subtitle' => '✨ '.number_format($credits).' '.($credits === 1 ? 'Credit' : 'Credits').' · prepaid AI access',
+            'subtitle' => '✨ $'.number_format($credits).' '.($credits === 1 ? 'Credit' : 'Credits').' · prepaid AI access',
             'badge' => $featured ? 'Popular credits' : ($credits >= 1000 ? 'Best bulk value' : 'Long-life value'),
             'billing_mode' => 'TOKEN_QUOTA',
             'family' => strtolower(str_replace(' ', '-', $familyLabel)),

@@ -26,17 +26,6 @@ export interface MoneyAmount {
 
 export type BillingMode = 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
 
-export interface QuotaDisplay {
-  kind: 'SP_TOKENS' | 'SP_CREDITS'
-  unit_label: string
-  raw_units_per_display_unit: string
-  original: string
-  remaining: string
-  reserved: string
-  available: string
-  sold: string | null
-}
-
 export type ModelFamily = string
 
 export interface PublicModelCapabilities {
@@ -269,7 +258,6 @@ export interface EntitlementLot {
   access_scope: 'ACCOUNT' | 'PLAYGROUND' | 'API_KEY' | 'UNASSIGNED' | 'RESELLER'
   fulfillment_claim_id: string | null
   bound_api_key: { id: string, label: string, masked_key: string } | null
-  display?: QuotaDisplay | null
 }
 
 export type ApiKeyStatus = 'ACTIVE' | 'DISABLED' | 'REVOKED' | 'EXPIRED'

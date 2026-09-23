@@ -114,28 +114,13 @@ const tokenPercent = computed(() => {
   return quota ? percentOfUnits(quota.remaining_units, quota.original_units) : null
 })
 
-const formatSpCreditBalance = (value: string | null | undefined) =>
-  value == null ? '0 Credits' : formatDecimalQuantity(value, 'Credits')
+const formatSpCreditBalance = (value: string | null | undefined) => {
+  if (value == null) return '$0'
+  const amount = Number(value)
 
-const lotDisplayAmount = (
-  lot: EntitlementLot,
-  field: 'original' | 'remaining' | 'reserved' | 'available'
-) => {
-  if (lot.billing_mode === 'CREDIT_BALANCE' && field === 'remaining' && lot.remaining_amount) {
-    return formatMoney(lot.remaining_amount)
-  }
-
-  if (lot.display) {
-    return formatDecimalQuantity(lot.display[field], lot.display.unit_label)
-  }
-
-  const raw = field === 'original'
-    ? lot.original_units
-    : field === 'reserved'
-      ? lot.reserved_units
-      : lot.remaining_units
-
-  return formatUnits(raw)
+  return Number.isFinite(amount)
+    ? `$${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 5 })}`
+    : value
 }
 
 const customerUnitLabel = (value: string | null | undefined) => (value ?? 'Tokens')
@@ -143,7 +128,6 @@ const customerUnitLabel = (value: string | null | undefined) => (value ?? 'Token
   .replaceAll('SP billable units', 'Tokens')
   .replaceAll('SP Tokens', 'Tokens')
   .replaceAll('SP Credits', 'Credits')
-  .replace(/\$(?=\d[\d,]*(?:\.\d+)?\s+Credits?\b)/gi, '')
 
 const refreshAll = () => {
   balance.refresh()
@@ -210,7 +194,7 @@ const refreshAll = () => {
             :value="formatSpCreditBalance(balance.data.value.sp_credit_quota?.remaining)"
             :hint="balance.data.value.sp_credit_quota
               ? `${formatSpCreditBalance(balance.data.value.sp_credit_quota.reserved)} reserved`
-              : 'Prepaid SP Cambo usage Credits'"
+              : 'Dollar-denominated platform Credits'"
           />
 
           <SpMetric
@@ -298,7 +282,9 @@ const refreshAll = () => {
 
               <div class="text-right">
                 <p class="sp-numeric text-xl font-semibold text-highlighted">
-                  {{ lotDisplayAmount(lot, 'remaining') }}
+                  {{ lot.billing_mode === 'CREDIT_BALANCE' && lot.remaining_amount
+                    ? formatMoney(lot.remaining_amount)
+                    : formatUnits(lot.remaining_units) }}
                 </p>
                 <p class="text-xs text-muted">
                   {{ customerUnitLabel(lot.unit_label) }} remaining
@@ -490,7 +476,9 @@ const refreshAll = () => {
 
               <div class="text-right">
                 <p class="sp-numeric text-lg font-semibold text-highlighted">
-                  {{ lotDisplayAmount(lot, 'remaining') }}
+                  {{ lot.billing_mode === 'CREDIT_BALANCE' && lot.remaining_amount
+                    ? formatMoney(lot.remaining_amount)
+                    : formatUnits(lot.remaining_units) }}
                 </p>
                 <p class="text-xs text-muted">remaining</p>
               </div>

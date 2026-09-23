@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\CreditLedger;
 use App\Models\EntitlementLot;
 use App\Models\User;
-use App\Support\SpCredits;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -73,7 +72,7 @@ class EntitlementController extends Controller
     {
         $remainingAmount = $lot->billing_mode === 'CREDIT_BALANCE' ? $this->money($lot->remaining_units, $lot->currency ?? 'USD', $lot->currency_exponent ?? 6) : null;
 
-        return ['id' => $lot->id, 'billing_mode' => $lot->billing_mode, 'package_name' => SpCredits::cleanLabel((string) $lot->package_name), 'family_label' => $lot->family_label, 'original_units' => (string) $lot->original_units, 'remaining_units' => (string) $lot->remaining_units, 'reserved_units' => (string) $lot->reserved_units, 'unit_label' => $lot->unit_label, 'remaining_amount' => $remainingAmount, 'activated_at' => $lot->activated_at?->toAtomString(), 'expires_at' => $lot->expires_at?->toAtomString(), 'allowed_model_aliases' => $lot->allowed_model_aliases, 'status' => $lot->status, 'source' => $lot->source_type, 'access_scope' => $lot->access_scope ?? 'ACCOUNT', 'fulfillment_claim_id' => $lot->fulfillment_claim_id, 'bound_api_key' => $lot->boundApiKey ? ['id' => (string) $lot->boundApiKey->id, 'label' => $lot->boundApiKey->label, 'masked_key' => $lot->boundApiKey->prefix.'…'.$lot->boundApiKey->last_four] : null, 'display' => SpCredits::displayLot($lot)];
+        return ['id' => $lot->id, 'billing_mode' => $lot->billing_mode, 'package_name' => $lot->package_name, 'family_label' => $lot->family_label, 'original_units' => (string) $lot->original_units, 'remaining_units' => (string) $lot->remaining_units, 'reserved_units' => (string) $lot->reserved_units, 'unit_label' => $lot->unit_label, 'remaining_amount' => $remainingAmount, 'activated_at' => $lot->activated_at?->toAtomString(), 'expires_at' => $lot->expires_at?->toAtomString(), 'allowed_model_aliases' => $lot->allowed_model_aliases, 'status' => $lot->status, 'source' => $lot->source_type, 'access_scope' => $lot->access_scope ?? 'ACCOUNT', 'fulfillment_claim_id' => $lot->fulfillment_claim_id, 'bound_api_key' => $lot->boundApiKey ? ['id' => (string) $lot->boundApiKey->id, 'label' => $lot->boundApiKey->label, 'masked_key' => $lot->boundApiKey->prefix.'…'.$lot->boundApiKey->last_four] : null];
     }
 
     private function money(int|string $minor, string $currency, int $exponent): array
