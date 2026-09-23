@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Package extends Model
 {
-    protected $fillable = ['slug', 'name', 'subtitle', 'badge', 'billing_mode', 'family', 'family_label', 'advertised_units', 'unit_label', 'price_minor', 'compare_at_price_minor', 'currency', 'currency_exponent', 'duration_seconds', 'stock_quantity', 'limits', 'billing_rules', 'auto_creates_api_key', 'featured', 'sort_order', 'starts_at', 'ends_at', 'enabled', 'customer_visible', 'minimum_margin_bps', 'profitability_override_reason'];
+    protected $fillable = ['slug', 'name', 'subtitle', 'badge', 'billing_mode', 'fulfillment_target', 'fulfillment_target', 'family', 'family_label', 'advertised_units', 'unit_label', 'price_minor', 'compare_at_price_minor', 'currency', 'currency_exponent', 'duration_seconds', 'stock_quantity', 'limits', 'billing_rules', 'auto_creates_api_key', 'featured', 'sort_order', 'starts_at', 'ends_at', 'enabled', 'customer_visible', 'minimum_margin_bps', 'profitability_override_reason'];
 
     protected function casts(): array
     {

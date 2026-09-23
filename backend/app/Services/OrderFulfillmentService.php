@@ -39,19 +39,21 @@ class OrderFulfillmentService
             foreach ($locked->items as $item) {
                 $snapshot = $item->package_snapshot;
                 $aliases = array_values(array_filter(array_unique($snapshot['allowed_model_aliases'] ?? []), 'is_string'));
+                $target = (string) ($snapshot['fulfillment_target'] ?? 'ACCOUNT');
+                $isResellerStock = $target === 'RESELLER';
                 $claim = null;
 
                 // Every model-scoped purchase receives one access-allocation claim.
                 // Website customers choose Playground/new key/existing key after
                 // payment. Telegram resolves the same claim to a new dedicated key.
-                if ($aliases !== []) {
+                if ($aliases !== [] && ! $isResellerStock) {
                     $claim = $this->claims->create($tenant, $item, "order:{$locked->id}:item:{$item->id}:claim")['claim'];
                     $claimsByItem[(int) $item->id] = $claim;
                 }
 
                 for ($index = 0; $index < $item->quantity; $index++) {
                     $this->entitlements->grant($user, [
-                        'source_type' => 'ORDER',
+                        'source_type' => $isResellerStock ? ResellerStockService::SOURCE_TYPE : 'ORDER',
                         'source_id' => $locked->id,
                         'package_name' => $item->package_name,
                         'family_label' => $snapshot['family_label'],

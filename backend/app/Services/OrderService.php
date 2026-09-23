@@ -43,6 +43,13 @@ class OrderService
                 }
 
                 $package = Package::query()->published()->where('slug', $packageSlug)->lockForUpdate()->firstOrFail();
+                $target = (string) ($package->fulfillment_target ?? 'ACCOUNT');
+                if ($target === 'RESELLER' && ! $user->hasPermission('reseller.manage')) {
+                    throw ValidationException::withMessages(['package_slug' => ['This package is available only to active reseller accounts.']]);
+                }
+                if (! in_array($target, ['ACCOUNT', 'RESELLER'], true)) {
+                    throw ValidationException::withMessages(['package_slug' => ['This package has an unsupported fulfillment target.']]);
+                }
                 if ((int) $package->price_minor > intdiv(PHP_INT_MAX, $quantity)) {
                     throw ValidationException::withMessages(['quantity' => ['The requested quantity is too large.']]);
                 }
@@ -53,7 +60,7 @@ class OrderService
                 }
                 $discount = $promotion['discount_minor'] ?? 0;
                 $order = Order::query()->create(['user_id' => $user->id, 'tenant_id' => $user->tenant_id, 'idempotency_key' => $idempotencyKey, 'request_fingerprint' => $fingerprint, 'reference' => 'SPC-'.Str::ulid(), 'status' => 'PENDING_PAYMENT', 'currency' => $package->currency, 'currency_exponent' => $package->currency_exponent, 'subtotal_minor' => $subtotal, 'discount_total_minor' => $discount, 'total_minor' => $subtotal - $discount, 'promotion_id' => $promotion['promotion']->id ?? null, 'promotion_snapshot' => $promotion === null ? null : ['code' => $promotion['code'], 'label' => $promotion['label'], 'type' => $promotion['promotion']->type, 'discount_minor' => $discount, 'bonus_units' => $promotion['bonus_units']]]);
-                $order->items()->create(['package_id' => $package->id, 'package_slug' => $package->slug, 'package_name' => $package->name, 'quantity' => $quantity, 'unit_price_minor' => $package->price_minor, 'line_total_minor' => $subtotal, 'package_snapshot' => ['billing_mode' => $package->billing_mode, 'family_label' => $package->family_label, 'advertised_units' => (string) $package->advertised_units, 'unit_label' => $package->unit_label, 'currency' => $package->currency, 'currency_exponent' => (int) $package->currency_exponent, 'duration_seconds' => (int) $package->duration_seconds, 'allowed_model_aliases' => $package->modelAliases()->published()->pluck('public_alias')->values()->all(), 'limits' => $package->limits, 'billing_rules' => $package->billing_rules, 'auto_creates_api_key' => $package->auto_creates_api_key]]);
+                $order->items()->create(['package_id' => $package->id, 'package_slug' => $package->slug, 'package_name' => $package->name, 'quantity' => $quantity, 'unit_price_minor' => $package->price_minor, 'line_total_minor' => $subtotal, 'package_snapshot' => ['billing_mode' => $package->billing_mode, 'fulfillment_target' => $target, 'family_label' => $package->family_label, 'advertised_units' => (string) $package->advertised_units, 'unit_label' => $package->unit_label, 'currency' => $package->currency, 'currency_exponent' => (int) $package->currency_exponent, 'duration_seconds' => (int) $package->duration_seconds, 'allowed_model_aliases' => $package->modelAliases()->published()->pluck('public_alias')->values()->all(), 'limits' => $package->limits, 'billing_rules' => $package->billing_rules, 'auto_creates_api_key' => $package->auto_creates_api_key]]);
                 try {
                     $order = $this->stock->reserveForOrder($order->fresh('items'));
                 } catch (PackageStockException $exception) {

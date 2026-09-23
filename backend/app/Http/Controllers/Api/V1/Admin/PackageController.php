@@ -135,7 +135,7 @@ class PackageController extends Controller
 
     private function isTelegramSellable(Package $package): bool
     {
-        return (bool) ($package->enabled && $package->customer_visible && $package->auto_creates_api_key)
+        return (bool) (($package->fulfillment_target ?? 'ACCOUNT') === 'ACCOUNT' && $package->enabled && $package->customer_visible && $package->auto_creates_api_key)
             && ($package->stock_quantity === null || (int) $package->stock_quantity > 0)
             && $package->modelAliases->isNotEmpty();
     }
@@ -197,6 +197,8 @@ class PackageController extends Controller
             'subtitle' => ['nullable', 'string', 'max:255'],
             'badge' => ['nullable', 'string', 'max:100'],
             'billing_mode' => ['required', Rule::in(['TOKEN_QUOTA', 'CREDIT_BALANCE'])],
+            'fulfillment_target' => ['required', Rule::in(['ACCOUNT', 'RESELLER'])],
+            'fulfillment_target' => ['required', Rule::in(['ACCOUNT', 'RESELLER'])],
             'family' => ['required', 'string', 'max:100'],
             'family_label' => ['required', 'string', 'max:100'],
             'advertised_units' => ['required', 'integer', 'min:1'],
@@ -243,6 +245,7 @@ class PackageController extends Controller
             'subtitle' => $package->subtitle,
             'badge' => $package->badge,
             'billing_mode' => $package->billing_mode,
+            'fulfillment_target' => $package->fulfillment_target ?? 'ACCOUNT',
             'family' => $package->family,
             'family_label' => $package->family_label,
             'advertised_units' => (string) $package->advertised_units,
