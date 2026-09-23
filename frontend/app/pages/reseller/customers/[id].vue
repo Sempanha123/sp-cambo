@@ -272,11 +272,6 @@ const allocationHistory = await useSpResource(
   { server: false, immediate: false }
 )
 
-const customerUsage = await useSpResource(
-  'reseller:customer-usage',
-  () => api.reseller.customerUsage(customerId.value, { limit: 25 }),
-  { server: false, immediate: false }
-)
 
 /* -------------------------------------------------------------------------- */
 /* Keys                                                                       */
@@ -294,7 +289,6 @@ watch([customerId, managedCustomerId], ([id, managedId]) => {
   if (id && managedId === id) {
     keys.refresh()
     allocationHistory.refresh()
-    customerUsage.refresh()
   }
 }, { immediate: true })
 
@@ -974,97 +968,6 @@ const submitLifecycle = async () => {
                 </p>
               </li>
             </ul>
-          </SpAsyncSection>
-        </section>
-
-        <!-- Usage -->
-        <section class="space-y-4">
-          <SpSectionHeading
-            :level="3"
-            title="Customer usage"
-            description="Settled usage from this customer's API keys during the last 30 days."
-          >
-            <template #actions>
-              <UButton
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                icon="i-lucide-refresh-cw"
-                :loading="customerUsage.loading.value"
-                @click="customerUsage.refresh()"
-              >
-                Refresh
-              </UButton>
-            </template>
-          </SpSectionHeading>
-
-          <SpAsyncSection
-            :loading="customerUsage.initialLoading.value"
-            :unavailable="customerUsage.unavailable.value"
-            :failed="customerUsage.failed.value"
-            :offline="customerUsage.error.value?.code === 'network_unreachable'"
-            :error-message="customerUsage.error.value?.message"
-            error-title="Customer usage could not be loaded"
-            loading-variant="cards"
-            @retry="customerUsage.refresh()"
-          >
-            <div
-              v-if="customerUsage.data.value"
-              class="space-y-4"
-            >
-              <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Requests</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ customerUsage.data.value.totals.requests }}
-                  </dd>
-                </div>
-
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Total tokens</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.total_tokens) }}
-                  </dd>
-                </div>
-
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Input</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.input_tokens) }}
-                  </dd>
-                </div>
-
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Output</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.output_tokens) }}
-                  </dd>
-                </div>
-              </dl>
-
-              <div
-                v-if="customerUsage.data.value.by_model.length > 0"
-                class="space-y-2"
-              >
-                <p class="text-sm font-medium text-highlighted">By model</p>
-
-                <ul class="space-y-2">
-                  <li
-                    v-for="model in customerUsage.data.value.by_model"
-                    :key="model.public_model"
-                    class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3"
-                  >
-                    <code class="truncate font-mono text-sm text-default">
-                      {{ model.public_model }}
-                    </code>
-
-                    <p class="shrink-0 font-mono text-sm text-highlighted">
-                      {{ formatCompactUnits(model.total_tokens) }} tokens
-                    </p>
-                  </li>
-                </ul>
-              </div>
-            </div>
           </SpAsyncSection>
         </section>
 
