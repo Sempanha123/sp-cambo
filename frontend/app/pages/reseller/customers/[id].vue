@@ -1,25 +1,13 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
-import type { BillingMode } from '~/types/commerce'
+import type { EntitlementLot } from '~/types/commerce'
 import type {
+  ResellerAllocation,
   ResellerCustomerKey,
   ResellerCustomerKeyCreated,
   ResellerCustomerStatus
 } from '~/types/reseller'
 
-/**
- * One managed customer: fund their quota, and issue the inference keys they use.
- *
- * There is no single-customer GET route, so the customer is selected out of the
- * shared `reseller:customers` index. That keeps one source of truth for the list
- * and this page, and means a stale id renders an honest not-found state rather
- * than an empty shell.
- *
- * The customer is derived from REST-backed roster state, so lifecycle mutations
- * refresh that collection rather than optimistically changing an account locally.
- * Allocation and new-key creation require `ACTIVE`; existing keys stay listable
- * and revocable after suspension or closure for credential cleanup.
- */
 definePageMeta({
   layout: 'dashboard',
   middleware: ['auth']
@@ -31,13 +19,16 @@ const toast = useToast()
 
 const customerId = computed(() => String(route.params.id ?? ''))
 
-const customers = await useSpResource('reseller:customers', () => api.reseller.customers(), { server: false })
+const customers = await useSpResource(
+  'reseller:customers',
+  () => api.reseller.customers(),
+  { server: false }
+)
 
 const customer = computed(() =>
   (customers.data.value ?? []).find(entry => entry.id === customerId.value) ?? null
 )
 
-/** Only true once the list has genuinely loaded and this id is not in it. */
 const notFound = computed(() =>
   !customers.initialLoading.value
   && customers.error.value === null
@@ -47,206 +38,24 @@ const notFound = computed(() =>
 
 const isActive = computed(() => customer.value?.status === 'ACTIVE')
 
-/** ------------------------------------------------------------- lifecycle */
-
-interface LifecycleFormState {
-  reason: string
-}
-
-type LifecycleAction = 'suspend' | 'reactivate' | 'close'
-
-interface LifecycleActionDetails {
-  action: LifecycleAction
-  status: ResellerCustomerStatus
-  label: string
-  title: string
-  description: string
-  confirmation: string
-  buttonColor: 'warning' | 'success' | 'error'
-  icon: string
-  toast: {
-    title: string
-    description: string
-    color: 'warning' | 'success'
-    icon: string
-  }
-}
-
-const LIFECYCLE_ACTIONS: Record<LifecycleAction, LifecycleActionDetails> = {
-  suspend: {
-    action: 'suspend',
-    status: 'SUSPENDED',
-    label: 'Suspend',
-    title: 'Suspend this customer?',
-    description: 'Their account will be suspended. New allocations and new inference-key issuance stay paused until you reactivate the relationship.',
-    confirmation: 'Suspend customer',
-    buttonColor: 'warning',
-    icon: 'i-lucide-pause-circle',
-    toast: {
-      title: 'Customer suspended',
-      description: 'New allocations and new inference-key issuance are paused. Existing keys remain available for review and revocation.',
-      color: 'warning',
-      icon: 'i-lucide-pause-circle'
-    }
-  },
-  reactivate: {
-    action: 'reactivate',
-    status: 'ACTIVE',
-    label: 'Reactivate',
-    title: 'Reactivate this customer?',
-    description: 'Their managed-customer relationship will become active again, allowing new allocations and inference-key issuance.',
-    confirmation: 'Reactivate customer',
-    buttonColor: 'success',
-    icon: 'i-lucide-circle-play',
-    toast: {
-      title: 'Customer reactivated',
-      description: 'New allocations and new inference-key issuance are available again.',
-      color: 'success',
-      icon: 'i-lucide-circle-play'
-    }
-  },
-  close: {
-    action: 'close',
-    status: 'CLOSED',
-    label: 'Close',
-    title: 'Close this customer?',
-    description: 'This permanently closes the managed-customer relationship. It cannot be reactivated. Existing keys remain visible so you can revoke them.',
-    confirmation: 'Close customer permanently',
-    buttonColor: 'error',
-    icon: 'i-lucide-circle-x',
-    toast: {
-      title: 'Customer closed',
-      description: 'The relationship is permanently closed. Existing keys remain available for review and revocation.',
-      color: 'warning',
-      icon: 'i-lucide-circle-x'
-    }
-  }
-}
-
-const lifecycleActions = computed(() => {
-  switch (customer.value?.status) {
-    case 'ACTIVE':
-      return [LIFECYCLE_ACTIONS.suspend, LIFECYCLE_ACTIONS.close]
-    case 'SUSPENDED':
-      return [LIFECYCLE_ACTIONS.reactivate, LIFECYCLE_ACTIONS.close]
-    default:
-      return []
-  }
-})
-
-const lifecycleOpen = ref(false)
-const lifecycleTarget = ref<LifecycleActionDetails | null>(null)
-const lifecycle = ref<LifecycleFormState>({ reason: '' })
-const lifecycleError = ref<string | null>(null)
-const updatingLifecycle = ref(false)
-const lifecycleFormRef = useTemplateRef<{ setErrors: (errors: FormError[]) => void }>('lifecycleFormRef')
-
-const resetLifecycle = () => {
-  lifecycle.value = { reason: '' }
-  lifecycleError.value = null
-  lifecycleFormRef.value?.setErrors([])
-}
-
-const openLifecycle = (action: LifecycleActionDetails) => {
-  lifecycleTarget.value = action
-  resetLifecycle()
-  lifecycleOpen.value = true
-}
-
-const closeLifecycle = (force = false) => {
-  if (updatingLifecycle.value && !force) {
-    return
-  }
-
-  lifecycleOpen.value = false
-  lifecycleTarget.value = null
-  resetLifecycle()
-}
-
-const validateLifecycle = (state: LifecycleFormState): FormError[] => {
-  const reason = state.reason.trim()
-
-  if (reason.length < 10) {
-    return [{ name: 'reason', message: 'Write at least 10 characters — this goes into the audit trail.' }]
-  }
-
-  if (reason.length > 2000) {
-    return [{ name: 'reason', message: 'Keep the reason to 2,000 characters or fewer.' }]
-  }
-
-  return []
-}
-
-const refreshLifecycleState = async () => {
-  await Promise.all([
-    customers.refresh(),
-    keys.refresh(),
-    inventory.refresh()
-  ])
-}
-
-const submitLifecycle = async () => {
-  const target = lifecycleTarget.value
-
-  if (!target || !customer.value) {
-    return
-  }
-
-  updatingLifecycle.value = true
-  lifecycleError.value = null
-
-  try {
-    await api.reseller.updateCustomerStatus(customer.value.id, {
-      status: target.status,
-      reason: lifecycle.value.reason.trim()
-    })
-
-    await refreshLifecycleState()
-    closeLifecycle(true)
-
-    toast.add({
-      ...target.toast,
-      description: `${customer.value?.name ?? 'The customer'} is now ${target.status.toLowerCase()}. ${target.toast.description}`
-    })
-  } catch (cause) {
-    const error = toSpApiError(cause)
-
-    lifecycleFormRef.value?.setErrors(
-      Object.entries(error.errors).map(([name, messages]) => ({
-        name,
-        message: messages[0] ?? 'This value is not valid.'
-      }))
-    )
-
-    lifecycleError.value = error.isValidation ? null : error.message
-
-    if (error.code === 'invalid_status_transition') {
-      await refreshLifecycleState()
-    }
-  } finally {
-    updatingLifecycle.value = false
-  }
-}
-
 useSeoMeta({
-  title: () => customer.value ? `${customer.value.name} — managed customer` : 'Managed customer',
-  description: 'Allocate quota and manage the inference keys for one customer you resell to.',
+  title: () => customer.value
+    ? `${customer.value.name} — managed customer`
+    : 'Managed customer',
+  description: 'Sell package quota and manage inference keys for one reseller customer.',
   robots: 'noindex, nofollow'
 })
 
-/** ------------------------------------------------------------- inventory */
+/* -------------------------------------------------------------------------- */
+/* Reseller inventory                                                         */
+/* -------------------------------------------------------------------------- */
 
-/**
- * Dedicated reseller stock only. Personal purchases, Playground daily quota,
- * referral rewards and promotions never appear here and cannot fund a transfer.
- */
-const inventory = await useSpResource('reseller:inventory', () => api.reseller.inventory(), { server: false })
-const models = await useSpResource('catalog:models', () => api.catalog.models(), { server: false })
+const inventory = await useSpResource(
+  'reseller:inventory',
+  () => api.reseller.inventory(),
+  { server: false }
+)
 
-/**
- * One clock for every expiry comparison on this page, ticking each minute so a lot
- * that lapses while the page is open stops being offered as funding.
- */
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
@@ -257,173 +66,181 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (clock !== undefined) {
-    clearInterval(clock)
-  }
+  if (clock !== undefined) clearInterval(clock)
 })
 
-const fundable = computed(() => fundableAliases(inventory.data.value ?? [], now.value))
-const aliasesOverlap = computed(() => hasSharedAliasLots(inventory.data.value ?? [], now.value))
+const availableUnitsForLot = (lot: EntitlementLot): string => {
+  const remaining = BigInt(lot.remaining_units || '0')
+  const reserved = BigInt(lot.reserved_units || '0')
+  const available = remaining - reserved
 
-/** ------------------------------------------------------------ allocation */
+  return (available > 0n ? available : 0n).toString()
+}
 
-interface AllocationFormState {
-  billing_mode: BillingMode
-  public_model_alias: string
+/**
+ * IMPORTANT:
+ * Show ONE row/card per purchased reseller package lot.
+ *
+ * Do not expand one package into one row per model. A Claude package that permits
+ * nine Claude aliases is still one shared balance, not nine different balances.
+ */
+const packageInventory = computed(() =>
+  (inventory.data.value ?? []).filter((lot) => {
+    if (lot.source !== 'RESELLER_STOCK') return false
+    if (lot.access_scope !== 'RESELLER') return false
+    if (lot.status !== 'ACTIVE') return false
+    if (availableUnitsForLot(lot) === '0') return false
+
+    return !lot.expires_at || Date.parse(lot.expires_at) > now.value
+  })
+)
+
+const packageOptions = computed(() =>
+  packageInventory.value.map(lot => ({
+    label: `${lot.package_name} — ${formatUnits(availableUnitsForLot(lot))} ${lot.unit_label} remaining`,
+    value: lot.id
+  }))
+)
+
+/* -------------------------------------------------------------------------- */
+/* Package allocation                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface PackageAllocationForm {
+  inventory_lot_id: string
   units: string
   reason: string
 }
 
-const emptyAllocation = (): AllocationFormState => ({
-  billing_mode: 'TOKEN_QUOTA',
-  public_model_alias: '',
+const emptyAllocation = (): PackageAllocationForm => ({
+  inventory_lot_id: '',
   units: '',
   reason: ''
 })
 
 const allocateOpen = ref(false)
 const allocating = ref(false)
-const allocation = ref<AllocationFormState>(emptyAllocation())
+const allocation = ref<PackageAllocationForm>(emptyAllocation())
 const allocationError = ref<string | null>(null)
-const allocationUnconfirmed = ref(false)
 const allocationFormRef = useTemplateRef<{ setErrors: (errors: FormError[]) => void }>('allocationFormRef')
-
-/**
- * The key the control plane deduplicates this transfer on.
- *
- * It is held stable while the form is unchanged, so resubmitting after a dropped
- * response replays the original transfer instead of making a second one. Any edit
- * mints a new key, so a deliberate second allocation is a second transfer rather
- * than being swallowed as a replay.
- *
- * `reason` counts as an edit even though the server compares only the reseller,
- * customer, mode, alias and units. Without that, editing the reason and
- * resubmitting would silently return the earlier transfer and the reseller would
- * believe an audit reason had been recorded that never was.
- */
 const allocationKey = ref<string | null>(null)
+
+const selectedPackage = computed(() =>
+  packageInventory.value.find(lot => lot.id === allocation.value.inventory_lot_id) ?? null
+)
+
+const selectedAvailableUnits = computed(() =>
+  selectedPackage.value ? availableUnitsForLot(selectedPackage.value) : '0'
+)
 
 const mintAllocationKey = () => {
   try {
-    allocationKey.value = newIdempotencyKey('alloc')
+    allocationKey.value = newIdempotencyKey('package-sale')
   } catch {
     allocationKey.value = null
-    allocationError.value = 'This browser cannot generate the safety key that stops a transfer being made twice. Open SP Cambo over HTTPS and try again.'
+    allocationError.value = 'This browser could not create the safety key required for this sale. Reload over HTTPS and try again.'
   }
 }
 
 watch(allocation, mintAllocationKey, { deep: true })
 
-const openAllocate = () => {
-  allocation.value = emptyAllocation()
+const openAllocate = (lot?: EntitlementLot) => {
+  allocation.value = {
+    inventory_lot_id: lot?.id ?? '',
+    units: '',
+    reason: ''
+  }
   allocationError.value = null
-  allocationUnconfirmed.value = false
   mintAllocationKey()
   allocateOpen.value = true
 }
 
-const modeOptions: Array<{ label: string, value: BillingMode }> = [
-  { label: 'Token quota', value: 'TOKEN_QUOTA' },
-  { label: 'Credit balance', value: 'CREDIT_BALANCE' }
-]
-
-const modeLabel = (mode: BillingMode) => mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance'
-
-/** Aliases the reseller holds inventory for, in the mode currently selected. */
-const aliasOptions = computed(() =>
-  fundable.value
-    .filter(entry => entry.billing_mode === allocation.value.billing_mode)
-    .map(entry => ({ label: entry.alias, value: entry.alias }))
-)
-
-const selectedFunding = computed(() =>
-  fundable.value.find(entry =>
-    entry.billing_mode === allocation.value.billing_mode
-    && entry.alias === allocation.value.public_model_alias
-  ) ?? null
-)
-
-const availableUnits = computed(() => selectedFunding.value?.available_units ?? '0')
-const unitLabel = computed(() => selectedFunding.value?.unit_label ?? 'units')
-
-/**
- * Units travel as a JSON integer. Past `Number.MAX_SAFE_INTEGER` the value loses
- * precision before it ever leaves the browser, so the form refuses it rather than
- * quietly transferring a different amount from the one that was typed.
- */
-const MAX_SAFE_UNITS = String(Number.MAX_SAFE_INTEGER)
-
-const validateAllocation = (state: AllocationFormState): FormError[] => {
+const validateAllocation = (state: PackageAllocationForm): FormError[] => {
   const errors: FormError[] = []
 
-  if (!state.public_model_alias) {
-    errors.push({ name: 'public_model_alias', message: 'Choose the model this quota is for.' })
+  if (!state.inventory_lot_id) {
+    errors.push({
+      name: 'inventory_lot_id',
+      message: 'Choose which package inventory to sell from.'
+    })
   }
 
   const digits = state.units.trim()
 
   if (!digits) {
-    errors.push({ name: 'units', message: 'Enter how many units to transfer.' })
+    errors.push({ name: 'units', message: 'Enter how many units to sell.' })
   } else if (!/^\d+$/.test(digits)) {
-    errors.push({ name: 'units', message: 'Enter a whole number of units, with no separators or decimal point.' })
-  } else if (compareUnits(digits, '1') < 0) {
-    errors.push({ name: 'units', message: 'Transfer at least one unit.' })
-  } else if (compareUnits(digits, MAX_SAFE_UNITS) > 0) {
-    errors.push({ name: 'units', message: 'That is more than one allocation can carry. Split it across several transfers.' })
-  } else if (selectedFunding.value && compareUnits(digits, availableUnits.value) > 0) {
     errors.push({
       name: 'units',
-      message: `You hold ${formatUnits(availableUnits.value)} ${unitLabel.value} for this model. SP Cambo refuses a transfer larger than your own inventory.`
+      message: 'Enter a whole number with no commas or decimal point.'
+    })
+  } else if (compareUnits(digits, '1') < 0) {
+    errors.push({ name: 'units', message: 'Sell at least one unit.' })
+  } else if (
+    selectedPackage.value
+    && compareUnits(digits, selectedAvailableUnits.value) > 0
+  ) {
+    errors.push({
+      name: 'units',
+      message: `Only ${formatUnits(selectedAvailableUnits.value)} ${selectedPackage.value.unit_label} remain in this package.`
     })
   }
 
   const reason = state.reason.trim()
 
   if (reason.length < 10) {
-    errors.push({ name: 'reason', message: 'Write at least 10 characters — this goes into the audit trail.' })
+    errors.push({
+      name: 'reason',
+      message: 'Write at least 10 characters for the audit trail.'
+    })
   } else if (reason.length > 2000) {
-    errors.push({ name: 'reason', message: 'Keep the reason to 2,000 characters or fewer.' })
+    errors.push({
+      name: 'reason',
+      message: 'Keep the reason to 2,000 characters or fewer.'
+    })
   }
 
   return errors
 }
 
 const submitAllocation = async () => {
-  const key = allocationKey.value
+  const idempotencyKey = allocationKey.value
 
-  if (!key) {
+  if (!idempotencyKey) {
     mintAllocationKey()
-
     return
   }
 
   allocating.value = true
   allocationError.value = null
-  allocationUnconfirmed.value = false
-
-  const label = unitLabel.value
 
   try {
-    const result = await api.reseller.allocate(customerId.value, {
-      billing_mode: allocation.value.billing_mode,
-      public_model_alias: allocation.value.public_model_alias,
-      units: Number(allocation.value.units.trim()),
-      idempotency_key: key,
-      reason: allocation.value.reason.trim()
-    })
+    const result = await api.request<ResellerAllocation>(
+      `/reseller/customers/${encodeURIComponent(customerId.value)}/allocations`,
+      {
+        method: 'POST',
+        body: {
+          inventory_lot_id: allocation.value.inventory_lot_id,
+          units: Number(allocation.value.units.trim()),
+          idempotency_key: idempotencyKey,
+          reason: allocation.value.reason.trim()
+        }
+      }
+    )
 
     allocateOpen.value = false
     allocation.value = emptyAllocation()
+
     await Promise.all([
       inventory.refresh(),
       allocationHistory.refresh()
     ])
 
     toast.add({
-      title: 'Quota allocated',
-      description: `${formatUnits(result.units)} ${label} for ${result.public_model_alias} are now in ${customer.value?.name ?? 'the customer'}'s account.`,
+      title: 'Package quota sold',
+      description: `${formatUnits(result.units)} units from ${result.package_name ?? 'the package'} are now in ${customer.value?.name ?? 'the customer'}'s account and share the package's included models.`,
       color: 'success',
-      icon: 'i-lucide-arrow-right-left'
+      icon: 'i-lucide-package-check'
     })
   } catch (cause) {
     const error = toSpApiError(cause)
@@ -435,38 +252,9 @@ const submitAllocation = async () => {
       }))
     )
 
-    /*
-     * Only a genuine server fault leaves the transfer in doubt.
-     *
-     * `ResellerAllocationService` throws every one of its refusals before it
-     * writes anything, inside `DB::transaction`, so a refusal it names has
-     * definitely transferred nothing. The problem is that it throws bare
-     * `InvalidArgumentException`s and `bootstrap/app.php` has no arm for them, so
-     * an unmanaged customer and a reused idempotency key both arrive today as a
-     * generic 500 — indistinguishable from a fault that really did leave the
-     * outcome unknown. While that is the case the honest reading of a 500 is
-     * "unconfirmed", and the alert says resubmitting this exact form cannot
-     * transfer twice.
-     *
-     * A 409 is already handled here so the page improves the moment those
-     * refusals are mapped: it is a definite answer, the backend's own sentence
-     * explains it, and nothing needs re-checking. A 409 response remains the authoritative safe conflict signal.
-     */
-    allocationUnconfirmed.value = error.code === 'server_error'
     allocationError.value = error.isValidation ? null : error.message
 
-    if (allocationUnconfirmed.value) {
-      await inventory.refresh()
-    }
-
-    /*
-     * A key that clashed is spent for these inputs and will clash again. Minting
-     * a fresh one is safe precisely because a conflict transferred nothing —
-     * which is why it must not be done for an unconfirmed 500, where a new key
-     * would turn a retry into a second transfer.
-     */
-    if (error.isConflict) {
-      mintAllocationKey()
+    if (error.isConflict || error.code === 'server_error') {
       await inventory.refresh()
     }
   } finally {
@@ -474,28 +262,9 @@ const submitAllocation = async () => {
   }
 }
 
-/** ----------------------------------------------------------------- keys */
-
-const keys = await useSpResource(
-  'reseller:customer-keys',
-  () => api.reseller.customerKeys(customerId.value),
-  { server: false, immediate: false }
-)
-
-/*
- * Fetch only after the roster establishes that this is one of the reseller's
- * customers. The backend keeps existing keys readable and revocable after
- * suspension or closure, so relationship status must not suppress this request.
- */
-const managedCustomerId = computed(() => customer.value?.id ?? null)
-
-watch([customerId, managedCustomerId], ([id, managedId]) => {
-  if (id && managedId === id) {
-    keys.refresh()
-  }
-}, { immediate: true })
-
-/** ------------------------------------------------------------ reporting */
+/* -------------------------------------------------------------------------- */
+/* Reporting                                                                  */
+/* -------------------------------------------------------------------------- */
 
 const allocationHistory = await useSpResource(
   'reseller:customer-allocations',
@@ -509,13 +278,44 @@ const customerUsage = await useSpResource(
   { server: false, immediate: false }
 )
 
+/* -------------------------------------------------------------------------- */
+/* Keys                                                                       */
+/* -------------------------------------------------------------------------- */
+
+const keys = await useSpResource(
+  'reseller:customer-keys',
+  () => api.reseller.customerKeys(customerId.value),
+  { server: false, immediate: false }
+)
+
+const managedCustomerId = computed(() => customer.value?.id ?? null)
+
 watch([customerId, managedCustomerId], ([id, managedId]) => {
   if (id && managedId === id) {
+    keys.refresh()
     allocationHistory.refresh()
     customerUsage.refresh()
   }
 }, { immediate: true })
 
+const customerAllowedAliases = computed(() => {
+  const aliases = new Set<string>()
+
+  for (const transfer of allocationHistory.data.value ?? []) {
+    for (const alias of transfer.allowed_model_aliases ?? []) {
+      aliases.add(alias)
+    }
+  }
+
+  return [...aliases].sort()
+})
+
+const customerModelOptions = computed(() =>
+  customerAllowedAliases.value.map(alias => ({
+    label: alias,
+    value: alias
+  }))
+)
 
 interface KeyFormState {
   label: string
@@ -525,27 +325,47 @@ interface KeyFormState {
 
 const keyOpen = ref(false)
 const creatingKey = ref(false)
-const keyForm = ref<KeyFormState>({ label: '', allowed_model_aliases: [], expiry_date: '' })
+const keyForm = ref<KeyFormState>({
+  label: '',
+  allowed_model_aliases: [],
+  expiry_date: ''
+})
 const keyError = ref<string | null>(null)
 const keyFormRef = useTemplateRef<{ setErrors: (errors: FormError[]) => void }>('keyFormRef')
 
-const catalogAliasOptions = computed(() =>
-  (models.data.value ?? []).map(model => ({ label: model.public_alias, value: model.public_alias }))
-)
-
-const resetKeyForm = () => {
-  keyForm.value = { label: '', allowed_model_aliases: [], expiry_date: '' }
+const openKey = () => {
+  keyForm.value = {
+    label: '',
+    // By default scope the new key to every model this managed customer actually
+    // received through reseller allocations.
+    allowed_model_aliases: [...customerAllowedAliases.value],
+    expiry_date: ''
+  }
   keyError.value = null
   keyFormRef.value?.setErrors([])
+  keyOpen.value = true
 }
 
 const validateKey = (state: KeyFormState): FormError[] => {
   const errors: FormError[] = []
 
   if (!state.label.trim()) {
-    errors.push({ name: 'label', message: 'Give the key a name the customer will recognise.' })
+    errors.push({
+      name: 'label',
+      message: 'Give the key a name the customer will recognise.'
+    })
   } else if (state.label.trim().length > 100) {
-    errors.push({ name: 'label', message: 'Keep the name to 100 characters or fewer.' })
+    errors.push({
+      name: 'label',
+      message: 'Keep the key name to 100 characters or fewer.'
+    })
+  }
+
+  if (state.allowed_model_aliases.length === 0) {
+    errors.push({
+      name: 'allowed_model_aliases',
+      message: 'Choose at least one model funded for this customer.'
+    })
   }
 
   if (state.expiry_date) {
@@ -554,26 +374,20 @@ const validateKey = (state: KeyFormState): FormError[] => {
     if (Number.isNaN(parsed.getTime())) {
       errors.push({ name: 'expiry_date', message: 'That is not a valid date.' })
     } else if (parsed.getTime() <= Date.now()) {
-      errors.push({ name: 'expiry_date', message: 'Choose a date in the future.' })
+      errors.push({
+        name: 'expiry_date',
+        message: 'Choose a date in the future.'
+      })
     }
   }
 
   return errors
 }
 
-/** ------------------------------------------------------ one-time reveal */
-
 const revealOpen = ref(false)
 const revealSecret = ref<string | null>(null)
 const revealLabel = ref('')
 
-const openReveal = (result: ResellerCustomerKeyCreated) => {
-  revealSecret.value = result.secret
-  revealLabel.value = result.key.label
-  revealOpen.value = true
-}
-
-/** The secret must not outlive the dialog that showed it. */
 const clearReveal = () => {
   revealSecret.value = null
   revealLabel.value = ''
@@ -586,17 +400,16 @@ const submitKey = async () => {
   try {
     const result = await api.reseller.createCustomerKey(customerId.value, {
       label: keyForm.value.label.trim(),
-      allowed_model_aliases: keyForm.value.allowed_model_aliases.length > 0
-        ? keyForm.value.allowed_model_aliases
-        : undefined,
+      allowed_model_aliases: keyForm.value.allowed_model_aliases,
       expires_at: keyForm.value.expiry_date
         ? new Date(`${keyForm.value.expiry_date}T23:59:59Z`).toISOString()
         : null
     })
 
     keyOpen.value = false
-    resetKeyForm()
-    openReveal(result)
+    revealSecret.value = result.secret
+    revealLabel.value = result.key.label
+    revealOpen.value = true
     await keys.refresh()
   } catch (cause) {
     const error = toSpApiError(cause)
@@ -614,17 +427,12 @@ const submitKey = async () => {
   }
 }
 
-/** ---------------------------------------------------------------- revoke */
-
 const revokeTarget = ref<ResellerCustomerKey | null>(null)
 const revoking = ref(false)
 
 const confirmRevoke = async () => {
   const key = revokeTarget.value
-
-  if (!key) {
-    return
-  }
+  if (!key) return
 
   revoking.value = true
 
@@ -635,7 +443,7 @@ const confirmRevoke = async () => {
 
     toast.add({
       title: 'Key revoked',
-      description: `${key.label} stopped working immediately. This cannot be undone — issue a new key if the customer still needs one.`,
+      description: `${key.label} stopped working immediately.`,
       color: 'warning',
       icon: 'i-lucide-shield-x'
     })
@@ -651,7 +459,144 @@ const confirmRevoke = async () => {
   }
 }
 
-const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.status === 'ACTIVE').length)
+const activeKeyCount = computed(() =>
+  (keys.data.value ?? []).filter(key => key.status === 'ACTIVE').length
+)
+
+/* -------------------------------------------------------------------------- */
+/* Customer lifecycle                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface LifecycleFormState {
+  reason: string
+}
+
+type LifecycleAction = 'suspend' | 'reactivate' | 'close'
+
+interface LifecycleActionDetails {
+  action: LifecycleAction
+  status: ResellerCustomerStatus
+  label: string
+  title: string
+  description: string
+  confirmation: string
+  buttonColor: 'warning' | 'success' | 'error'
+  icon: string
+}
+
+const lifecycleMap: Record<LifecycleAction, LifecycleActionDetails> = {
+  suspend: {
+    action: 'suspend',
+    status: 'SUSPENDED',
+    label: 'Suspend',
+    title: 'Suspend this customer?',
+    description: 'New sales and new inference keys will pause until the relationship is reactivated.',
+    confirmation: 'Suspend customer',
+    buttonColor: 'warning',
+    icon: 'i-lucide-pause-circle'
+  },
+  reactivate: {
+    action: 'reactivate',
+    status: 'ACTIVE',
+    label: 'Reactivate',
+    title: 'Reactivate this customer?',
+    description: 'Package sales and key issuance will be available again.',
+    confirmation: 'Reactivate customer',
+    buttonColor: 'success',
+    icon: 'i-lucide-circle-play'
+  },
+  close: {
+    action: 'close',
+    status: 'CLOSED',
+    label: 'Close',
+    title: 'Close this customer?',
+    description: 'This permanently closes the managed-customer relationship.',
+    confirmation: 'Close customer permanently',
+    buttonColor: 'error',
+    icon: 'i-lucide-circle-x'
+  }
+}
+
+const lifecycleActions = computed(() => {
+  if (customer.value?.status === 'ACTIVE') {
+    return [lifecycleMap.suspend, lifecycleMap.close]
+  }
+
+  if (customer.value?.status === 'SUSPENDED') {
+    return [lifecycleMap.reactivate, lifecycleMap.close]
+  }
+
+  return []
+})
+
+const lifecycleOpen = ref(false)
+const lifecycleTarget = ref<LifecycleActionDetails | null>(null)
+const lifecycle = ref<LifecycleFormState>({ reason: '' })
+const lifecycleError = ref<string | null>(null)
+const updatingLifecycle = ref(false)
+
+const openLifecycle = (action: LifecycleActionDetails) => {
+  lifecycleTarget.value = action
+  lifecycle.value = { reason: '' }
+  lifecycleError.value = null
+  lifecycleOpen.value = true
+}
+
+const validateLifecycle = (state: LifecycleFormState): FormError[] => {
+  const reason = state.reason.trim()
+
+  if (reason.length < 10) {
+    return [{
+      name: 'reason',
+      message: 'Write at least 10 characters for the audit trail.'
+    }]
+  }
+
+  if (reason.length > 2000) {
+    return [{
+      name: 'reason',
+      message: 'Keep the reason to 2,000 characters or fewer.'
+    }]
+  }
+
+  return []
+}
+
+const submitLifecycle = async () => {
+  const target = lifecycleTarget.value
+  if (!target || !customer.value) return
+
+  updatingLifecycle.value = true
+  lifecycleError.value = null
+
+  try {
+    await api.reseller.updateCustomerStatus(customer.value.id, {
+      status: target.status,
+      reason: lifecycle.value.reason.trim()
+    })
+
+    lifecycleOpen.value = false
+    lifecycleTarget.value = null
+
+    await Promise.all([
+      customers.refresh(),
+      keys.refresh(),
+      inventory.refresh()
+    ])
+
+    toast.add({
+      title: `Customer ${target.status.toLowerCase()}`,
+      description: `${customer.value?.name ?? 'The customer'} is now ${target.status.toLowerCase()}.`,
+      color: target.status === 'ACTIVE' ? 'success' : 'warning',
+      icon: target.icon
+    })
+  } catch (cause) {
+    const error = toSpApiError(cause)
+    lifecycleError.value = error.message
+  } finally {
+    updatingLifecycle.value = false
+  }
+}
 </script>
 
 <template>
@@ -659,8 +604,8 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
     :title="customer?.name ?? 'Managed customer'"
     icon="i-lucide-user-round"
     :description="customer
-      ? `${customer.email} — labelled “${customer.label}” in your own records.`
-      : 'Fund quota and issue inference keys for one customer you resell to.'"
+      ? `${customer.email} — ${customer.label}`
+      : 'Sell package quota and manage API keys for this customer.'"
   >
     <template #actions>
       <div class="flex flex-wrap justify-end gap-2">
@@ -674,6 +619,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
         >
           {{ action.label }}
         </UButton>
+
         <UButton
           to="/reseller"
           color="neutral"
@@ -700,65 +646,46 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
       :offline="customers.error.value?.code === 'network_unreachable'"
       :error-message="customers.error.value?.message"
       error-title="This customer could not be loaded"
-      unavailable-title="Your customer list is not available"
-      unavailable-description="SP Cambo could not be reached, so this customer cannot be looked up. Nothing about their account has changed."
       loading-variant="cards"
       @retry="customers.refresh()"
     >
       <template #empty>
         <SpStateEmpty
-          title="That customer is not on your list"
-          description="The id in this address does not match any customer you manage. It may have been removed, or it may belong to another reseller — in which case SP Cambo will never show it to you."
+          title="Customer not found"
+          description="This customer is not in your managed-customer list."
           icon="i-lucide-user-x"
-        >
-          <template #action>
-            <UButton
-              to="/reseller"
-              color="neutral"
-              variant="subtle"
-              icon="i-lucide-arrow-left"
-            >
-              Back to your customers
-            </UButton>
-          </template>
-        </SpStateEmpty>
+        />
       </template>
 
       <div
         v-if="customer"
         class="space-y-10"
       >
-        <!-- Summary -->
         <section class="rounded-lg border border-default bg-elevated/30 p-4 sm:p-5">
           <dl class="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div class="space-y-1.5">
-              <dt class="text-xs text-dimmed">
-                Status
-              </dt>
+              <dt class="text-xs text-dimmed">Status</dt>
               <dd>
                 <SpStatusBadge :status="customer.status.toLowerCase()" />
               </dd>
             </div>
+
             <div class="space-y-1.5">
-              <dt class="text-xs text-dimmed">
-                Your label
-              </dt>
+              <dt class="text-xs text-dimmed">Your label</dt>
               <dd class="truncate text-sm text-default">
                 {{ customer.label }}
               </dd>
             </div>
+
             <div class="space-y-1.5">
-              <dt class="text-xs text-dimmed">
-                Created
-              </dt>
+              <dt class="text-xs text-dimmed">Created</dt>
               <dd class="text-sm text-default">
                 {{ formatDate(customer.created_at) }}
               </dd>
             </div>
+
             <div class="space-y-1.5">
-              <dt class="text-xs text-dimmed">
-                Active keys
-              </dt>
+              <dt class="text-xs text-dimmed">Active keys</dt>
               <dd class="text-sm text-default">
                 {{ keys.data.value ? activeKeyCount : '—' }}
               </dd>
@@ -772,24 +699,24 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           color="warning"
           variant="subtle"
           :title="`This customer is ${customer.status.toLowerCase()}`"
-          description="New allocations and inference-key issuance are paused. Existing keys remain visible, and you can still revoke any active key for credential cleanup."
+          description="New package sales and new API keys are paused."
         />
 
-        <!-- Allocation -->
+        <!-- Package inventory: ONE card per package, never one card per model -->
         <section class="space-y-4">
           <SpSectionHeading
             :level="3"
-            title="Allocate quota"
-            description="Units move out of your own inventory — this is a transfer, not a purchase. Nothing is charged to you here."
+            title="Sell package quota"
+            description="Each card is one real reseller inventory package. All model badges inside a card share the same remaining balance."
           >
             <template #actions>
               <UButton
-                icon="i-lucide-arrow-right-left"
+                icon="i-lucide-package-plus"
                 size="sm"
-                :disabled="!isActive || fundable.length === 0"
+                :disabled="!isActive || packageInventory.length === 0"
                 @click="openAllocate()"
               >
-                Allocate
+                Sell quota
               </UButton>
             </template>
           </SpSectionHeading>
@@ -799,69 +726,90 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             :unavailable="inventory.unavailable.value"
             :forbidden="inventory.forbidden.value"
             :failed="inventory.failed.value"
-            :empty="!inventory.initialLoading.value && inventory.error.value === null && fundable.length === 0"
+            :empty="!inventory.initialLoading.value && inventory.error.value === null && packageInventory.length === 0"
             :offline="inventory.error.value?.code === 'network_unreachable'"
             :error-message="inventory.error.value?.message"
-            :forbidden-code="inventory.error.value?.code ?? null"
-            error-title="Your inventory could not be loaded"
-            unavailable-title="Your inventory is not available"
-            unavailable-description="An allocation draws on your own entitlement lots, and SP Cambo cannot read them right now. Nothing has been transferred."
-            empty-title="You hold nothing to allocate"
-            empty-description="An allocation moves units out of your own lots. Buy quota first, then come back to fund this customer."
+            empty-title="No reseller inventory"
+            empty-description="Buy a normal package with the reseller account first."
             empty-icon="i-lucide-package-open"
             loading-variant="rows"
             @retry="inventory.refresh()"
           >
-            <div class="space-y-3">
-              <ul class="grid gap-3 sm:grid-cols-2">
-                <li
-                  v-for="entry in fundable"
-                  :key="`${entry.billing_mode}:${entry.alias}`"
-                  class="rounded-lg border border-default bg-elevated/30 p-4"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0 space-y-1">
-                      <code class="block truncate font-mono text-sm text-highlighted">{{ entry.alias }}</code>
-                      <p class="text-xs text-muted">
-                        {{ modeLabel(entry.billing_mode) }} ·
-                        {{ entry.lot_count }} {{ entry.lot_count === 1 ? 'lot' : 'lots' }}
-                      </p>
-                    </div>
-                    <div class="shrink-0 text-right">
-                      <p class="font-mono text-sm text-highlighted">
-                        {{ formatCompactUnits(entry.available_units) }}
-                      </p>
-                      <p class="text-xs text-dimmed">
-                        {{ entry.unit_label }}
-                      </p>
-                    </div>
-                  </div>
-                  <p class="mt-2 text-xs text-muted">
-                    {{ entry.next_expires_at
-                      ? `Soonest lot expires ${formatDateTime(entry.next_expires_at)}`
-                      : 'None of these lots expire' }}
-                  </p>
-                </li>
-              </ul>
-
-              <p
-                v-if="aliasesOverlap"
-                class="text-xs text-muted"
+            <div class="grid gap-4 lg:grid-cols-2">
+              <article
+                v-for="lot in packageInventory"
+                :key="lot.id"
+                class="rounded-xl border border-default bg-elevated/30 p-5"
               >
-                At least one of your lots permits several models, so the same units are counted under each of them.
-                These figures cannot be added together.
-              </p>
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <h3 class="truncate font-medium text-highlighted">
+                        {{ lot.package_name }}
+                      </h3>
+                      <UBadge
+                        color="primary"
+                        variant="subtle"
+                        size="sm"
+                      >
+                        Reseller inventory
+                      </UBadge>
+                    </div>
+
+                    <p class="mt-1 text-xs text-muted">
+                      {{ lot.family_label }} ·
+                      {{ lot.billing_mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance' }}
+                    </p>
+                  </div>
+
+                  <div class="shrink-0 text-right">
+                    <p class="sp-numeric text-xl font-semibold text-highlighted">
+                      {{ formatCompactUnits(availableUnitsForLot(lot)) }}
+                    </p>
+                    <p class="text-xs text-dimmed">
+                      {{ lot.unit_label }} remaining
+                    </p>
+                  </div>
+                </div>
+
+                <div class="mt-4 flex flex-wrap gap-1.5">
+                  <SpModelBadge
+                    v-for="alias in lot.allowed_model_aliases"
+                    :key="alias"
+                    :model="alias"
+                    compact
+                  />
+                </div>
+
+                <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-default pt-3">
+                  <p class="text-xs text-muted">
+                    {{ lot.allowed_model_aliases.length }} models share this balance
+                    <template v-if="lot.expires_at">
+                      · expires {{ formatDateTime(lot.expires_at) }}
+                    </template>
+                  </p>
+
+                  <UButton
+                    size="sm"
+                    variant="subtle"
+                    icon="i-lucide-arrow-right"
+                    :disabled="!isActive"
+                    @click="openAllocate(lot)"
+                  >
+                    Sell from package
+                  </UButton>
+                </div>
+              </article>
             </div>
           </SpAsyncSection>
         </section>
-
 
         <!-- Allocation history -->
         <section class="space-y-4">
           <SpSectionHeading
             :level="3"
-            title="Allocation history"
-            description="Quota transfers you already made to this customer. This is read-only history."
+            title="Sales history"
+            description="Package quota already transferred from your inventory to this customer."
           >
             <template #actions>
               <UButton
@@ -884,9 +832,9 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             :empty="allocationHistory.isEmpty.value"
             :offline="allocationHistory.error.value?.code === 'network_unreachable'"
             :error-message="allocationHistory.error.value?.message"
-            empty-title="No allocations yet"
-            empty-description="Quota transfers to this customer will appear here."
-            empty-icon="i-lucide-arrow-right-left"
+            empty-title="No sales yet"
+            empty-description="Package quota sold to this customer will appear here."
+            empty-icon="i-lucide-receipt"
             loading-variant="rows"
             @retry="allocationHistory.refresh()"
           >
@@ -899,26 +847,45 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                 :key="transfer.id"
                 class="rounded-lg border border-default bg-elevated/30 p-4"
               >
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div class="min-w-0">
-                    <code class="block truncate font-mono text-sm text-highlighted">
-                      {{ transfer.public_model_alias }}
-                    </code>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <p class="font-medium text-highlighted">
+                        {{ transfer.package_name ?? transfer.public_model_alias ?? 'Quota allocation' }}
+                      </p>
+
+                      <UBadge
+                        v-if="transfer.allocation_kind === 'PACKAGE'"
+                        color="primary"
+                        variant="subtle"
+                        size="sm"
+                      >
+                        Multi-model package
+                      </UBadge>
+                    </div>
+
                     <p class="mt-1 text-xs text-muted">
-                      {{ transfer.billing_mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance' }}
-                      · {{ formatDateTime(transfer.created_at) }}
+                      {{ formatDateTime(transfer.created_at) }} · {{ transfer.reason }}
                     </p>
-                    <p class="mt-2 text-xs text-muted">
-                      {{ transfer.reason }}
-                    </p>
+
+                    <div
+                      v-if="transfer.allowed_model_aliases?.length"
+                      class="mt-3 flex flex-wrap gap-1.5"
+                    >
+                      <SpModelBadge
+                        v-for="alias in transfer.allowed_model_aliases"
+                        :key="alias"
+                        :model="alias"
+                        compact
+                      />
+                    </div>
                   </div>
+
                   <div class="shrink-0 text-right">
-                    <p class="font-mono text-sm text-highlighted">
+                    <p class="sp-numeric text-base font-semibold text-highlighted">
                       {{ formatCompactUnits(transfer.units) }}
                     </p>
-                    <p class="text-xs text-dimmed">
-                      units
-                    </p>
+                    <p class="text-xs text-dimmed">units sold</p>
                   </div>
                 </div>
               </li>
@@ -926,12 +893,12 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           </SpAsyncSection>
         </section>
 
-        <!-- Customer usage -->
+        <!-- Usage -->
         <section class="space-y-4">
           <SpSectionHeading
             :level="3"
             title="Customer usage"
-            description="Settled usage for this managed customer. The default report covers the last 30 days."
+            description="Settled usage from this customer's API keys during the last 30 days."
           >
             <template #actions>
               <UButton
@@ -968,20 +935,23 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                     {{ customerUsage.data.value.totals.requests }}
                   </dd>
                 </div>
+
                 <div class="rounded-lg border border-default bg-elevated/30 p-4">
                   <dt class="text-xs text-dimmed">Total tokens</dt>
                   <dd class="mt-1 font-mono text-lg text-highlighted">
                     {{ formatCompactUnits(customerUsage.data.value.totals.total_tokens) }}
                   </dd>
                 </div>
+
                 <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Input tokens</dt>
+                  <dt class="text-xs text-dimmed">Input</dt>
                   <dd class="mt-1 font-mono text-lg text-highlighted">
                     {{ formatCompactUnits(customerUsage.data.value.totals.input_tokens) }}
                   </dd>
                 </div>
+
                 <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Output tokens</dt>
+                  <dt class="text-xs text-dimmed">Output</dt>
                   <dd class="mt-1 font-mono text-lg text-highlighted">
                     {{ formatCompactUnits(customerUsage.data.value.totals.output_tokens) }}
                   </dd>
@@ -992,36 +962,24 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                 v-if="customerUsage.data.value.by_model.length > 0"
                 class="space-y-2"
               >
-                <p class="text-sm font-medium text-highlighted">
-                  By model
-                </p>
+                <p class="text-sm font-medium text-highlighted">By model</p>
+
                 <ul class="space-y-2">
                   <li
                     v-for="model in customerUsage.data.value.by_model"
                     :key="model.public_model"
                     class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3"
                   >
-                    <div class="min-w-0">
-                      <code class="block truncate font-mono text-sm text-default">
-                        {{ model.public_model }}
-                      </code>
-                      <p class="text-xs text-muted">
-                        {{ model.requests }} requests
-                      </p>
-                    </div>
+                    <code class="truncate font-mono text-sm text-default">
+                      {{ model.public_model }}
+                    </code>
+
                     <p class="shrink-0 font-mono text-sm text-highlighted">
                       {{ formatCompactUnits(model.total_tokens) }} tokens
                     </p>
                   </li>
                 </ul>
               </div>
-
-              <p
-                v-if="customerUsage.data.value.totals.requests === 0"
-                class="rounded-lg border border-dashed border-default px-4 py-6 text-center text-sm text-muted"
-              >
-                No settled usage in this reporting period yet.
-              </p>
             </div>
           </SpAsyncSection>
         </section>
@@ -1031,7 +989,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           <SpSectionHeading
             :level="3"
             :title="keys.data.value ? `Inference keys (${activeKeyCount} active)` : 'Inference keys'"
-            description="Keys you issue on the customer's behalf. They authenticate the customer's own requests and spend the customer's own quota."
+            description="Keys issued for this customer. A multi-model package can use one key across all included package models."
           >
             <template #actions>
               <UButton
@@ -1044,11 +1002,12 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
               >
                 Refresh
               </UButton>
+
               <UButton
                 icon="i-lucide-plus"
                 size="sm"
-                :disabled="!isActive"
-                @click="resetKeyForm(); keyOpen = true"
+                :disabled="!isActive || customerAllowedAliases.length === 0"
+                @click="openKey()"
               >
                 Issue key
               </UButton>
@@ -1063,11 +1022,8 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             :empty="keys.isEmpty.value"
             :offline="keys.error.value?.code === 'network_unreachable'"
             :error-message="keys.error.value?.message"
-            :forbidden-code="keys.error.value?.code ?? null"
-            forbidden-permission="reseller.manage"
-            error-title="This customer's keys could not be loaded"
             empty-title="No keys issued yet"
-            empty-description="Issue one so the customer can connect Claude Code, Codex CLI or their own SDK integration."
+            empty-description="Sell package quota first, then issue a key for the customer's included models."
             empty-icon="i-lucide-key-round"
             loading-variant="rows"
             @retry="keys.refresh()"
@@ -1085,7 +1041,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div class="min-w-0 space-y-2">
                     <div class="flex flex-wrap items-center gap-2">
-                      <p class="truncate font-medium text-highlighted">
+                      <p class="font-medium text-highlighted">
                         {{ key.label }}
                       </p>
                       <SpStatusBadge :status="key.status.toLowerCase()" />
@@ -1095,46 +1051,19 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                       {{ maskApiKey(key.prefix, key.last_four) }}
                     </code>
 
-                    <dl class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted">
-                      <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Issued
-                        </dt>
-                        <dd>{{ formatDate(key.created_at) }}</dd>
-                      </div>
-                      <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Last used
-                        </dt>
-                        <dd>{{ key.last_used_at ? formatDateTime(key.last_used_at) : 'Never' }}</dd>
-                      </div>
-                      <div class="flex gap-1.5">
-                        <dt class="text-dimmed">
-                          Expires
-                        </dt>
-                        <dd>{{ key.expires_at ? formatDateTime(key.expires_at) : 'No expiry' }}</dd>
-                      </div>
-                    </dl>
-
-                    <div class="flex flex-wrap items-center gap-1.5">
-                      <span class="text-xs text-dimmed">Scope</span>
-                      <template v-if="key.allowed_model_aliases.length > 0">
-                        <UBadge
-                          v-for="alias in key.allowed_model_aliases"
-                          :key="alias"
-                          color="neutral"
-                          variant="subtle"
-                          size="sm"
-                          class="font-mono"
-                        >
-                          {{ alias }}
-                        </UBadge>
-                      </template>
-                      <span
-                        v-else
-                        class="text-xs text-muted"
-                      >Every model the customer's own quota allows</span>
+                    <div class="flex flex-wrap gap-1.5">
+                      <SpModelBadge
+                        v-for="alias in key.allowed_model_aliases"
+                        :key="alias"
+                        :model="alias"
+                        compact
+                      />
                     </div>
+
+                    <p class="text-xs text-muted">
+                      Created {{ formatDateTime(key.created_at) }}
+                      · Last used {{ key.last_used_at ? formatDateTime(key.last_used_at) : 'never' }}
+                    </p>
                   </div>
 
                   <UButton
@@ -1142,7 +1071,6 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
                     variant="subtle"
                     size="sm"
                     icon="i-lucide-shield-x"
-                    class="shrink-0"
                     :disabled="key.status === 'REVOKED'"
                     @click="revokeTarget = key"
                   >
@@ -1152,91 +1080,15 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
               </li>
             </ul>
           </SpAsyncSection>
-
-          <p class="text-sm text-muted">
-            A key issued here cannot be rotated, by you or by the customer — revoke it and issue a new one instead.
-            SP Cambo shows each secret once, at the moment it is created.
-          </p>
         </section>
       </div>
     </SpAsyncSection>
 
-    <!-- Customer lifecycle -->
-    <UModal
-      :open="lifecycleOpen"
-      :title="lifecycleTarget?.title ?? 'Update customer status'"
-      :description="lifecycleTarget?.description ?? ''"
-      @update:open="open => { if (!open) closeLifecycle() }"
-    >
-      <template #body>
-        <UForm
-          ref="lifecycleFormRef"
-          :state="lifecycle"
-          :validate="validateLifecycle"
-          :validate-on="['blur', 'change']"
-          class="space-y-5"
-          @submit="submitLifecycle"
-        >
-          <UAlert
-            v-if="lifecycleError"
-            role="alert"
-            icon="i-lucide-circle-alert"
-            color="error"
-            variant="subtle"
-            :description="lifecycleError"
-          />
-
-          <UFormField
-            label="Reason"
-            name="reason"
-            required
-            help="Recorded in the immutable audit trail. Use 10–2,000 characters."
-          >
-            <UTextarea
-              v-model="lifecycle.reason"
-              :rows="4"
-              autofocus
-              placeholder="Reason for changing this managed-customer relationship"
-              class="w-full"
-            />
-          </UFormField>
-
-          <UAlert
-            v-if="lifecycleTarget?.action === 'close'"
-            icon="i-lucide-triangle-alert"
-            color="warning"
-            variant="subtle"
-            title="This cannot be reversed"
-            description="A closed managed-customer relationship is terminal. You will still be able to review and revoke existing keys."
-          />
-
-          <div class="flex justify-end gap-2 pt-1">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              :disabled="updatingLifecycle"
-              @click="closeLifecycle()"
-            >
-              Cancel
-            </UButton>
-            <UButton
-              type="submit"
-              :color="lifecycleTarget?.buttonColor ?? 'primary'"
-              :icon="lifecycleTarget?.icon"
-              :loading="updatingLifecycle"
-            >
-              {{ lifecycleTarget?.confirmation ?? 'Update customer status' }}
-            </UButton>
-          </div>
-        </UForm>
-      </template>
-    </UModal>
-
-    <!-- Allocate -->
+    <!-- Sell package quota -->
     <UModal
       v-model:open="allocateOpen"
-      title="Allocate quota to this customer"
-      description="Units leave your inventory and land in the customer's account immediately, with the soonest-expiring of your lots spent first."
+      title="Sell package quota"
+      description="The customer receives one shared balance across every model included in the selected package."
     >
       <template #body>
         <UForm
@@ -1247,24 +1099,8 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           class="space-y-5"
           @submit="submitAllocation"
         >
-          <!--
-            Announced, and the highest-stakes announcement in the product: the
-            reseller is being told that real quota may or may not have moved. A
-            silent banner here means someone who cannot see the screen retries a
-            transfer whose outcome nobody knows.
-          -->
           <UAlert
-            v-if="allocationUnconfirmed"
-            role="alert"
-            icon="i-lucide-triangle-alert"
-            color="warning"
-            variant="subtle"
-            title="SP Cambo could not confirm this transfer"
-            description="The control plane returned a server error without saying whether the transfer was recorded. Your inventory figures behind this dialog have been reloaded — check them. Submitting this same form again cannot transfer twice; changing any value in it starts a new transfer."
-          />
-
-          <UAlert
-            v-else-if="allocationError"
+            v-if="allocationError"
             role="alert"
             icon="i-lucide-circle-alert"
             color="error"
@@ -1273,39 +1109,49 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           />
 
           <UFormField
-            label="Billing mode"
-            name="billing_mode"
+            label="Package"
+            name="inventory_lot_id"
             required
-            help="Has to match the lots you hold. A token-quota lot cannot fund a credit balance."
+            help="Choose one real reseller inventory package. The package's full model scope is copied automatically."
           >
             <USelectMenu
-              v-model="allocation.billing_mode"
-              :items="modeOptions"
+              v-model="allocation.inventory_lot_id"
+              :items="packageOptions"
               value-key="value"
+              placeholder="Choose package"
               class="w-full"
             />
           </UFormField>
 
-          <UFormField
-            label="Model"
-            name="public_model_alias"
-            required
-            :help="aliasOptions.length === 0
-              ? 'You hold no reseller stock for this billing mode. Ask the SP Cambo operator to add reseller inventory first.'
-              : 'Only models you currently hold inventory for are listed.'"
+          <div
+            v-if="selectedPackage"
+            class="rounded-lg border border-default bg-elevated/30 p-4"
           >
-            <USelectMenu
-              v-model="allocation.public_model_alias"
-              :items="aliasOptions"
-              value-key="value"
-              :disabled="aliasOptions.length === 0"
-              placeholder="Choose a model"
-              class="w-full"
-            />
-          </UFormField>
+            <div class="flex items-center justify-between gap-3">
+              <p class="font-medium text-highlighted">
+                {{ selectedPackage.package_name }}
+              </p>
+              <p class="sp-numeric text-sm font-semibold text-highlighted">
+                {{ formatUnits(selectedAvailableUnits) }} remaining
+              </p>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <SpModelBadge
+                v-for="alias in selectedPackage.allowed_model_aliases"
+                :key="alias"
+                :model="alias"
+                compact
+              />
+            </div>
+
+            <p class="mt-3 text-xs text-muted">
+              One shared balance across these {{ selectedPackage.allowed_model_aliases.length }} models.
+            </p>
+          </div>
 
           <UFormField
-            label="Units"
+            label="Units to sell"
             name="units"
             required
           >
@@ -1316,27 +1162,18 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
               placeholder="1000000"
               class="w-full"
             />
-            <template #help>
-              <span v-if="selectedFunding">
-                You hold
-                <strong class="text-highlighted">{{ formatUnits(availableUnits) }}</strong>
-                {{ unitLabel }} for this model, across
-                {{ selectedFunding.lot_count }} {{ selectedFunding.lot_count === 1 ? 'lot' : 'lots' }}.
-              </span>
-              <span v-else>Whole units only. Choose a model to see what you hold.</span>
-            </template>
           </UFormField>
 
           <UFormField
             label="Reason"
             name="reason"
             required
-            help="Recorded in the audit trail against both accounts. At least 10 characters."
+            help="Recorded in the audit trail."
           >
             <UTextarea
               v-model="allocation.reason"
               :rows="3"
-              placeholder="Monthly top-up agreed with the customer"
+              placeholder="Customer purchased one million tokens."
               class="w-full"
             />
           </UFormField>
@@ -1345,11 +1182,11 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             icon="i-lucide-info"
             color="neutral"
             variant="subtle"
-            title="This cannot be reversed here"
-            description="SP Cambo has no route to pull an allocation back. The units become the customer's, and expire when the lot they came from expires."
+            title="Shared package balance"
+            description="Selling 1M from a 9-model Claude package gives the customer 1M total, not 1M for each model."
           />
 
-          <div class="flex justify-end gap-2 pt-1">
+          <div class="flex justify-end gap-2">
             <UButton
               color="neutral"
               variant="ghost"
@@ -1358,11 +1195,13 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             >
               Cancel
             </UButton>
+
             <UButton
               type="submit"
               :loading="allocating"
+              icon="i-lucide-package-check"
             >
-              Allocate units
+              Sell quota
             </UButton>
           </div>
         </UForm>
@@ -1372,8 +1211,8 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
     <!-- Issue key -->
     <UModal
       v-model:open="keyOpen"
-      title="Issue an inference key"
-      description="The secret is shown once. You will need to deliver it to the customer yourself."
+      title="Issue inference key"
+      description="By default every model funded for this customer is selected."
     >
       <template #body>
         <UForm
@@ -1393,34 +1232,29 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           />
 
           <UFormField
-            label="Name"
+            label="Key name"
             name="label"
             required
-            help="Shown to the customer in their own key list. Name it after where it will run."
           >
             <UInput
               v-model="keyForm.label"
-              placeholder="Production worker"
+              placeholder="Production API"
               autofocus
               class="w-full"
             />
           </UFormField>
 
           <UFormField
-            label="Model scope"
+            label="Allowed models"
             name="allowed_model_aliases"
-            :help="models.unavailable.value
-              ? 'The model catalogue is not published yet, so scoping cannot be set here. The key will allow every model the customer\'s quota permits.'
-              : 'Leave empty to allow every model the customer\'s own quota permits.'"
+            required
+            help="Only models funded for this managed customer are offered."
           >
             <USelectMenu
               v-model="keyForm.allowed_model_aliases"
-              :items="catalogAliasOptions"
+              :items="customerModelOptions"
               value-key="value"
               multiple
-              :disabled="models.unavailable.value || catalogAliasOptions.length === 0"
-              :loading="models.loading.value"
-              placeholder="All permitted models"
               class="w-full"
             />
           </UFormField>
@@ -1428,7 +1262,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
           <UFormField
             label="Expiry"
             name="expiry_date"
-            help="Optional. The key stops working at 23:59:59 UTC on this date."
+            help="Optional."
           >
             <UInput
               v-model="keyForm.expiry_date"
@@ -1437,7 +1271,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             />
           </UFormField>
 
-          <div class="flex justify-end gap-2 pt-1">
+          <div class="flex justify-end gap-2">
             <UButton
               color="neutral"
               variant="ghost"
@@ -1446,6 +1280,7 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             >
               Cancel
             </UButton>
+
             <UButton
               type="submit"
               :loading="creatingKey"
@@ -1467,20 +1302,71 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
       @close="clearReveal"
     />
 
-    <!-- Revoke -->
+    <!-- Customer lifecycle -->
+    <UModal
+      v-model:open="lifecycleOpen"
+      :title="lifecycleTarget?.title ?? 'Update customer'"
+      :description="lifecycleTarget?.description ?? ''"
+    >
+      <template #body>
+        <UForm
+          :state="lifecycle"
+          :validate="validateLifecycle"
+          class="space-y-5"
+          @submit="submitLifecycle"
+        >
+          <UAlert
+            v-if="lifecycleError"
+            color="error"
+            variant="subtle"
+            :description="lifecycleError"
+          />
+
+          <UFormField
+            label="Reason"
+            name="reason"
+            required
+          >
+            <UTextarea
+              v-model="lifecycle.reason"
+              :rows="4"
+              class="w-full"
+            />
+          </UFormField>
+
+          <div class="flex justify-end gap-2">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              :disabled="updatingLifecycle"
+              @click="lifecycleOpen = false"
+            >
+              Cancel
+            </UButton>
+
+            <UButton
+              type="submit"
+              :color="lifecycleTarget?.buttonColor ?? 'primary'"
+              :loading="updatingLifecycle"
+            >
+              {{ lifecycleTarget?.confirmation ?? 'Update' }}
+            </UButton>
+          </div>
+        </UForm>
+      </template>
+    </UModal>
+
+    <!-- Revoke key -->
     <UModal
       :open="revokeTarget !== null"
       title="Revoke this key?"
-      description="It stops authenticating requests the moment you confirm, and cannot be re-enabled."
-      @update:open="revokeTarget = null"
+      description="The key stops authenticating immediately. The customer's quota is not removed."
+      @update:open="open => { if (!open) revokeTarget = null }"
     >
       <template #body>
         <div class="space-y-4">
           <p class="text-sm text-muted">
-            Anything the customer is running with
-            <strong class="text-highlighted">{{ revokeTarget?.label }}</strong>
-            will start failing with an authentication error straight away. Their quota is untouched — only this
-            credential stops working.
+            Revoke <strong class="text-highlighted">{{ revokeTarget?.label }}</strong>?
           </p>
 
           <div class="flex justify-end gap-2">
@@ -1492,13 +1378,13 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
             >
               Keep it
             </UButton>
+
             <UButton
               color="error"
-              icon="i-lucide-shield-x"
               :loading="revoking"
               @click="confirmRevoke"
             >
-              Revoke permanently
+              Revoke
             </UButton>
           </div>
         </div>
