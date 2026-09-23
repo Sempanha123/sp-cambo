@@ -35,34 +35,50 @@ class OrderFulfillmentService
             }
 
             /*
-             * A reseller can buy the same normal packages as every other customer.
-             * Their paid package units automatically become reseller inventory,
-             * so they can distribute them through the reseller-management API.
+             * One package catalog for everyone:
              *
-             * Keep explicit RESELLER-target packages backward-compatible too.
+             * - normal customer -> normal personal entitlement
+             * - ACTIVE reseller -> reseller inventory
+             *
+             * The reseller must have both reseller.manage and an ACTIVE
+             * reseller_profile. This keeps a pending/disabled reseller from
+             * receiving stock that its allocation API cannot use.
              */
-            $isResellerBuyer = $user->hasPermission('reseller.manage');
+            $isResellerBuyer = $user->hasPermission('reseller.manage')
+                && DB::table('reseller_profiles')
+                    ->where('user_id', $user->id)
+                    ->where('status', 'ACTIVE')
+                    ->exists();
 
             $claimsByItem = [];
 
             foreach ($locked->items as $item) {
                 $snapshot = $item->package_snapshot;
-                $aliases = array_values(array_filter(array_unique($snapshot['allowed_model_aliases'] ?? []), 'is_string'));
-                $target = (string) ($snapshot['fulfillment_target'] ?? 'ACCOUNT');
-                $isResellerStock = $isResellerBuyer || $target === 'RESELLER';
+                $aliases = array_values(array_filter(
+                    array_unique($snapshot['allowed_model_aliases'] ?? []),
+                    'is_string'
+                ));
+
+                $isResellerStock = $isResellerBuyer;
                 $claim = null;
 
-                // Every model-scoped non-reseller purchase receives one access-allocation claim.
-                // Website customers choose Playground/new key/existing key after
-                // payment. Telegram resolves the same claim to a new dedicated key.
+                // Normal customers keep the existing claim/access flow.
+                // Reseller purchases bypass personal API-key allocation entirely.
                 if ($aliases !== [] && ! $isResellerStock) {
-                    $claim = $this->claims->create($tenant, $item, "order:{$locked->id}:item:{$item->id}:claim")['claim'];
+                    $claim = $this->claims->create(
+                        $tenant,
+                        $item,
+                        "order:{$locked->id}:item:{$item->id}:claim"
+                    )['claim'];
+
                     $claimsByItem[(int) $item->id] = $claim;
                 }
 
                 for ($index = 0; $index < $item->quantity; $index++) {
                     $this->entitlements->grant($user, [
-                        'source_type' => $isResellerStock ? ResellerStockService::SOURCE_TYPE : 'ORDER',
+                        'source_type' => $isResellerStock
+                            ? ResellerStockService::SOURCE_TYPE
+                            : 'ORDER',
                         'source_id' => $locked->id,
                         'package_name' => $item->package_name,
                         'family_label' => $snapshot['family_label'],
@@ -72,7 +88,17 @@ class OrderFulfillmentService
                         'currency' => $snapshot['currency'],
                         'currency_exponent' => $snapshot['currency_exponent'],
                         'allowed_model_aliases' => $aliases,
-                        'billing_snapshot' => ['limits' => $snapshot['limits'], 'billing_rules' => $snapshot['billing_rules'] ?? null],
+                        'billing_snapshot' => [
+                            'limits' => $snapshot['limits'],
+                            'billing_rules' => array_merge(
+                                is_array($snapshot['billing_rules'] ?? null)
+                                    ? $snapshot['billing_rules']
+                                    : [],
+                                $isResellerStock
+                                    ? ['stock_kind' => ResellerStockService::SOURCE_TYPE]
+                                    : []
+                            ),
+                        ],
                         'activated_at' => $activated,
                         'expires_at' => $activated->copy()->addSeconds($snapshot['duration_seconds']),
                         'access_scope' => $isResellerStock
@@ -85,15 +111,19 @@ class OrderFulfillmentService
             }
 
             /*
-             * Promotions remain personal bonus balance. Only the units actually
-             * purchased from the package are converted into reseller stock.
+             * Promotion bonuses stay personal. Only units actually bought from
+             * the package become reseller inventory.
              */
-            $promotion = is_array($locked->promotion_snapshot) ? $locked->promotion_snapshot : [];
+            $promotion = is_array($locked->promotion_snapshot)
+                ? $locked->promotion_snapshot
+                : [];
             $bonusUnits = (int) ($promotion['bonus_units'] ?? 0);
+
             if ($bonusUnits > 0) {
                 $item = $locked->items->firstOrFail();
                 $snapshot = $item->package_snapshot;
                 $claim = $claimsByItem[(int) $item->id] ?? null;
+
                 $this->entitlements->grant($user, [
                     'source_type' => 'PROMOTION',
                     'source_id' => $locked->id,
@@ -105,7 +135,10 @@ class OrderFulfillmentService
                     'currency' => $snapshot['currency'],
                     'currency_exponent' => $snapshot['currency_exponent'],
                     'allowed_model_aliases' => $snapshot['allowed_model_aliases'],
-                    'billing_snapshot' => ['limits' => $snapshot['limits'], 'billing_rules' => $snapshot['billing_rules'] ?? null],
+                    'billing_snapshot' => [
+                        'limits' => $snapshot['limits'],
+                        'billing_rules' => $snapshot['billing_rules'] ?? null,
+                    ],
                     'activated_at' => $activated,
                     'expires_at' => $activated->copy()->addSeconds($snapshot['duration_seconds']),
                     'access_scope' => $claim ? 'UNASSIGNED' : 'ACCOUNT',
@@ -114,7 +147,11 @@ class OrderFulfillmentService
                 ], "order:{$locked->id}:promotion:bonus");
             }
 
-            $locked->update(['status' => 'FULFILLED', 'fulfilled_at' => now()]);
+            $locked->update([
+                'status' => 'FULFILLED',
+                'fulfilled_at' => now(),
+            ]);
+
             $fulfilled = $locked->fresh('items');
             $this->purchaseAlerts->orderFulfilled($fulfilled);
 
@@ -124,8 +161,6 @@ class OrderFulfillmentService
         try {
             $this->referrals->rewardFulfilledOrder($fulfilled);
         } catch (\Throwable $exception) {
-            // Referral accounting must never roll back a successfully paid order.
-            // The reward path is idempotent, so operators may safely retry later.
             Log::error('Referral reward processing failed after fulfillment.', [
                 'order_id' => (string) $fulfilled->id,
                 'exception' => $exception::class,
