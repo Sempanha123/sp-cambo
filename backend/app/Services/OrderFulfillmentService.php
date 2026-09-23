@@ -34,16 +34,25 @@ class OrderFulfillmentService
                 $locked->forceFill(['tenant_id' => $tenant->id])->save();
             }
 
+            /*
+             * A reseller can buy the same normal packages as every other customer.
+             * Their paid package units automatically become reseller inventory,
+             * so they can distribute them through the reseller-management API.
+             *
+             * Keep explicit RESELLER-target packages backward-compatible too.
+             */
+            $isResellerBuyer = $user->hasPermission('reseller.manage');
+
             $claimsByItem = [];
 
             foreach ($locked->items as $item) {
                 $snapshot = $item->package_snapshot;
                 $aliases = array_values(array_filter(array_unique($snapshot['allowed_model_aliases'] ?? []), 'is_string'));
                 $target = (string) ($snapshot['fulfillment_target'] ?? 'ACCOUNT');
-                $isResellerStock = $target === 'RESELLER';
+                $isResellerStock = $isResellerBuyer || $target === 'RESELLER';
                 $claim = null;
 
-                // Every model-scoped purchase receives one access-allocation claim.
+                // Every model-scoped non-reseller purchase receives one access-allocation claim.
                 // Website customers choose Playground/new key/existing key after
                 // payment. Telegram resolves the same claim to a new dedicated key.
                 if ($aliases !== [] && ! $isResellerStock) {
@@ -66,13 +75,19 @@ class OrderFulfillmentService
                         'billing_snapshot' => ['limits' => $snapshot['limits'], 'billing_rules' => $snapshot['billing_rules'] ?? null],
                         'activated_at' => $activated,
                         'expires_at' => $activated->copy()->addSeconds($snapshot['duration_seconds']),
-                        'access_scope' => $claim ? 'UNASSIGNED' : 'ACCOUNT',
+                        'access_scope' => $isResellerStock
+                            ? ResellerStockService::ACCESS_SCOPE
+                            : ($claim ? 'UNASSIGNED' : 'ACCOUNT'),
                         'bound_api_key_id' => null,
                         'fulfillment_claim_id' => $claim?->id,
                     ], "order:{$locked->id}:item:{$item->id}:lot:{$index}");
                 }
             }
 
+            /*
+             * Promotions remain personal bonus balance. Only the units actually
+             * purchased from the package are converted into reseller stock.
+             */
             $promotion = is_array($locked->promotion_snapshot) ? $locked->promotion_snapshot : [];
             $bonusUnits = (int) ($promotion['bonus_units'] ?? 0);
             if ($bonusUnits > 0) {
