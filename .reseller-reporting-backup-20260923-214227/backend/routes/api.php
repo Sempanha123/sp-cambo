@@ -41,7 +41,6 @@ use App\Http\Controllers\Api\V1\RedeemCodeController;
 use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\ResellerCustomerController;
 use App\Http\Controllers\Api\V1\ResellerCustomerKeyController;
-use App\Http\Controllers\Api\V1\ResellerCustomerReportingController;
 use App\Http\Controllers\Api\V1\ResellerManagementKeyController;
 use App\Http\Controllers\Api\V1\StatusController;
 use App\Http\Controllers\Api\V1\TelegramWebhookController;
@@ -159,9 +158,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('customers', [ResellerCustomerController::class, 'index']);
         Route::post('customers', [ResellerCustomerController::class, 'store'])->middleware('throttle:10,1');
         Route::patch('customers/{resellerCustomer}/status', [ResellerCustomerController::class, 'updateStatus'])->middleware('throttle:20,1');
-        Route::get('customers/{resellerCustomer}/allocations', [ResellerCustomerReportingController::class, 'allocations']);
         Route::post('customers/{resellerCustomer}/allocations', [ResellerCustomerController::class, 'allocate'])->middleware('throttle:20,1');
-        Route::get('customers/{resellerCustomer}/usage', [ResellerCustomerReportingController::class, 'usage']);
         Route::get('customers/{resellerCustomer}/api-keys', [ResellerCustomerKeyController::class, 'index']);
         Route::post('customers/{resellerCustomer}/api-keys', [ResellerCustomerKeyController::class, 'store'])->middleware('throttle:10,1');
         Route::post('customers/{resellerCustomer}/api-keys/{apiKey}/revoke', [ResellerCustomerKeyController::class, 'revoke'])->middleware('throttle:10,1');
@@ -174,9 +171,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('customers', [ResellerCustomerController::class, 'index'])->middleware('management.scope:customers:read');
         Route::post('customers', [ResellerCustomerController::class, 'store'])->middleware('management.scope:customers:write');
         Route::patch('customers/{resellerCustomer}/status', [ResellerCustomerController::class, 'updateStatus'])->middleware('management.scope:customers:write');
-        Route::get('customers/{resellerCustomer}/allocations', [ResellerCustomerReportingController::class, 'allocations'])->middleware('management.scope:allocations:read');
         Route::post('customers/{resellerCustomer}/allocations', [ResellerCustomerController::class, 'allocate'])->middleware('management.scope:allocations:write');
-        Route::get('customers/{resellerCustomer}/usage', [ResellerCustomerReportingController::class, 'usage'])->middleware('management.scope:usage:read');
         Route::get('customers/{resellerCustomer}/api-keys', [ResellerCustomerKeyController::class, 'index'])->middleware('management.scope:keys:read');
         Route::post('customers/{resellerCustomer}/api-keys', [ResellerCustomerKeyController::class, 'store'])->middleware('management.scope:keys:write');
         Route::post('customers/{resellerCustomer}/api-keys/{apiKey}/revoke', [ResellerCustomerKeyController::class, 'revoke'])->middleware('management.scope:keys:write');

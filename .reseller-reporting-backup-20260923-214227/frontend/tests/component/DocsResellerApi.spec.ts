@@ -56,7 +56,7 @@ describe('credentials', () => {
   })
 })
 
-describe('documented reseller capabilities', () => {
+describe('capabilities it must not imply', () => {
   it('lists every scope the control plane grants', async () => {
     const text = await render()
 
@@ -65,27 +65,23 @@ describe('documented reseller capabilities', () => {
     }
   })
 
-  it('documents allocation history and usage reads', async () => {
+  it('states that the two unenforced scopes authorise nothing', async () => {
     const text = await render()
 
-    expect(text).toContain('GET /customers/{id}/allocations')
-    expect(text).toContain('GET /customers/{id}/usage')
-    expect(text).not.toContain('No usage endpoint')
-    expect(text).not.toContain('No way to read allocations back')
+    expect(text.match(/no endpoint on this surface reads it yet/gi)).toHaveLength(2)
   })
 
-  it('documents managed-customer lifecycle changes', async () => {
+  it('says there is no usage endpoint, rather than leaving it to be assumed', async () => {
     const text = await render()
 
-    expect(text).toContain('PATCH /customers/{id}/status')
-    expect(text).toContain('SUSPENDED')
-    expect(text).toContain('CLOSED')
+    expect(text).toContain('No usage endpoint')
+    expect(text).toContain('No way to read allocations back')
   })
 
-  it('does not describe a rotate route for a key', async () => {
+  it('does not describe a rotate route for a key, because none exists', async () => {
     const text = await render()
 
-    expect(text).not.toMatch(/\\/rotate/)
+    expect(text).not.toMatch(/\/rotate/)
   })
 })
 

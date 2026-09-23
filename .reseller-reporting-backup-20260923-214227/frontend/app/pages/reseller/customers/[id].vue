@@ -414,10 +414,7 @@ const submitAllocation = async () => {
 
     allocateOpen.value = false
     allocation.value = emptyAllocation()
-    await Promise.all([
-      inventory.refresh(),
-      allocationHistory.refresh()
-    ])
+    await inventory.refresh()
 
     toast.add({
       title: 'Quota allocated',
@@ -494,28 +491,6 @@ watch([customerId, managedCustomerId], ([id, managedId]) => {
     keys.refresh()
   }
 }, { immediate: true })
-
-/** ------------------------------------------------------------ reporting */
-
-const allocationHistory = await useSpResource(
-  'reseller:customer-allocations',
-  () => api.reseller.customerAllocations(customerId.value, { limit: 50 }),
-  { server: false, immediate: false }
-)
-
-const customerUsage = await useSpResource(
-  'reseller:customer-usage',
-  () => api.reseller.customerUsage(customerId.value, { limit: 25 }),
-  { server: false, immediate: false }
-)
-
-watch([customerId, managedCustomerId], ([id, managedId]) => {
-  if (id && managedId === id) {
-    allocationHistory.refresh()
-    customerUsage.refresh()
-  }
-}, { immediate: true })
-
 
 interface KeyFormState {
   label: string
@@ -850,177 +825,6 @@ const activeKeyCount = computed(() => (keys.data.value ?? []).filter(key => key.
               >
                 At least one of your lots permits several models, so the same units are counted under each of them.
                 These figures cannot be added together.
-              </p>
-            </div>
-          </SpAsyncSection>
-        </section>
-
-
-        <!-- Allocation history -->
-        <section class="space-y-4">
-          <SpSectionHeading
-            :level="3"
-            title="Allocation history"
-            description="Quota transfers you already made to this customer. This is read-only history."
-          >
-            <template #actions>
-              <UButton
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                icon="i-lucide-refresh-cw"
-                :loading="allocationHistory.loading.value"
-                @click="allocationHistory.refresh()"
-              >
-                Refresh
-              </UButton>
-            </template>
-          </SpSectionHeading>
-
-          <SpAsyncSection
-            :loading="allocationHistory.initialLoading.value"
-            :unavailable="allocationHistory.unavailable.value"
-            :failed="allocationHistory.failed.value"
-            :empty="allocationHistory.isEmpty.value"
-            :offline="allocationHistory.error.value?.code === 'network_unreachable'"
-            :error-message="allocationHistory.error.value?.message"
-            empty-title="No allocations yet"
-            empty-description="Quota transfers to this customer will appear here."
-            empty-icon="i-lucide-arrow-right-left"
-            loading-variant="rows"
-            @retry="allocationHistory.refresh()"
-          >
-            <ul
-              v-if="allocationHistory.data.value"
-              class="space-y-3"
-            >
-              <li
-                v-for="transfer in allocationHistory.data.value"
-                :key="transfer.id"
-                class="rounded-lg border border-default bg-elevated/30 p-4"
-              >
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div class="min-w-0">
-                    <code class="block truncate font-mono text-sm text-highlighted">
-                      {{ transfer.public_model_alias }}
-                    </code>
-                    <p class="mt-1 text-xs text-muted">
-                      {{ transfer.billing_mode === 'TOKEN_QUOTA' ? 'Token quota' : 'Credit balance' }}
-                      · {{ formatDateTime(transfer.created_at) }}
-                    </p>
-                    <p class="mt-2 text-xs text-muted">
-                      {{ transfer.reason }}
-                    </p>
-                  </div>
-                  <div class="shrink-0 text-right">
-                    <p class="font-mono text-sm text-highlighted">
-                      {{ formatCompactUnits(transfer.units) }}
-                    </p>
-                    <p class="text-xs text-dimmed">
-                      units
-                    </p>
-                  </div>
-                </div>
-              </li>
-            </ul>
-          </SpAsyncSection>
-        </section>
-
-        <!-- Customer usage -->
-        <section class="space-y-4">
-          <SpSectionHeading
-            :level="3"
-            title="Customer usage"
-            description="Settled usage for this managed customer. The default report covers the last 30 days."
-          >
-            <template #actions>
-              <UButton
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                icon="i-lucide-refresh-cw"
-                :loading="customerUsage.loading.value"
-                @click="customerUsage.refresh()"
-              >
-                Refresh
-              </UButton>
-            </template>
-          </SpSectionHeading>
-
-          <SpAsyncSection
-            :loading="customerUsage.initialLoading.value"
-            :unavailable="customerUsage.unavailable.value"
-            :failed="customerUsage.failed.value"
-            :offline="customerUsage.error.value?.code === 'network_unreachable'"
-            :error-message="customerUsage.error.value?.message"
-            error-title="Customer usage could not be loaded"
-            loading-variant="cards"
-            @retry="customerUsage.refresh()"
-          >
-            <div
-              v-if="customerUsage.data.value"
-              class="space-y-4"
-            >
-              <dl class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Requests</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ customerUsage.data.value.totals.requests }}
-                  </dd>
-                </div>
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Total tokens</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.total_tokens) }}
-                  </dd>
-                </div>
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Input tokens</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.input_tokens) }}
-                  </dd>
-                </div>
-                <div class="rounded-lg border border-default bg-elevated/30 p-4">
-                  <dt class="text-xs text-dimmed">Output tokens</dt>
-                  <dd class="mt-1 font-mono text-lg text-highlighted">
-                    {{ formatCompactUnits(customerUsage.data.value.totals.output_tokens) }}
-                  </dd>
-                </div>
-              </dl>
-
-              <div
-                v-if="customerUsage.data.value.by_model.length > 0"
-                class="space-y-2"
-              >
-                <p class="text-sm font-medium text-highlighted">
-                  By model
-                </p>
-                <ul class="space-y-2">
-                  <li
-                    v-for="model in customerUsage.data.value.by_model"
-                    :key="model.public_model"
-                    class="flex items-center justify-between gap-4 rounded-lg border border-default px-4 py-3"
-                  >
-                    <div class="min-w-0">
-                      <code class="block truncate font-mono text-sm text-default">
-                        {{ model.public_model }}
-                      </code>
-                      <p class="text-xs text-muted">
-                        {{ model.requests }} requests
-                      </p>
-                    </div>
-                    <p class="shrink-0 font-mono text-sm text-highlighted">
-                      {{ formatCompactUnits(model.total_tokens) }} tokens
-                    </p>
-                  </li>
-                </ul>
-              </div>
-
-              <p
-                v-if="customerUsage.data.value.totals.requests === 0"
-                class="rounded-lg border border-dashed border-default px-4 py-6 text-center text-sm text-muted"
-              >
-                No settled usage in this reporting period yet.
               </p>
             </div>
           </SpAsyncSection>

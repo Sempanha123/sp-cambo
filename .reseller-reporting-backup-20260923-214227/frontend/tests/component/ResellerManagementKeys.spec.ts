@@ -109,7 +109,7 @@ const withScopes = async (vm: ManagementKeysVm, scopes: ResellerManagementScope[
 }
 
 describe('scope disclosure', () => {
-  it('offers every scope the control plane publishes', async () => {
+  it('offers every scope the control plane publishes, so none is silently unavailable', async () => {
     const { body } = await openCreateDialog()
 
     for (const scope of RESELLER_MANAGEMENT_SCOPES) {
@@ -117,39 +117,52 @@ describe('scope disclosure', () => {
     }
   })
 
-  it('names the endpoint every published scope authorises', async () => {
+  it('names the endpoint each usable scope authorises', async () => {
     const { body } = await openCreateDialog()
 
     expect(body).toContain('GET /reseller-management/customers')
     expect(body).toContain('POST /reseller-management/customers')
-    expect(body).toContain('PATCH /reseller-management/customers/{id}/status')
-    expect(body).toContain('GET /reseller-management/customers/{id}/allocations')
     expect(body).toContain('POST /reseller-management/customers/{id}/allocations')
-    expect(body).toContain('GET /reseller-management/customers/{id}/usage')
     expect(body).toContain('GET /reseller-management/customers/{id}/api-keys')
     expect(body).toContain('POST /reseller-management/customers/{id}/api-keys/{key}/revoke')
   })
 
-  it('does not show the old inert-scope warning', async () => {
+  it('says plainly that the two unenforced scopes authorise nothing today', async () => {
     const { body } = await openCreateDialog()
 
-    expect(body).not.toContain('No endpoint yet')
-    expect(body).not.toContain('No endpoint reads this scope yet')
+    // Once per inert scope, and on neither of the five that do authorise something.
+    expect(body.match(/No endpoint yet/g)).toHaveLength(2)
+    expect(body.match(/No endpoint reads this scope yet/g)).toHaveLength(2)
   })
 })
 
-describe('scope risk copy', () => {
-  it('treats allocation and usage read scopes as usable read-only permissions', async () => {
+describe('a key that would be refused everywhere', () => {
+  it('warns when every chosen scope is one no endpoint reads', async () => {
     const { vm } = await openCreateDialog()
     const body = await withScopes(vm, ['allocations:read', 'usage:read'])
+
+    expect(body).toContain('This key would be refused everywhere')
+    expect(body).toContain('insufficient_scope')
+  })
+
+  it('does not warn once a scope that authorises something is added', async () => {
+    const { vm } = await openCreateDialog()
+
+    expect(await withScopes(vm, ['usage:read'])).toContain('This key would be refused everywhere')
+    expect(await withScopes(vm, ['customers:read'])).not.toContain('This key would be refused everywhere')
+  })
+
+  it('says nothing at all until a scope is chosen', async () => {
+    const { body } = await openCreateDialog()
 
     expect(body).not.toContain('This key would be refused everywhere')
   })
 
-  it('still warns when a write scope is selected', async () => {
+  it('warns about a write scope separately, because that is a different risk', async () => {
     const { vm } = await openCreateDialog()
     const body = await withScopes(vm, ['allocations:write'])
 
     expect(body).toContain('This key will be able to change things')
+    expect(body).not.toContain('This key would be refused everywhere')
   })
 })

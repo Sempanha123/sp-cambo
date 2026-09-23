@@ -5,10 +5,15 @@ import { MODEL_ALIAS_PLACEHOLDER } from '~/utils/cliSnippets'
  * Reference for the `/reseller-management` surface — the reseller's automation API.
  *
  * Everything here is read off the shipped implementation rather than a wish list:
- * route scope middleware from `routes/api.php`, validation rules from the reseller
- * controllers, transfer semantics from `ResellerAllocationService`, and the stable
- * error mapping from the control plane. Every grantable management scope below now
- * maps to at least one real endpoint.
+ * the six routes and their scope middleware from `routes/api.php`, the validation
+ * rules from `ResellerCustomerController` and `ResellerCustomerKeyController`, the
+ * transfer semantics from `ResellerAllocationService`, and the error codes from the
+ * exception mapping in `bootstrap/app.php`.
+ *
+ * Two of the seven grantable scopes are enforced by no route, and there is no usage
+ * endpoint on this surface at all. Both are stated plainly in "Not on this surface
+ * yet" — a reseller who plans an integration around an endpoint that does not exist
+ * loses more than one who is told the gap up front.
  */
 useSeoMeta({
   title: 'Reseller API',
@@ -34,15 +39,17 @@ const authExample = computed(() =>
 
 /**
  * Scope to endpoint, taken from the `management.scope:` middleware on each route.
+ * An empty `endpoints` means the control plane will grant the scope but no route
+ * reads it, so it authorises nothing today.
  */
 const scopeRows = [
   { scope: 'customers:read', endpoints: ['GET /customers'] },
-  { scope: 'customers:write', endpoints: ['POST /customers', 'PATCH /customers/{id}/status'] },
+  { scope: 'customers:write', endpoints: ['POST /customers'] },
   { scope: 'keys:read', endpoints: ['GET /customers/{id}/api-keys'] },
   { scope: 'keys:write', endpoints: ['POST /customers/{id}/api-keys', 'POST /customers/{id}/api-keys/{keyId}/revoke'] },
-  { scope: 'allocations:read', endpoints: ['GET /customers/{id}/allocations'] },
   { scope: 'allocations:write', endpoints: ['POST /customers/{id}/allocations'] },
-  { scope: 'usage:read', endpoints: ['GET /customers/{id}/usage'] }
+  { scope: 'allocations:read', endpoints: [] },
+  { scope: 'usage:read', endpoints: [] }
 ]
 
 const listCustomers = computed(() =>
@@ -72,16 +79,6 @@ const createCustomer = computed(() =>
     "label": "Sokha — retainer",
     "password": "<a-strong-generated-password>",
     "password_confirmation": "<a-strong-generated-password>"
-  }'`
-)
-
-const updateCustomerStatus = computed(() =>
-  `curl -X PATCH ${root.value}/customers/41/status \
-  -H "Authorization: Bearer ${MANAGEMENT_KEY_PLACEHOLDER}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "SUSPENDED",
-    "reason": "Customer requested a temporary suspension."
   }'`
 )
 
@@ -145,14 +142,6 @@ const allocateResponse = `{
   }
 }`
 
-const listAllocations = computed(() =>
-  `curl "${root.value}/customers/41/allocations?limit=50" \\\n  -H "Authorization: Bearer ${MANAGEMENT_KEY_PLACEHOLDER}"`
-)
-
-const readUsage = computed(() =>
-  `curl "${root.value}/customers/41/usage?limit=25&model=${MODEL_ALIAS_PLACEHOLDER}" \\\n  -H "Authorization: Bearer ${MANAGEMENT_KEY_PLACEHOLDER}"`
-)
-
 const errorRows = [
   {
     status: '401',
@@ -167,7 +156,7 @@ const errorRows = [
   {
     status: '404',
     code: 'not_found',
-    when: 'The customer or key id is not one you manage, or the requested write operation requires an ACTIVE customer. Another reseller\'s ids are indistinguishable from ids that do not exist.'
+    when: 'The customer or key id is not one you manage, or the managed customer is not ACTIVE. Another reseller\'s ids are indistinguishable from ids that do not exist.'
   },
   {
     status: '422',
@@ -376,19 +365,6 @@ const errorRows = [
       refused for lack of balance.
     </p>
 
-    <h3 id="customer-status">
-      <code>PATCH /customers/{id}/status</code>
-    </h3>
-    <p>
-      Requires <code>customers:write</code>. Change the managed relationship to
-      <code>ACTIVE</code>, <code>SUSPENDED</code> or <code>CLOSED</code>. Every transition requires a
-      10–2,000 character audit reason. Closed is terminal; suspended can be reactivated.
-    </p>
-    <SpCodeBlock
-      filename="bash"
-      :code="updateCustomerStatus"
-    />
-
     <h2 id="customer-keys">
       Customer inference keys
     </h2>
@@ -492,33 +468,6 @@ const errorRows = [
       <code>units</code> comes back as a string. Unit counts can exceed what a JavaScript number holds
       exactly, so the API never rounds one for you.
     </p>
-
-    <h3 id="read-allocations">
-      <code>GET /customers/{id}/allocations</code>
-    </h3>
-    <p>
-      Requires <code>allocations:read</code>. Returns the newest quota transfers you made to this
-      customer. Optional query parameters are <code>limit</code> (1–100),
-      <code>billing_mode</code> and <code>model</code>.
-    </p>
-    <SpCodeBlock
-      filename="bash"
-      :code="listAllocations"
-    />
-
-    <h3 id="read-usage">
-      <code>GET /customers/{id}/usage</code>
-    </h3>
-    <p>
-      Requires <code>usage:read</code>. Returns settled usage totals, totals by public model, credit
-      charges grouped by currency, and recent settled records. It never exposes upstream provider cost
-      or private routing information. The default range is the last 30 days and one request can cover
-      at most 366 days.
-    </p>
-    <SpCodeBlock
-      filename="bash"
-      :code="readUsage"
-    />
 
     <h3 id="allocation-semantics">
       What the transfer actually does
@@ -642,25 +591,40 @@ const errorRows = [
     </p>
 
     <h2 id="not-yet-available">
-      Still not on this surface
+      Not on this surface yet
     </h2>
     <p>
-      Allocation history, usage and customer lifecycle management are available now. The remaining
-      intentional gaps are:
+      So that you do not design an integration around something that does not exist:
     </p>
     <ul>
       <li>
-        <strong>No customer profile editing.</strong> The management API cannot change a managed
-        customer's label or email after creation.
+        <strong>No usage endpoint.</strong> <code>usage:read</code> can be granted but no endpoint reads
+        it. Per-customer usage is visible to a signed-in session on the
+        <NuxtLink to="/reseller">
+          managed customers
+        </NuxtLink> pages.
       </li>
       <li>
-        <strong>No enable, disable or rotate for a customer's inference key</strong> — issue and revoke
-        are the supported lifecycle operations.
+        <strong>No way to read allocations back.</strong> <code>allocations:read</code> is likewise
+        grantable and unused. Record the transfer id from the <code>201</code> response; it is the only
+        handle you will get.
       </li>
       <li>
-        <strong>No management-key administration through a management key.</strong> Listing, creating
-        and revoking <code>sk-spm-</code> credentials requires a signed-in reseller session by design.
+        <strong>No suspend or close for a managed customer</strong>, and no way to change a customer's
+        label or email. Revoking their keys is the available lever.
+      </li>
+      <li>
+        <strong>No enable, disable or rotate for a customer's key</strong> — only issue and revoke.
+      </li>
+      <li>
+        <strong>No management-key administration.</strong> Listing, creating and revoking
+        <code>sk-spm-</code> keys requires a signed-in session by design, so a leaked management key
+        cannot mint more of itself.
       </li>
     </ul>
+    <p>
+      These are gaps in the API, not in this page. If your integration needs one of them, say so —
+      a documented gap is easier to prioritise than a guessed one.
+    </p>
   </SpDocsShell>
 </template>

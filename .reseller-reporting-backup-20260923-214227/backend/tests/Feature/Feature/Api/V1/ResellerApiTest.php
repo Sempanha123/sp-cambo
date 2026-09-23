@@ -331,64 +331,6 @@ class ResellerApiTest extends TestCase
         $this->assertDatabaseHas('api_keys', ['lookup_digest' => app(ApiKeySecretService::class)->digest($secret), 'status' => 'ACTIVE']);
     }
 
-
-    public function test_reseller_reporting_routes_are_scoped_and_tenant_isolated(): void
-    {
-        $reseller = $this->reseller();
-        $attacker = $this->reseller();
-
-        app(EntitlementService::class)->grant($reseller, [
-            'source_type' => 'ADMIN_GRANT',
-            'source_id' => 'reporting-inventory',
-            'package_name' => 'Reporting inventory',
-            'family_label' => 'Claude',
-            'billing_mode' => 'TOKEN_QUOTA',
-            'original_units' => 100,
-            'unit_label' => 'tokens',
-            'allowed_model_aliases' => ['claude-coding'],
-            'billing_snapshot' => [],
-            'expires_at' => now()->addDay(),
-        ], 'reseller-api:reporting-inventory');
-
-        [$managedId] = $this->managedCustomer($reseller, 'reporting@example.test');
-
-        $this->actingAs($reseller)->postJson("/api/v1/reseller/customers/{$managedId}/allocations", [
-            'billing_mode' => 'TOKEN_QUOTA',
-            'public_model_alias' => 'claude-coding',
-            'units' => 40,
-            'idempotency_key' => 'reporting-allocation-1',
-            'reason' => 'Customer purchased forty token units for reporting.',
-        ])->assertCreated();
-
-        $allocationSecret = $this->managementSecret($reseller, ['allocations:read']);
-        $usageSecret = $this->managementSecret($reseller, ['usage:read']);
-
-        $this->withToken($allocationSecret)
-            ->getJson("/api/v1/reseller-management/customers/{$managedId}/allocations")
-            ->assertOk()
-            ->assertJsonPath('data.0.units', '40');
-
-        $this->withToken($allocationSecret)
-            ->getJson("/api/v1/reseller-management/customers/{$managedId}/usage")
-            ->assertForbidden()
-            ->assertJsonPath('code', 'insufficient_scope');
-
-        $this->withToken($usageSecret)
-            ->getJson("/api/v1/reseller-management/customers/{$managedId}/usage")
-            ->assertOk()
-            ->assertJsonPath('data.totals.requests', 0);
-
-        $attackerSecret = $this->managementSecret($attacker, ['allocations:read', 'usage:read']);
-
-        $this->withToken($attackerSecret)
-            ->getJson("/api/v1/reseller-management/customers/{$managedId}/allocations")
-            ->assertNotFound();
-
-        $this->withToken($attackerSecret)
-            ->getJson("/api/v1/reseller-management/customers/{$managedId}/usage")
-            ->assertNotFound();
-    }
-
     /** @return array{0: string, 1: User} */
     private function managedCustomer(User $reseller, string $email): array
     {

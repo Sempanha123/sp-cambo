@@ -54,12 +54,8 @@ import type {
 } from '~/types/admin'
 import type {
   ResellerAllocation,
-  ResellerAllocationHistoryItem,
   ResellerAllocationInput,
-  ResellerAllocationQuery,
   ResellerCustomer,
-  ResellerCustomerUsage,
-  ResellerUsageQuery,
   ResellerCustomerInput,
   ResellerCustomerKey,
   ResellerCustomerKeyCreated,
@@ -791,15 +787,6 @@ export function useSpApi() {
         request<ResellerAllocation>(`/reseller/customers/${apiSegment(customerId)}/allocations`, {
           method: 'POST',
           body: { ...input }
-        }),
-      customerAllocations: (customerId: string, query: ResellerAllocationQuery = {}) =>
-        request<ResellerAllocationHistoryItem[]>(`/reseller/customers/${apiSegment(customerId)}/allocations`, {
-          collection: true,
-          query: { ...query }
-        }),
-      customerUsage: (customerId: string, query: ResellerUsageQuery = {}) =>
-        request<ResellerCustomerUsage>(`/reseller/customers/${apiSegment(customerId)}/usage`, {
-          query: { ...query }
         }),
       customerKeys: (customerId: string) =>
         request<ResellerCustomerKey[]>(`/reseller/customers/${apiSegment(customerId)}/api-keys`, { collection: true }),

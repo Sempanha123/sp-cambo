@@ -1,11 +1,25 @@
 import type { ApiKeyStatus } from '~/types/commerce'
 
+/**
+ * Reseller management contracts, implemented today under `/api/v1/reseller/*`.
+ *
+ * Every route requires the `reseller.manage` permission and is tenant-isolated:
+ * another reseller's ids return 404, never another tenant's data.
+ *
+ * Two unrelated credential families appear here and must never be conflated:
+ * `sk-*` inference keys belong to a managed customer and call the gateway,
+ * while `sk-spm-*` management keys are the reseller's own automation credential
+ * and cannot perform inference.
+ */
+
 export type ResellerCustomerStatus = 'ACTIVE' | 'SUSPENDED' | 'CLOSED'
 
+/** `GET|POST /reseller/customers`. The initial password is never returned. */
 export interface ResellerCustomer {
   id: string
   name: string
   email: string
+  /** Reseller-chosen label for their own records. */
   label: string
   status: ResellerCustomerStatus
   created_at: string
@@ -19,11 +33,19 @@ export interface ResellerCustomerInput {
   label: string
 }
 
+/** `PATCH /reseller/customers/{id}/status` — writes immutable audit evidence. */
 export interface ResellerCustomerStatusUpdateInput {
   status: ResellerCustomerStatus
   reason: string
 }
 
+/**
+ * `POST /reseller/customers/{id}/allocations`.
+ *
+ * Units move out of the reseller's own inventory by FEFO, so an allocation is a
+ * transfer and not a purchase. `idempotency_key` is bound to the inputs: reusing
+ * it with different values is rejected rather than silently transferring twice.
+ */
 export interface ResellerAllocationInput {
   billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
   public_model_alias: string
@@ -37,78 +59,16 @@ export interface ResellerAllocation {
   customer_id: string
   billing_mode: 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
   public_model_alias: string
+  /** Exact integer unit string. */
   units: string
   created_at: string
 }
 
-export interface ResellerAllocationHistoryItem extends ResellerAllocation {
-  idempotency_key: string
-  reason: string
-}
-
-export interface ResellerAllocationQuery {
-  limit?: number
-  billing_mode?: 'TOKEN_QUOTA' | 'CREDIT_BALANCE'
-  model?: string
-}
-
-export interface ResellerUsageQuery {
-  from?: string
-  to?: string
-  limit?: number
-  model?: string
-  key_id?: string
-}
-
-export interface ResellerUsageMoney {
-  minor: string
-  currency: string
-  exponent: number
-}
-
-export interface ResellerUsageTotals {
-  requests: number
-  input_tokens: string
-  output_tokens: string
-  cache_read_tokens: string
-  cache_write_tokens: string
-  reasoning_tokens: string
-  total_tokens: string
-  metered_units: string
-}
-
-export interface ResellerUsageByModel extends ResellerUsageTotals {
-  public_model: string
-}
-
-export interface ResellerUsageRecord {
-  id: string
-  api_key_id: string | null
-  public_model: string
-  endpoint: string
-  input_tokens: string
-  output_tokens: string
-  cache_read_tokens: string
-  cache_write_tokens: string
-  reasoning_tokens: string
-  total_tokens: string
-  metered_units: string
-  credit_charge: ResellerUsageMoney | null
-  settled_at: string
-}
-
-export interface ResellerCustomerUsage {
-  customer_id: string
-  range: {
-    from: string
-    to: string
-  }
-  totals: ResellerUsageTotals
-  credit_charges: ResellerUsageMoney[]
-  by_model: ResellerUsageByModel[]
-  recent: ResellerUsageRecord[]
-}
-
+/**
+ * A managed customer's inference key. Structurally similar to the customer-owned
+ * `ApiKeySummary` but deliberately separate: this projection carries no rate
+ * limits, so the reseller UI must not claim to display any.
+ */
 export interface ResellerCustomerKey {
   id: string
   label: string
@@ -123,6 +83,7 @@ export interface ResellerCustomerKey {
 
 export interface ResellerCustomerKeyCreated {
   key: ResellerCustomerKey
+  /** One-time plaintext. Never persisted, logged or re-fetchable. */
   secret: string
 }
 
@@ -140,6 +101,7 @@ export type ResellerManagementScope = typeof RESELLER_MANAGEMENT_SCOPES[number]
 
 export type ResellerManagementKeyStatus = 'ACTIVE' | 'REVOKED'
 
+/** `GET|POST /reseller/management-keys` — `sk-spm-*`, automation only. */
 export interface ResellerManagementKey {
   id: string
   label: string

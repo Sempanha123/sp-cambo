@@ -55,13 +55,10 @@ const SCOPE_COPY: Record<ResellerManagementScope, { label: string, description: 
     authorises: ['GET /reseller-management/customers']
   },
   'customers:write': {
-    label: 'Create and manage customers',
-    description: 'Create managed customer accounts and change their lifecycle status.',
+    label: 'Create customers',
+    description: 'Create managed customer accounts, including their initial password.',
     write: true,
-    authorises: [
-      'POST /reseller-management/customers',
-      'PATCH /reseller-management/customers/{id}/status'
-    ]
+    authorises: ['POST /reseller-management/customers']
   },
   'keys:read': {
     label: 'Read keys',
@@ -80,9 +77,9 @@ const SCOPE_COPY: Record<ResellerManagementScope, { label: string, description: 
   },
   'allocations:read': {
     label: 'Read allocations',
-    description: 'List quota transfers you previously made to a managed customer.',
+    description: 'Intended for reading back the quota transfers you have made. No endpoint reads this scope yet, so granting it authorises nothing today.',
     write: false,
-    authorises: ['GET /reseller-management/customers/{id}/allocations']
+    authorises: []
   },
   'allocations:write': {
     label: 'Allocate quota',
@@ -92,9 +89,9 @@ const SCOPE_COPY: Record<ResellerManagementScope, { label: string, description: 
   },
   'usage:read': {
     label: 'Read usage',
-    description: 'Read settled token and credit usage for a managed customer.',
+    description: 'Intended for reading customer usage and activity. No endpoint reads this scope yet, so granting it authorises nothing today.',
     write: false,
-    authorises: ['GET /reseller-management/customers/{id}/usage']
+    authorises: []
   }
 }
 
