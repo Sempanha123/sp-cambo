@@ -62,15 +62,17 @@ describe("Claude tool schema validation", () => {
     expect(result.input).toEqual({ file_path: "index.html" });
   });
 
-  it("rejects EnterPlanMode reason because the tool declares no fields", () => {
+  it("drops provider-added EnterPlanMode reason because the tool declares no fields", () => {
     const fields = claudeSchemas();
 
-    expect(() => normalizeCompleteToolInputs({
+    const result = normalizeCompleteToolInputs({
       type: "tool_use",
-      id: "tool_plan_bad",
+      id: "tool_plan_provider_compat",
       name: "EnterPlanMode",
       input: { reason: "Need a plan" },
-    }, fields)).toThrow(InvalidToolInputError);
+    }, fields) as any;
+
+    expect(result.input).toEqual({});
   });
 
   it("accepts EnterPlanMode {}", () => {
@@ -84,6 +86,17 @@ describe("Claude tool schema validation", () => {
     }, fields) as any;
 
     expect(result.input).toEqual({});
+  });
+
+  it("still rejects unknown EnterPlanMode fields other than reason", () => {
+    const fields = claudeSchemas();
+
+    expect(() => normalizeCompleteToolInputs({
+      type: "tool_use",
+      id: "tool_plan_unknown",
+      name: "EnterPlanMode",
+      input: { dangerous_field: true },
+    }, fields)).toThrow(InvalidToolInputError);
   });
 
   it("rejects streamed Read {} before the held stream is released", () => {
@@ -107,7 +120,7 @@ describe("Claude tool schema validation", () => {
     }))).toThrow(InvalidToolInputError);
   });
 
-  it("rejects streamed EnterPlanMode with unexpected reason", () => {
+  it("accepts streamed EnterPlanMode reason by normalizing it to empty input", () => {
     const fields = claudeSchemas();
     const guard = new AnthropicToolStreamGuard(fields);
 
@@ -116,7 +129,7 @@ describe("Claude tool schema validation", () => {
       index: 0,
       content_block: {
         type: "tool_use",
-        id: "tool_plan_stream_bad",
+        id: "tool_plan_stream_provider_compat",
         name: "EnterPlanMode",
         input: {},
       },
@@ -134,7 +147,13 @@ describe("Claude tool schema validation", () => {
     expect(() => guard.inspect(sse({
       type: "content_block_stop",
       index: 0,
-    }))).toThrow(InvalidToolInputError);
+    }))).not.toThrow();
+
+    expect(() => guard.inspect(sse({
+      type: "message_stop",
+    }))).not.toThrow();
+
+    expect(() => guard.finish()).not.toThrow();
   });
 
   it("accepts streamed Read with required file_path", () => {
