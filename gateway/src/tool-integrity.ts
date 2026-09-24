@@ -69,12 +69,19 @@ export function buildToolInputFieldMap(
       schema = candidate.function.parameters;
     }
 
-    if (!name || name.length > 128 || name.includes("\r") || name.includes("\n") || name.includes("\0")) continue;
+    if (
+      !name
+      || name.length > 128
+      || name.includes("\r")
+      || name.includes("\n")
+      || name.includes("\0")
+    ) continue;
 
     const properties =
       record(schema) && record(schema.properties)
         ? new Set(Object.keys(schema.properties))
         : null;
+
     const requiredFields =
       record(schema) && Array.isArray(schema.required)
         ? new Set(
@@ -120,24 +127,41 @@ export function normalizeCompleteToolInputs(
 
   if (output.type === "tool_use") {
     const toolName = typeof output.name === "string" ? output.name : null;
-    const allowedFields = allowedFieldsForTool(toolName, toolInputFields);
-    const requiredFields = requiredFieldsForTool(toolName, toolInputFields);
+    const allowedFields = allowedFieldsForTool(
+      toolName,
+      toolInputFields,
+    );
+    const requiredFields = requiredFieldsForTool(
+      toolName,
+      toolInputFields,
+    );
+
     const raw = unparsedRaw(output.input);
+
     const input = raw !== null
       ? parseObjectCompat(raw, allowedFields)
       : output.input;
 
     if (!record(input)) {
-      throw new InvalidToolInputError("Anthropic tool_use.input must be a JSON object.");
+      throw new InvalidToolInputError(
+        "Anthropic tool_use.input must be a JSON object.",
+      );
     }
 
-    validateToolInputSchema(
+    const normalizedInput = normalizeKnownProviderExtras(
       input,
+      allowedFields,
+      toolName,
+    );
+
+    validateToolInputSchema(
+      normalizedInput,
       allowedFields,
       requiredFields,
       toolName,
     );
-    output.input = input;
+
+    output.input = normalizedInput;
   }
 
   return output;
@@ -240,7 +264,9 @@ export class AnthropicToolStreamGuard {
         );
 
         if (block.input !== undefined && raw === null && !record(block.input)) {
-          throw new InvalidToolInputError("Anthropic tool_use.input must be an object.");
+          throw new InvalidToolInputError(
+            "Anthropic tool_use.input must be an object.",
+          );
         }
 
         this.active.set(index, {
@@ -265,18 +291,24 @@ export class AnthropicToolStreamGuard {
         const state = this.active.get(index);
 
         if (!state) {
-          throw new InvalidToolInputError("Tool input delta arrived without a tool block.");
+          throw new InvalidToolInputError(
+            "Tool input delta arrived without a tool block.",
+          );
         }
 
         if (typeof delta.partial_json !== "string") {
-          throw new InvalidToolInputError("Tool input delta is missing partial_json.");
+          throw new InvalidToolInputError(
+            "Tool input delta is missing partial_json.",
+          );
         }
 
         state.sawDelta = true;
         state.raw += delta.partial_json;
 
         if (Buffer.byteLength(state.raw) > MAX_BUFFERED_TOOL_STREAM_BYTES) {
-          throw new InvalidToolInputError("Tool input exceeded the integrity buffer limit.");
+          throw new InvalidToolInputError(
+            "Tool input exceeded the integrity buffer limit.",
+          );
         }
 
         continue;
@@ -299,7 +331,9 @@ export class AnthropicToolStreamGuard {
       }
 
       if (type === "message_stop" && this.active.size > 0) {
-        throw new InvalidToolInputError("Anthropic message ended before a tool block completed.");
+        throw new InvalidToolInputError(
+          "Anthropic message ended before a tool block completed.",
+        );
       }
     }
   }
@@ -343,7 +377,9 @@ export class AnthropicToolStreamGuard {
         if (!record(delta) || delta.type !== "input_json_delta") return part;
 
         if (typeof delta.partial_json !== "string") {
-          throw new InvalidToolInputError("Tool input delta is missing partial_json.");
+          throw new InvalidToolInputError(
+            "Tool input delta is missing partial_json.",
+          );
         }
 
         const index = eventIndex(event);
@@ -382,7 +418,9 @@ export class AnthropicToolStreamGuard {
 
   finish(): void {
     if (this.active.size > 0) {
-      throw new InvalidToolInputError("Anthropic stream ended before tool input completed.");
+      throw new InvalidToolInputError(
+        "Anthropic stream ended before tool input completed.",
+      );
     }
   }
 }
@@ -404,16 +442,45 @@ function normalizeStreamEvent(
   }
 
   if (output.type === "tool_use") {
+    const toolName = typeof output.name === "string" ? output.name : null;
+
+    const allowedFields = allowedFieldsForTool(
+      toolName,
+      toolInputFields,
+    );
+
+    const requiredFields = requiredFieldsForTool(
+      toolName,
+      toolInputFields,
+    );
+
     const raw = unparsedRaw(output.input);
 
-    if (raw !== null) {
-      const toolName = typeof output.name === "string" ? output.name : null;
-      output.input = parseObjectCompat(
-        raw,
-        allowedFieldsForTool(toolName, toolInputFields),
+    const input = raw !== null
+      ? parseObjectCompat(raw, allowedFields)
+      : output.input;
+
+    if (input !== undefined && !record(input)) {
+      throw new InvalidToolInputError(
+        "Anthropic streamed tool_use.input must be an object.",
       );
-    } else if (output.input !== undefined && !record(output.input)) {
-      throw new InvalidToolInputError("Anthropic streamed tool_use.input must be an object.");
+    }
+
+    if (record(input)) {
+      const normalizedInput = normalizeKnownProviderExtras(
+        input,
+        allowedFields,
+        toolName,
+      );
+
+      validateToolInputSchema(
+        normalizedInput,
+        allowedFields,
+        requiredFields,
+        toolName,
+      );
+
+      output.input = normalizedInput;
     }
   }
 
@@ -471,6 +538,7 @@ function summarizeInvalidToolInputShapeV2(
   const tailText = raw.slice(boundary).trim();
 
   let headKeys: string[] = [];
+
   try {
     const head = JSON.parse(headText) as unknown;
     if (record(head)) headKeys = Object.keys(head).sort();
@@ -484,6 +552,7 @@ function summarizeInvalidToolInputShapeV2(
   if (tailText.startsWith(",")) {
     try {
       const parsedTail = JSON.parse(`{${tailText.slice(1)}`) as unknown;
+
       if (record(parsedTail)) {
         commaTailObject = true;
         commaTailKeys = Object.keys(parsedTail).sort();
@@ -540,28 +609,46 @@ function validateState(state: StreamToolState): string | null {
       input = repaired;
     }
 
-    validateToolInputSchema(
+    const normalizedInput = normalizeKnownProviderExtras(
       input,
+      state.allowedFields,
+      state.toolName,
+    );
+
+    validateToolInputSchema(
+      normalizedInput,
       state.allowedFields,
       state.requiredFields,
       state.toolName,
     );
 
-    return repaired !== null ? JSON.stringify(repaired) : null;
+    return repaired !== null || normalizedInput !== input
+      ? JSON.stringify(normalizedInput)
+      : null;
   }
 
   if (!state.hadObjectInput || state.initialInput === null) {
-    throw new InvalidToolInputError("Anthropic tool block completed without valid input.");
+    throw new InvalidToolInputError(
+      "Anthropic tool block completed without valid input.",
+    );
   }
 
-  validateToolInputSchema(
+  const normalizedInitialInput = normalizeKnownProviderExtras(
     state.initialInput,
+    state.allowedFields,
+    state.toolName,
+  );
+
+  validateToolInputSchema(
+    normalizedInitialInput,
     state.allowedFields,
     state.requiredFields,
     state.toolName,
   );
 
-  return null;
+  return normalizedInitialInput !== state.initialInput
+    ? JSON.stringify(normalizedInitialInput)
+    : null;
 }
 
 /**
@@ -584,7 +671,7 @@ function parseObjectCompat(
 ): Record<string, unknown> {
   try {
     return parseObject(raw);
-  } catch (originalError) {
+  } catch {
     const repaired = repairDuplicatedTrailingFields(raw, allowedFields);
 
     if (repaired !== null) {
@@ -701,6 +788,40 @@ function requiredFieldsForTool(
     ?? EMPTY_REQUIRED_TOOL_INPUT_FIELDS;
 }
 
+/**
+ * Normalize only narrowly-known provider compatibility extras.
+ *
+ * This must stay deliberately strict. We do not drop arbitrary unknown fields,
+ * because doing so could change tool semantics. The only special case currently
+ * supported is Gemini-compatible providers adding a descriptive "reason" field
+ * to Claude Code's zero-argument EnterPlanMode tool.
+ */
+function normalizeKnownProviderExtras(
+  input: Record<string, unknown>,
+  allowedFields: ReadonlySet<string> | null,
+  toolName: string | null,
+): Record<string, unknown> {
+  if (allowedFields === null || toolName === null) {
+    return input;
+  }
+
+  const normalizedToolName = toolName.toLocaleLowerCase("en-US");
+
+  if (
+    normalizedToolName === "enterplanmode"
+    && allowedFields.size === 0
+    && Object.prototype.hasOwnProperty.call(input, "reason")
+    && Object.keys(input).every((field) => field === "reason")
+  ) {
+    const normalized = { ...input };
+    delete normalized.reason;
+
+    return normalized;
+  }
+
+  return input;
+}
+
 function validateToolInputSchema(
   input: Record<string, unknown>,
   allowedFields: ReadonlySet<string> | null,
@@ -796,7 +917,11 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
   if (left === right) return true;
 
   if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    if (
+      !Array.isArray(left)
+      || !Array.isArray(right)
+      || left.length !== right.length
+    ) {
       return false;
     }
 
@@ -839,6 +964,7 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
 
   return false;
 }
+
 function parseObject(raw: string): Record<string, unknown> {
   let parsed: unknown;
 
@@ -849,7 +975,9 @@ function parseObject(raw: string): Record<string, unknown> {
   }
 
   if (!record(parsed)) {
-    throw new InvalidToolInputError("Tool input raw JSON must decode to an object.");
+    throw new InvalidToolInputError(
+      "Tool input raw JSON must decode to an object.",
+    );
   }
 
   return parsed;
@@ -872,7 +1000,9 @@ function eventIndex(event: Record<string, unknown>): number {
   const value = event.index;
 
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new InvalidToolInputError("Anthropic tool event is missing a valid block index.");
+    throw new InvalidToolInputError(
+      "Anthropic tool event is missing a valid block index.",
+    );
   }
 
   return value as number;
