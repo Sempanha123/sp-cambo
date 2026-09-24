@@ -449,11 +449,6 @@ function normalizeStreamEvent(
       toolInputFields,
     );
 
-    const requiredFields = requiredFieldsForTool(
-      toolName,
-      toolInputFields,
-    );
-
     const raw = unparsedRaw(output.input);
 
     const input = raw !== null
@@ -467,20 +462,15 @@ function normalizeStreamEvent(
     }
 
     if (record(input)) {
-      const normalizedInput = normalizeKnownProviderExtras(
+      // Do not validate required fields at content_block_start.
+      // Anthropic streaming commonly starts tool input as {} and sends the
+      // required fields later through input_json_delta. The stream guard
+      // validates the completed object at content_block_stop.
+      output.input = normalizeKnownProviderExtras(
         input,
         allowedFields,
         toolName,
       );
-
-      validateToolInputSchema(
-        normalizedInput,
-        allowedFields,
-        requiredFields,
-        toolName,
-      );
-
-      output.input = normalizedInput;
     }
   }
 
