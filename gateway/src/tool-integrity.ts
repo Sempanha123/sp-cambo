@@ -26,6 +26,10 @@ const REQUIRED_TOOL_INPUT_FIELDS = new WeakMap<
   ToolInputFieldMap,
   ReadonlyMap<string, ReadonlySet<string>>
 >();
+const TOOL_INPUT_SCHEMAS = new WeakMap<
+  ToolInputFieldMap,
+  ReadonlyMap<string, unknown>
+>();
 
 type StreamToolState = {
   raw: string;
@@ -35,6 +39,7 @@ type StreamToolState = {
   toolName: string | null;
   allowedFields: ReadonlySet<string> | null;
   requiredFields: ReadonlySet<string>;
+  schema: unknown;
 };
 
 /**
@@ -50,6 +55,7 @@ export function buildToolInputFieldMap(
 ): ToolInputFieldMap {
   const map = new Map<string, ReadonlySet<string> | null>();
   const requiredByTool = new Map<string, ReadonlySet<string>>();
+  const schemaByTool = new Map<string, unknown>();
   const tools = Array.isArray(body.tools) ? body.tools : [];
 
   for (const candidate of tools) {
@@ -98,13 +104,16 @@ export function buildToolInputFieldMap(
       // repair and schema validation for that tool are disabled.
       map.set(key, null);
       requiredByTool.delete(key);
+      schemaByTool.delete(key);
     } else {
       map.set(key, properties);
       requiredByTool.set(key, requiredFields);
+      schemaByTool.set(key, schema);
     }
   }
 
   REQUIRED_TOOL_INPUT_FIELDS.set(map, requiredByTool);
+  TOOL_INPUT_SCHEMAS.set(map, schemaByTool);
   return map;
 }
 
@@ -135,6 +144,10 @@ export function normalizeCompleteToolInputs(
       toolName,
       toolInputFields,
     );
+    const schema = schemaForTool(
+      toolName,
+      toolInputFields,
+    );
 
     const raw = unparsedRaw(output.input);
 
@@ -159,6 +172,7 @@ export function normalizeCompleteToolInputs(
       allowedFields,
       requiredFields,
       toolName,
+      schema,
     );
 
     output.input = normalizedInput;
@@ -262,6 +276,10 @@ export class AnthropicToolStreamGuard {
           toolName,
           this.toolInputFields,
         );
+        const schema = schemaForTool(
+          toolName,
+          this.toolInputFields,
+        );
 
         if (block.input !== undefined && raw === null && !record(block.input)) {
           throw new InvalidToolInputError(
@@ -277,6 +295,7 @@ export class AnthropicToolStreamGuard {
           toolName,
           allowedFields,
           requiredFields,
+          schema,
         });
 
         continue;
@@ -610,6 +629,7 @@ function validateState(state: StreamToolState): string | null {
       state.allowedFields,
       state.requiredFields,
       state.toolName,
+      state.schema,
     );
 
     return repaired !== null || normalizedInput !== input
@@ -634,6 +654,7 @@ function validateState(state: StreamToolState): string | null {
     state.allowedFields,
     state.requiredFields,
     state.toolName,
+    state.schema,
   );
 
   return normalizedInitialInput !== state.initialInput
@@ -778,6 +799,18 @@ function requiredFieldsForTool(
     ?? EMPTY_REQUIRED_TOOL_INPUT_FIELDS;
 }
 
+function schemaForTool(
+  toolName: string | null,
+  toolInputFields: ToolInputFieldMap,
+): unknown {
+  if (toolName === null) return null;
+
+  return TOOL_INPUT_SCHEMAS
+    .get(toolInputFields)
+    ?.get(toolName.toLocaleLowerCase("en-US"))
+    ?? null;
+}
+
 /**
  * Normalize only narrowly-known provider compatibility extras.
  *
@@ -817,6 +850,7 @@ function validateToolInputSchema(
   allowedFields: ReadonlySet<string> | null,
   requiredFields: ReadonlySet<string>,
   toolName: string | null,
+  schema: unknown = null,
 ): void {
   if (allowedFields !== null) {
     const unexpected = Object.keys(input)
@@ -839,6 +873,226 @@ function validateToolInputSchema(
       `Tool input is missing required fields. [tool=${safeToolNameForDiagnostic(toolName)} missing=${JSON.stringify(missing)}]`,
     );
   }
+
+  validateJsonSchemaValue(
+    input,
+    schema,
+    "",
+    toolName,
+  );
+}
+
+function validateJsonSchemaValue(
+  value: unknown,
+  schema: unknown,
+  path: string,
+  toolName: string | null,
+): void {
+  if (!record(schema)) return;
+
+  if (schema.nullable === true && value === null) {
+    return;
+  }
+
+  if (Array.isArray(schema.allOf)) {
+    for (const branch of schema.allOf) {
+      validateJsonSchemaValue(value, branch, path, toolName);
+    }
+  }
+
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    if (!schema.anyOf.some((branch) =>
+      jsonSchemaBranchAccepts(value, branch, path, toolName))) {
+      throwSchemaMismatch(
+        toolName,
+        path,
+        "one of the declared anyOf schemas",
+        jsonValueType(value),
+      );
+    }
+  }
+
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    if (!schema.oneOf.some((branch) =>
+      jsonSchemaBranchAccepts(value, branch, path, toolName))) {
+      throwSchemaMismatch(
+        toolName,
+        path,
+        "one of the declared oneOf schemas",
+        jsonValueType(value),
+      );
+    }
+  }
+
+  const declaredTypes = schemaTypes(schema.type);
+
+  if (
+    declaredTypes.length > 0
+    && !declaredTypes.some((type) => jsonValueMatchesType(value, type))
+  ) {
+    throwSchemaMismatch(
+      toolName,
+      path,
+      declaredTypes.join("|"),
+      jsonValueType(value),
+    );
+  }
+
+  if (
+    Array.isArray(schema.enum)
+    && !schema.enum.some((candidate) => sameJsonValue(candidate, value))
+  ) {
+    throw new InvalidToolInputError(
+      `Tool input does not match the declared enum. [tool=${safeToolNameForDiagnostic(toolName)} path=${safeSchemaPath(path)}]`,
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(schema, "const")
+    && !sameJsonValue(schema.const, value)
+  ) {
+    throw new InvalidToolInputError(
+      `Tool input does not match the declared const value. [tool=${safeToolNameForDiagnostic(toolName)} path=${safeSchemaPath(path)}]`,
+    );
+  }
+
+  if (record(value)) {
+    const properties = record(schema.properties)
+      ? schema.properties
+      : null;
+
+    if (Array.isArray(schema.required)) {
+      const missing = schema.required
+        .filter((field): field is string => typeof field === "string")
+        .filter((field) =>
+          !Object.prototype.hasOwnProperty.call(value, field));
+
+      if (missing.length > 0) {
+        throw new InvalidToolInputError(
+          `Tool input is missing required nested fields. [tool=${safeToolNameForDiagnostic(toolName)} path=${safeSchemaPath(path)} missing=${JSON.stringify(missing.sort())}]`,
+        );
+      }
+    }
+
+    if (properties !== null) {
+      for (const [field, childSchema] of Object.entries(properties)) {
+        if (!Object.prototype.hasOwnProperty.call(value, field)) continue;
+
+        validateJsonSchemaValue(
+          value[field],
+          childSchema,
+          childPath(path, field),
+          toolName,
+        );
+      }
+
+      const unknown = Object.keys(value)
+        .filter((field) =>
+          !Object.prototype.hasOwnProperty.call(properties, field));
+
+      if (schema.additionalProperties === false && unknown.length > 0) {
+        throw new InvalidToolInputError(
+          `Tool input contains unexpected nested fields. [tool=${safeToolNameForDiagnostic(toolName)} path=${safeSchemaPath(path)} unexpected=${JSON.stringify(unknown.sort())}]`,
+        );
+      }
+
+      if (record(schema.additionalProperties)) {
+        for (const field of unknown) {
+          validateJsonSchemaValue(
+            value[field],
+            schema.additionalProperties,
+            childPath(path, field),
+            toolName,
+          );
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(value) && record(schema.items)) {
+    for (let index = 0; index < value.length; index++) {
+      validateJsonSchemaValue(
+        value[index],
+        schema.items,
+        `${safeSchemaPath(path)}[${index}]`,
+        toolName,
+      );
+    }
+  }
+}
+
+function jsonSchemaBranchAccepts(
+  value: unknown,
+  schema: unknown,
+  path: string,
+  toolName: string | null,
+): boolean {
+  try {
+    validateJsonSchemaValue(value, schema, path, toolName);
+    return true;
+  } catch (error) {
+    if (error instanceof InvalidToolInputError) return false;
+    throw error;
+  }
+}
+
+function schemaTypes(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+
+  return value.filter(
+    (item): item is string => typeof item === "string",
+  );
+}
+
+function jsonValueMatchesType(value: unknown, type: string): boolean {
+  switch (type) {
+    case "object":
+      return record(value);
+    case "array":
+      return Array.isArray(value);
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "null":
+      return value === null;
+    default:
+      // Unknown/unsupported JSON-Schema type keywords are left to the
+      // downstream client rather than causing a false rejection.
+      return true;
+  }
+}
+
+function jsonValueType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (record(value)) return "object";
+  if (typeof value === "number" && Number.isInteger(value)) return "integer";
+  return typeof value;
+}
+
+function safeSchemaPath(path: string): string {
+  return path === "" ? "<root>" : path;
+}
+
+function childPath(path: string, field: string): string {
+  return path === "" ? field : `${path}.${field}`;
+}
+
+function throwSchemaMismatch(
+  toolName: string | null,
+  path: string,
+  expected: string,
+  actual: string,
+): never {
+  throw new InvalidToolInputError(
+    `Tool input has the wrong nested type. [tool=${safeToolNameForDiagnostic(toolName)} path=${safeSchemaPath(path)} expected=${expected} actual=${actual}]`,
+  );
 }
 
 function firstCompleteObjectEnd(raw: string): number | null {
